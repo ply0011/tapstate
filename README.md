@@ -1,6 +1,6 @@
 # Tapstate - Coming soon, stay tuned.
 
-**Capture. Transform. Serve. One binary.**
+**Capture. Transform. Serve. One deployment.**
 
 Tapstate is an open-source operational state engine that turns production database changes into fresh, queryable state for applications, APIs, and AI agents.
 
