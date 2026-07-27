@@ -98,8 +98,9 @@ tapstate-authoring/
 ├── schema/
 │   └── tapstate-v1.schema.json      (the exact grammar; same schema the CLI validates against)
 └── examples/
-    └── *.tap.yml                    (worked, validated examples)
+    └── <recipe>/*.tap.yml            (one folder per recipe — each a validated workspace)
 ```
 
-Read `REFERENCE.md` when you need a specific field; read a file under `examples/`
-when you want a known-good shape to adapt.
+Read `REFERENCE.md` when you need a specific field; open a folder under `examples/`
+when you want a known-good, validated workspace to adapt. Each example folder is a
+complete workspace (source + target + pipeline) that passes `tapstate validate`.

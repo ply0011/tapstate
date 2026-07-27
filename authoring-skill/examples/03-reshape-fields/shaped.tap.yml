@@ -1,0 +1,15 @@
+version: tapstate/v1
+kind: pipeline
+id: shaped
+source: orders_src
+transforms:
+  - id: shape
+    from: [orders]
+    type: map
+    fields:
+      order_id: "after.id"
+      total: "double(after.price) * double(after.qty)"
+serve:
+  from: shape
+  sync:
+    - source: orders_tgt

@@ -1,0 +1,5 @@
+version: tapstate/v1
+kind: source
+id: orders_tgt
+connector: mongodb
+config: { uri: "${MONGO_URI}" }

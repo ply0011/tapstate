@@ -1,0 +1,10 @@
+version: tapstate/v1
+kind: pipeline
+id: all_events
+source: evt_src
+transforms:
+  - { id: merged, from: [ web_events, app_events ], type: union }
+serve:
+  from: merged
+  sync:
+    - source: orders_tgt

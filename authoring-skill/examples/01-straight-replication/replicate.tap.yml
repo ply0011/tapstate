@@ -1,0 +1,10 @@
+version: tapstate/v1
+kind: pipeline
+id: replicate
+source: orders_src
+settings: { read_mode: snapshot_and_cdc }
+serve:
+  from: orders
+  sync:
+    - source: orders_tgt
+      write_mode: upsert

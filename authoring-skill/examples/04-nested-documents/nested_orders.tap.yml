@@ -1,0 +1,22 @@
+version: tapstate/v1
+kind: pipeline
+id: nested_orders
+source: shop_src
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: nested
+    from: { orders: orders, lines: lines }
+    type: nest
+    root:
+      from: orders
+      key: [ id ]
+      embed:
+        - from: lines
+          on: { order_id: id }
+          as: array
+          path: lines
+serve:
+  from: nested
+  sync:
+    - source: orders_tgt
+      write_mode: upsert
