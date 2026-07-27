@@ -110,7 +110,7 @@ class RealMysqlToMongoSnapshotIT {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         long last = -1;
         while (System.nanoTime() - deadline < 0) {
-            last = mongo.count(targetUri, collection);
+            last = mongo.count(EndpointAddress.uri(targetUri), collection);
             if (last == expected) {
                 return;
             }
