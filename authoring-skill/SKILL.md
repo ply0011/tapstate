@@ -58,6 +58,10 @@ source, optionally filters/maps it, and syncs the result into a target source.
 
 ## How to author (the loop)
 
+For the full conversation-to-YAML playbook — an elicitation checklist, intent ->
+resource mapping, and validated recipes (straight replication, filter, map, nest,
+union) — follow [GENERATING.md](GENERATING.md). The loop in short:
+
 1. **Understand the intent** — what system to read, what to write, what shape the
    target wants (flat rows? nested documents?).
 2. **Scaffold, don't freehand** — prefer `tapstate new <kind>` to get a canonical
@@ -89,6 +93,7 @@ source, optionally filters/maps it, and syncs the result into a target source.
 ```
 tapstate-authoring/
 ├── SKILL.md                         (this file — the loop and the model)
+├── GENERATING.md                    (conversation -> valid YAML: elicitation + validated recipes)
 ├── REFERENCE.md                     (field manual for all five kinds + expressions)
 ├── schema/
 │   └── tapstate-v1.schema.json      (the exact grammar; same schema the CLI validates against)
