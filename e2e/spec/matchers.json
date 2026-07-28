@@ -79,8 +79,19 @@
     "steps"
   ],
   "setupKeys": [
+    "databases",
     "connectors",
     "apply",
     "discover"
+  ],
+  "databaseKinds": [
+    {
+      "word": "mongo",
+      "description": "Provides a mongo store."
+    },
+    {
+      "word": "mysql",
+      "description": "Provides a mysql store."
+    }
   ]
 }
