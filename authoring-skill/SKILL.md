@@ -24,14 +24,26 @@ tapstate validate <path>      # a directory of *.tap.yml, or a single file
   human message). Read the code and message, fix the file, and validate again.
   Do not guess at fixes — the message names the field and the constraint.
 
-If `tapstate` is not on PATH, tell the user to install it first (the project's
-one-line installer) and stop; do not fabricate validation results.
+**Two different reasons you might not be able to run that command — handle them
+differently:**
+
+- **You have shell/tool access, but `tapstate` is not on PATH.** This is fixable.
+  Tell the user to install it first (the project's one-line installer) and stop;
+  do not fabricate validation results.
+- **You have no shell or tool-execution access at all** (e.g. a Custom GPT wired
+  up via uploaded knowledge files — see this bundle's README, section 1a). This
+  is not fixable by installing anything; you will never be able to run the CLI
+  yourself. Keep authoring: produce the YAML per this skill, but label every file
+  clearly as **not yet validated**, and tell the user to run
+  `tapstate validate <path>` locally themselves and paste back the result (or any
+  coded error) so you can fix it. Do not silently skip this step, and do not
+  claim the file is valid.
 
 Other CLI verbs you can lean on:
 
 | Verb | Use |
 |---|---|
-| `tapstate new <kind>` | Scaffold a fresh canonical `*.tap.yml` (source, pipeline, transform, view, serve). Start here rather than typing YAML from scratch. |
+| `tapstate new --kind <kind>` | Scaffold a fresh canonical `*.tap.yml` (source, pipeline, transform, view, serve). Start here rather than typing YAML from scratch. |
 | `tapstate explain <field.path>` | Authoritative, version-matched field help, backed by the same schema bundled here. Prefer it over guessing a field's meaning. |
 | `tapstate ls [kind]` | List the resources already in the workspace. |
 | `tapstate desc <id>` | Summary, validation status, and references for one resource. |
@@ -64,9 +76,9 @@ union) — follow [GENERATING.md](GENERATING.md). The loop in short:
 
 1. **Understand the intent** — what system to read, what to write, what shape the
    target wants (flat rows? nested documents?).
-2. **Scaffold, don't freehand** — prefer `tapstate new <kind>` to get a canonical
-   skeleton, then fill it in. Canonical form (key order, formatting) is defined by
-   the tool, not by you; do not hand-optimize layout.
+2. **Scaffold, don't freehand** — prefer `tapstate new --kind <kind>` to get a
+   canonical skeleton, then fill it in. Canonical form (key order, formatting) is
+   defined by the tool, not by you; do not hand-optimize layout.
 3. **Fill fields against the reference** — see [REFERENCE.md](REFERENCE.md) for the
    field manual of every kind, and `schema/tapstate-v1.schema.json` for the exact
    grammar. When unsure about one field, `tapstate explain <field.path>`.

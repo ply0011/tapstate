@@ -195,6 +195,6 @@ When unsure whether a function or field path is supported, check with
 ## Canonical form
 
 `tapstate` defines the canonical serialization (key ordering, formatting, quoting).
-Produce YAML with `tapstate new` and let `tapstate validate` confirm it; do not
-hand-tune layout to look "cleaner" — canonical form is a contract checked by the
-tool, and reformatting by hand only risks diverging from it.
+Produce YAML with `tapstate new` rather than hand-tuning layout to look "cleaner".
+`tapstate validate` checks semantic validity only, not layout — it will pass a
+hand-formatted file that has already drifted from canonical form.

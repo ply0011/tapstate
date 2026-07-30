@@ -1,7 +1,10 @@
 package io.tapstate.archtests;
 
+import io.tapstate.core.dsl.DslParser;
 import io.tapstate.core.dsl.Workspace;
 import io.tapstate.core.dsl.WorkspaceLoader;
+import io.tapstate.core.model.Resource;
+import io.tapstate.core.model.canonical.CanonicalWriter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -20,15 +23,20 @@ import static org.assertj.core.api.Assertions.assertThat;
  * End-to-end gate for the authoring skill's example corpus.
  *
  * <p>The skill's whole promise is that an agent following it produces .tap.yml that passes
- * {@code tapstate validate}. The bundled examples are the worked shapes an author copies and adapts,
- * so if one of them is invalid the skill ships a lie. This gate runs the exact offline stack the CLI
- * runs — parse, structural strictness, reference closure, connector capability matrix — over every
- * bundled example workspace, so a broken example is a red build rather than a surprise in the user's
- * hands.
+ * {@code tapstate validate} <em>and</em> already sits in canonical form (the skill tells authors to
+ * scaffold with {@code tapstate new} and never hand-tune layout — the bundled examples are the proof
+ * that promise holds). This gate runs the exact offline stack the CLI runs — parse, structural
+ * strictness, reference closure, connector capability matrix — over every bundled example workspace,
+ * so a semantically broken example is a red build rather than a surprise in the user's hands. It then
+ * separately re-derives each file's canonical form (parse -> {@link CanonicalWriter#write}) and
+ * asserts it is byte-identical to the file on disk: {@code WorkspaceLoader.load} succeeding only proves
+ * semantic validity, never canonical formatting, so that check alone cannot catch a file that validates
+ * while still drifting from canonical form (e.g. flow-style {@code config: { ... }}, an omitted
+ * auto-generated {@code serve.id} / sync {@code id}, or hand-ordered fields).
  *
- * <p>Every example directory is discovered from the tree, never named here: a hand-written list would
- * let a new example be added and never exercised. The discovery itself is asserted non-empty, so an
- * accidental move of the corpus cannot turn this gate into a silent pass over nothing.
+ * <p>Every example directory/file is discovered from the tree, never named here: a hand-written list
+ * would let a new example be added and never exercised. The discovery itself is asserted non-empty, so
+ * an accidental move of the corpus cannot turn this gate into a silent pass over nothing.
  */
 class AuthoringSkillExamplesValidateTest {
 
@@ -50,12 +58,28 @@ class AuthoringSkillExamplesValidateTest {
         }
     }
 
+    /** Every {@code *.tap.yml} artifact anywhere under the corpus, one document each (per the model). */
+    static Stream<Path> exampleFiles() {
+        Path root = repoRoot().resolve(EXAMPLES);
+        try (Stream<Path> tree = Files.walk(root)) {
+            return tree.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().endsWith(".tap.yml"))
+                    .sorted().toList().stream();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     @Test
     @DisplayName("the example corpus is discovered and non-empty")
     void corpusIsPresent() {
         List<Path> workspaces = exampleWorkspaces().toList();
         assertThat(workspaces)
                 .as("bundled example workspaces under %s", EXAMPLES)
+                .isNotEmpty();
+        List<Path> files = exampleFiles().toList();
+        assertThat(files)
+                .as("bundled example artifacts under %s", EXAMPLES)
                 .isNotEmpty();
     }
 
@@ -67,5 +91,18 @@ class AuthoringSkillExamplesValidateTest {
         assertThat(loaded.resources())
                 .as("validated resources in example workspace %s", workspace.getFileName())
                 .isNotEmpty();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("exampleFiles")
+    @DisplayName("every bundled example artifact is already in canonical form")
+    void exampleFileIsCanonical(Path file) throws IOException {
+        String onDisk = Files.readString(file);
+        Resource parsed = new DslParser().parse(onDisk);
+        String canonical = new CanonicalWriter().write(parsed);
+        assertThat(onDisk)
+                .as("'%s' must be byte-identical to its own canonical form (parse -> CanonicalWriter.write); "
+                        + "regenerate it rather than hand-editing layout", file)
+                .isEqualTo(canonical);
     }
 }

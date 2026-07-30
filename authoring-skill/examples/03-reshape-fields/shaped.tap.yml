@@ -4,12 +4,14 @@ id: shaped
 source: orders_src
 transforms:
   - id: shape
-    from: [orders]
     type: map
+    from: [orders]
     fields:
-      order_id: "after.id"
-      total: "double(after.price) * double(after.qty)"
+      order_id: after.id
+      total: double(after.price) * double(after.qty)
 serve:
+  id: serve
   from: shape
   sync:
-    - source: orders_tgt
+    - id: sync_1
+      source: orders_tgt

@@ -53,8 +53,9 @@ Agent-Skills-native tools do, so you wire it up by hand — once.
    > grammar). When I describe a data pipeline, ask only for what you cannot
    > reasonably infer, then produce `tapstate/v1` `*.tap.yml` files. Never invent
    > connectors, fields, transform types, or enum values that are not in the schema.
-   > After presenting the files, remind me to run `tapstate validate <dir>` locally,
-   > and if I paste back a coded error, read the code and fix the file. Prefer the
+   > You have no shell access, so label every file you present as **not yet
+   > validated** and remind me to run `tapstate validate <dir>` locally myself;
+   > if I paste back a coded error, read the code and fix the file. Prefer the
    > shapes in `examples/`.
 
 4. Save. Open a chat with the GPT and run the self-test in section 2.

@@ -3,8 +3,12 @@ kind: pipeline
 id: all_events
 source: evt_src
 transforms:
-  - { id: merged, from: [ web_events, app_events ], type: union }
+  - id: merged
+    type: union
+    from: [web_events, app_events]
 serve:
+  id: serve
   from: merged
   sync:
-    - source: orders_tgt
+    - id: sync_1
+      source: orders_tgt

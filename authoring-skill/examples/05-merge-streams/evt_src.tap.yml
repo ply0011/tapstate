@@ -2,6 +2,7 @@ version: tapstate/v1
 kind: source
 id: evt_src
 connector: mysql
-config: { uri: "${MYSQL_URI}" }
+config:
+  uri: ${MYSQL_URI}
 mode: cdc
-tables: [ web_events, app_events ]
+tables: [web_events, app_events]

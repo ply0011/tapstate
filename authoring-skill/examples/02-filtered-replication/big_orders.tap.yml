@@ -2,11 +2,14 @@ version: tapstate/v1
 kind: pipeline
 id: big_orders
 source: orders_src
-settings: { read_mode: snapshot_and_cdc }
 transforms:
-  - { id: big, from: [orders], type: filter, expr: "double(after.amount) > 100.0" }
+  - id: big
+    type: filter
+    from: [orders]
+    expr: "double(after.amount) > 100.0"
 serve:
+  id: serve
   from: big
   sync:
-    - source: orders_tgt
-      write_mode: upsert
+    - id: sync_1
+      source: orders_tgt

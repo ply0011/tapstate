@@ -2,6 +2,7 @@ version: tapstate/v1
 kind: source
 id: shop_src
 connector: mysql
-config: { uri: "${MYSQL_URI}" }
+config:
+  uri: ${MYSQL_URI}
 mode: cdc
-tables: [ orders, lines ]
+tables: [orders, lines]

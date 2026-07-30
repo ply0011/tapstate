@@ -192,5 +192,6 @@ Correct the file and validate again. Repeat until you see `valid: N resources`.
 - **The target is a `source`**, referenced by `serve.sync[].source`. There is no
   separate "sink" kind.
 - **Secrets via `${ENV}`** in `config`, never inlined credentials.
-- **Do not hand-tune layout.** Prefer `tapstate new`; canonical form is the tool's
-  to decide, and `validate` confirms it.
+- **Do not hand-tune layout.** Prefer `tapstate new`; canonical form (key order,
+  formatting) is the tool's to decide. `validate` only checks semantic validity —
+  a hand-formatted file can pass validate while still drifting from canonical form.

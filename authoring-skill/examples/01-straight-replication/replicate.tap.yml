@@ -2,9 +2,9 @@ version: tapstate/v1
 kind: pipeline
 id: replicate
 source: orders_src
-settings: { read_mode: snapshot_and_cdc }
 serve:
+  id: serve
   from: orders
   sync:
-    - source: orders_tgt
-      write_mode: upsert
+    - id: sync_1
+      source: orders_tgt
