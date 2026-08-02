@@ -1,0 +1,30 @@
+language: en-US
+
+reviews:
+  profile: quiet
+  request_changes_workflow: false
+  disable_cache: true
+
+  auto_review:
+    # Pilot PRs opt in by label. Drafts and later pushes are not reviewed
+    # automatically; the handoff workflow requests the single second pass.
+    enabled: false
+    labels:
+      - ai-review-pilot
+    drafts: false
+    auto_incremental_review: false
+    auto_pause_after_reviewed_commits: 2
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
