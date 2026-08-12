@@ -21,10 +21,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>A fixed-duration sleep is the wrong tool everywhere in an end-to-end harness: long enough to be
  * reliable, it wastes that long on every green run, and it is never quite reliable anyway. The harness
- * has three sanctioned uses of {@code Thread.sleep}, and each is a poll interval inside a condition
- * loop - the executor's bounded await, the server launcher's bounded readiness wait, and the synthetic
- * connector's change-stream tail - where the loop's condition, not the sleep, decides what happens
- * next. Everything else is a settle: a guess about how long some unobservable thing takes, checked by
+ * has four sanctioned uses of {@code Thread.sleep}, and each is a poll interval inside a condition
+ * loop - the executor's bounded await, the server launcher's bounded readiness wait, the synthetic
+ * connector's change-stream tail, and the numeric-fidelity witness's bounded read of its target -
+ * where the loop's condition, not the sleep, decides what happens next. Everything else is a settle: a guess about how long some unobservable thing takes, checked by
  * nothing. One such guess already shipped here and papered over a real product gap for weeks.
  *
  * <p>The allowlist names each sanctioned call site exactly. A new sleep anywhere in this module -
@@ -44,6 +44,7 @@ class FixedSleepGateTest {
      */
     private static final Map<String, Long> POLL_PRIMITIVES = Map.of(
             "test/java/io/tapstate/e2e/E2eExecutor.java", 1L,
+            "test/java/io/tapstate/e2e/LosslessNumericTypeIsAcceptedIT.java", 1L,
             "test/java/io/tapstate/e2e/RealProcessServer.java", 1L,
             "test/java/io/tapstate/e2e/connector/CsvConnector.java", 1L);
 
