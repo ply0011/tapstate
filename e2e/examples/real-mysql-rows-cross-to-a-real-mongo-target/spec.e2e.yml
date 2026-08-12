@@ -19,6 +19,10 @@
 # field, through a driver that is not the product. The table's columns come from these rows; the
 # product discovers that model, derives the target from it, and must land the values intact.
 #
+# The sync renames the table on its way out - orders lands as player_address - so the crossing also
+# witnesses that a renamed sink still pairs with the source model it derives from: the target model,
+# its key and its collection all come from a source table whose name the target no longer carries.
+#
 # Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips
 # this example, naming a directory whose jars do not resolve fails it. The default build therefore
 # stays green without it; the real-connector lane is where it always runs.
@@ -39,5 +43,5 @@ seed:
       - { id: 3, name: sprocket }
 steps:
   - start
-  - await: { count: { tgt_mongo.orders: 3 } }
-  - assert: { doc: { tgt_mongo.orders: { where: { id: 1 }, expect: { name: widget } } } }
+  - await: { count: { tgt_mongo.player_address: 3 } }
+  - assert: { doc: { tgt_mongo.player_address: { where: { id: 1 }, expect: { name: widget } } } }

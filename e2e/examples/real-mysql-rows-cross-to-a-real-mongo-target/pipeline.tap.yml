@@ -9,3 +9,5 @@ serve:
   from: snapshot_rows
   sync:
     - source: tgt_mongo
+      rename:
+        map: { orders: player_address }
