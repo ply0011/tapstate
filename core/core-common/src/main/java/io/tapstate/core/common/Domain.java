@@ -46,6 +46,14 @@ public enum Domain {
     // observation read faces: reading a pipeline's store-backed status / metrics / snapshot;
     // diagnosable failures such as reading a pipeline that has published no observation (control)
     MONITOR,
+    // the query surface over a declared source's own store: listing its collections, reading its
+    // documents back and following their changes. Its failures are judgements about the *request*
+    // -- an unknown collection, an unparsable continuation token, a limit past the cap, a connector
+    // pool with nothing free -- as opposed to IO, which reports that the storage mechanism itself
+    // failed, and STORE, which polices reaching a backend at startup. Named for the kind of failure,
+    // not for the operations that raise it (those are store.*): the word "store" is already taken
+    // here, and a code sitting next to store.unreachable would read as an operator's problem
+    QUERY,
     // source-specific control operations: identity, optimistic concurrency and reference protection
     SOURCE,
     // local MCP presentation: sidecar input, connector-spec and upstream-response failures
