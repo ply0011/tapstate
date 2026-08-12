@@ -16,6 +16,8 @@ a-row-keeps-its-sequence-across-the-crossing on IN_PROCESS
 a-row-keeps-its-sequence-across-the-crossing on REAL_PROCESS
 a-sink-write-failure-is-observable on IN_PROCESS
 a-sink-write-failure-is-observable on REAL_PROCESS
+default-selection-reaches-every-discovered-table on IN_PROCESS
+default-selection-reaches-every-discovered-table on REAL_PROCESS
 real-mysql-rows-cross-to-a-real-mongo-target on IN_PROCESS
 real-mysql-rows-cross-to-a-real-mongo-target on REAL_PROCESS
 rows-cross-from-a-source-file-to-a-target-file on IN_PROCESS
