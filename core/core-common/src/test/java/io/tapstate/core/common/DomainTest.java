@@ -7,9 +7,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DomainTest {
 
     @Test
-    void idIsTheLowerCaseName() {
+    void idIsTheLowerKebabName() {
         assertThat(Domain.DSL.id()).isEqualTo("dsl");
         assertThat(Domain.CATALOG.id()).isEqualTo("catalog");
+        // a multi-word constant separates with '_' but its id must be kebab: the code format admits
+        // a hyphen in either segment and never an underscore, so name().toLowerCase() alone would
+        // mint a code no catalog entry can match
+        assertThat(Domain.STORE_READ.id()).isEqualTo("store-read");
+        assertThat(Domain.STORE_READ.id()).doesNotContain("_");
     }
 
     @Test
@@ -18,7 +23,7 @@ class DomainTest {
                 .containsExactlyInAnyOrder(
                         "dsl", "cli", "core", "catalog", "schema", "lifecycle", "role", "boot",
                         "actuation", "store", "connector", "transform", "io", "control",
-                        "engine", "monitor", "query", "source", "mcp", "capture");
+                        "engine", "monitor", "store-read", "source", "mcp", "capture");
     }
 
     @Test
@@ -32,7 +37,9 @@ class DomainTest {
         assertThat(Domain.isRegistered("io")).isTrue();
         assertThat(Domain.isRegistered("engine")).isTrue();
         assertThat(Domain.isRegistered("monitor")).isTrue();
-        assertThat(Domain.isRegistered("query")).isTrue();
+        assertThat(Domain.isRegistered("store-read")).isTrue();
+        // the constant's own spelling is not a registered id -- only its kebab form is
+        assertThat(Domain.isRegistered("store_read")).isFalse();
         assertThat(Domain.isRegistered("source")).isTrue();
         assertThat(Domain.isRegistered("mcp")).isTrue();
     }

@@ -46,14 +46,14 @@ public enum Domain {
     // observation read faces: reading a pipeline's store-backed status / metrics / snapshot;
     // diagnosable failures such as reading a pipeline that has published no observation (control)
     MONITOR,
-    // the query surface over a declared source's own store: listing its collections, reading its
-    // documents back and following their changes. Its failures are judgements about the *request*
-    // -- an unknown collection, an unparsable continuation token, a limit past the cap, a connector
-    // pool with nothing free -- as opposed to IO, which reports that the storage mechanism itself
-    // failed, and STORE, which polices reaching a backend at startup. Named for the kind of failure,
-    // not for the operations that raise it (those are store.*): the word "store" is already taken
-    // here, and a code sitting next to store.unreachable would read as an operator's problem
-    QUERY,
+    // the read face over a declared source's own store: listing its collections, reading its
+    // documents back and following their changes. A lightweight look at what is there -- it serves
+    // no downstream consumer and passes no judgement on the data. Its failures are about the
+    // *request*: an unknown collection, an unparsable continuation token, a limit past the cap, a
+    // connector pool with nothing free. Distinct from IO, which reports that the storage mechanism
+    // itself failed, and from STORE, which polices reaching a backend at startup -- a code sitting
+    // next to store.unreachable would read as an operator's problem rather than a caller's
+    STORE_READ,
     // source-specific control operations: identity, optimistic concurrency and reference protection
     SOURCE,
     // local MCP presentation: sidecar input, connector-spec and upstream-response failures
@@ -63,9 +63,13 @@ public enum Domain {
     CAPTURE;
 
 
-    /** The lower-case identifier used as the {@code <domain>} segment of a canonical code. */
+    /**
+     * The lower-kebab identifier used as the {@code <domain>} segment of a canonical code. A
+     * multi-word constant separates its words with {@code _} here and {@code -} in the id, because
+     * the code format admits kebab in either segment but never an underscore.
+     */
     public String id() {
-        return name().toLowerCase(Locale.ROOT);
+        return name().toLowerCase(Locale.ROOT).replace('_', '-');
     }
 
     /** Whether {@code domain} is a registered domain id (exact, case-sensitive). */
