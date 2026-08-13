@@ -456,6 +456,36 @@ shipment state. This choice does not make tapstate a MongoDB-only architecture.
 Using a customer-managed external MongoDB—or another external store—is a future
 deployment option, not part of the Alpha+ promise.
 
+### How will tapstate handle recovery and correctness, and what works in Alpha+?
+
+Tapstate’s intended production model is durable, correctness-oriented state
+maintenance. A production-capable runtime should:
+
+- Persist source progress and resume incrementally after restart
+- Reconstruct maintained state deterministically
+- Resolve cross-source updates according to source positions and declared transformation semantics
+- Detect and recover from interrupted processing
+- Provide explicit, testable delivery and consistency semantics
+
+The goal is correctness-by-construction rather than requiring users to reconcile
+corrupted or ambiguous materialized state manually. The precise production
+guarantees—including delivery semantics, cross-source consistency boundaries,
+recovery behavior, and supported failure modes—will be defined and verified before
+they are promised.
+
+**Alpha+ is an earlier implementation of this direction.** Its runtime is single-node
+and keeps source progress in memory. After restart, it rebuilds maintained state by
+replaying from the source instead of resuming incrementally from a durable offset.
+
+The Alpha+ demo is intended to verify that changes from two source streams converge
+into the expected order state, including when one stream is deliberately delayed.
+This proves the bounded demo behavior; it does not establish a general production
+guarantee.
+
+Alpha+ therefore does not promise exactly-once delivery, transactionally consistent
+snapshots across independent databases, durable incremental recovery, or complete
+failure-mode coverage.
+
 ## Community
 
 - Website: https://tapstate.com
