@@ -190,25 +190,58 @@ Warehouses remain the right home for historical analysis. tapstate focuses on th
 operational path that turns database truth into maintained state for applications
 and agents.
 
-## Project status
+## Capability contract
 
-tapstate is early and actively evolving. Today, the checked-in public quickstart
-demonstrates:
+The product boundary covers four operational responsibilities: capture, the streaming
+data path, incremental transformation, and serving maintained state. **One
+deployable** means those responsibilities are designed and operated as one product
+experience. It does not mean the whole system is one process or one binary. The
+preview is a Docker Compose deployment that includes the tapstate server and MongoDB;
+only the offline CLI is a standalone native binary.
+
+### Verified in the current preview
+
+The checked-in quickstart and CLI demonstrate:
 
 - Offline authoring and validation of `tapstate/v1` resources
 - A single-node preview runtime
 - MySQL initial load plus CDC
 - An in-flight map transform
-- Continuous materialization to MongoDB
+- Continuous materialization to a MongoDB reference backing store
 - Pipeline status, preview metrics, and node-local logs
 
-The quickstart's MongoDB instance is the preview's reference backing store. It is
-part of the local deployable experience, not a claim that the runtime is one binary
-or that MongoDB is the only future deployment option.
+### Product direction—not current capability
 
-The preview does not provide high availability, durable offset resume, exactly-once
-delivery, a stable State Data API, or push/subscription delivery. It is not intended
-for production-critical paths.
+Alpha+ work is intended to add cross-source order-state consolidation, a
+Tapstate-managed **preview** store experience, and CLI/MCP inspection of
+Tapstate-owned state. These remain planned until their producing workstreams pass
+acceptance and the release evidence is published.
+
+The broader product direction includes pull and push serving surfaces, a stable State
+Data API, and correctness-by-construction for maintained operational state. None of
+those statements is a guarantee that the capability exists in this preview.
+
+### Not promised in Alpha+
+
+Alpha+ is not a production-readiness milestone. It does not promise:
+
+- High availability or multi-node operation
+- Durable incremental resume after restart
+- Exactly-once delivery or distributed snapshot consistency
+- Backup and restore or disaster recovery
+- Upgrade and migration guarantees
+- Capacity-scaling guarantees or an SLA
+- Complete production monitoring, security hardening, or database lifecycle management
+
+## Project status
+
+tapstate is early and actively evolving. The current public quickstart is the
+evidence boundary described above.
+
+Its MongoDB instance is the preview's reference backing store. This does not make
+tapstate a MongoDB-only architecture, and the preview does not provide a fully
+managed production database service. It is not intended for production-critical
+paths.
 
 This repository is for developers, platform engineers, and data infrastructure
 teams who want to try the engine, follow development, and help shape the project.
