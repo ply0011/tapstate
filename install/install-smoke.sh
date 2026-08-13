@@ -354,6 +354,53 @@ else
   bad "missing minimums must produce no notice (rc=$RC): $OUT"
 fi
 
+# --- the tap alias: opt-in shortcut, never a second copy of the binary --------------------------------
+# `tapstate` stays the only real command; `tap` exists to save keystrokes. It is a link to the same
+# target the stable entry points at, so an upgrade moves both at once -- two independent copies would
+# drift the moment a version directory is replaced.
+idir="$(mktemp -d)/bin"
+run_install Darwin arm64 glibc "$idir"
+if [ -L "$idir/tap" ] \
+   && [ "$(readlink "$idir/tap")" = "$(readlink "$idir/tapstate")" ]; then
+  ok "installs a tap alias resolving to the same target as tapstate"
+else
+  bad "tap alias missing or pointing elsewhere: tap=$(readlink "$idir/tap" 2>/dev/null) tapstate=$(readlink "$idir/tapstate" 2>/dev/null)"
+fi
+
+# An upgrade must move the alias too. Creating it only on a first install leaves `tap` pointing into a
+# version directory the installer has since deleted -- a dangling link that reports "no such file".
+idir="$(mktemp -d)/bin"
+run_install Darwin arm64 glibc "$idir"
+FIRST_VERSION="$VERSION"
+VERSION=9.9.9; make_asset darwin-arm64        # a second release in the same stub tree
+run_install Darwin arm64 glibc "$idir"
+VERSION="$FIRST_VERSION"
+if [ -L "$idir/tap" ] && [ -e "$idir/tap" ] \
+   && [ "$(readlink "$idir/tap")" = "$(readlink "$idir/tapstate")" ]; then
+  ok "an upgrade moves the alias with the stable entry rather than stranding it"
+else
+  bad "alias stranded after upgrade: tap=$(readlink "$idir/tap" 2>/dev/null) (exists: $([ -e "$idir/tap" ] && echo yes || echo no))"
+fi
+
+# A machine that already has a `tap` on PATH (node-tap ships one) keeps it. The installer must say so:
+# skipping silently leaves the user with no alias and no idea why.
+idir="$(mktemp -d)/bin"
+occupied="$(mktemp -d)"
+printf '#!/bin/sh\necho "not tapstate"\n' > "$occupied/tap"; chmod +x "$occupied/tap"
+OUT="$(PATH="$occupied:$PATH" \
+       TAPSTATE_VERSION="$VERSION" \
+       TAPSTATE_BASE_URL="file://$STUB" \
+       TAPSTATE_INSTALL_DIR="$idir" \
+       sh "$INSTALL_SH" 2>&1)"; RC=$?
+# The message has to be looked for by a phrase that cannot appear by accident: grepping for "tap"
+# alone passes on any line mentioning tapstate, so this assertion would hold before the feature exists.
+if [ "$RC" -eq 0 ] && [ ! -e "$idir/tap" ] && printf '%s' "$OUT" | grep -q 'already on PATH'; then
+  ok "leaves an existing tap alone and says why the alias was skipped"
+else
+  bad "existing tap not respected or skip not explained rc=$RC: $OUT"
+fi
+rm -rf "$occupied"
+
 # --- summary ----------------------------------------------------------------------------------------
 echo
 printf '\033[1minstall smoke: %d passed, %d failed\033[0m\n' "$PASS" "$FAIL"

@@ -224,6 +224,29 @@ install_bundle() {
     ln -s "versions/$version/bin/tapstate" "$staged_link"
     mv -f "$staged_link" "$install_dir/tapstate"
     staged_link=""
+    install_alias "$install_dir" "$version"
+}
+
+# `tap` is a convenience shortcut, never a second command: `tapstate` is what every document, message
+# and completion says, and this only saves keystrokes. It is a link to the same target the stable entry
+# points at, so an upgrade moves both together -- a copy would go on pointing at a version directory
+# this script has already deleted.
+#
+# A `tap` that belongs to someone else (node-tap ships one) is left exactly as it is, and the skip is
+# said out loud: a silent one leaves the user without the shortcut and without a reason, which reads as
+# the installer having failed at something.
+install_alias() {
+    alias_dir="$1"
+    alias_version="$2"
+    existing="$(command -v tap 2>/dev/null || true)"
+    if [ -n "$existing" ] && [ "$existing" != "$alias_dir/tap" ]; then
+        printf 'note: skipping the optional `tap` shortcut -- a different tap is already on PATH at %s.\n' "$existing"
+        printf '      tapstate is installed and unaffected; run `tapstate alias install` later to reconsider.\n'
+        return 0
+    fi
+    staged_alias="$alias_dir/.tap.$$"
+    ln -s "versions/$alias_version/bin/tapstate" "$staged_alias"
+    mv -f "$staged_alias" "$alias_dir/tap"
 }
 
 main() {
