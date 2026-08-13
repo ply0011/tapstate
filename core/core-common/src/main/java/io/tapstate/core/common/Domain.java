@@ -49,7 +49,7 @@ public enum Domain {
     // the read face over a declared source's own store: listing its collections, reading its
     // documents back and following their changes. A lightweight look at what is there -- it serves
     // no downstream consumer and passes no judgement on the data. Its failures are about the
-    // *request*: an unknown collection, an unparsable continuation token, a limit past the cap, a
+    // *request*: an unknown collection, a limit past the cap, a sort the backend cannot satisfy, a
     // connector pool with nothing free. Distinct from IO, which reports that the storage mechanism
     // itself failed, and from STORE, which polices reaching a backend at startup -- a code sitting
     // next to store.unreachable would read as an operator's problem rather than a caller's
