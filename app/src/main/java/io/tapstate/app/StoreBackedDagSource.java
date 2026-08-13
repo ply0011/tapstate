@@ -12,6 +12,7 @@ import io.tapstate.core.model.ServeBlock;
 import io.tapstate.core.model.SourceResource;
 import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
+import io.tapstate.core.model.ViewBlock;
 import io.tapstate.core.model.TransformBody;
 import io.tapstate.runtime.engine.DagBindings;
 import io.tapstate.runtime.engine.PipelineDagBuilder;
@@ -22,6 +23,7 @@ import io.tapstate.runtime.srs.StartFrom;
 import io.tapstate.spi.sink.DdlPolicy;
 import io.tapstate.spi.sink.SinkWriter;
 import io.tapstate.spi.sink.TargetTable;
+import io.tapstate.spi.sink.TargetField;
 import io.tapstate.spi.sink.WriteMode;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.StorePort;
@@ -181,7 +183,44 @@ final class StoreBackedDagSource implements DagSource {
                 StoreBackedDagSource::transformPort,
                 element -> sinkWriter(element, targets, servedTables),
                 ref -> upstreams(ref, sourceKeyByTable, sourceKeysById, sourceVertices, stepIds),
-                sourceKeysById::get);
+                sourceKeysById::get,
+                view -> viewSink(view, targets));
+    }
+
+    /**
+     * The sink-writer factory for a pipeline's view. It differs from a serve.sync element in exactly one
+     * place: the element names the source it writes to, while a view does not name one at all - the
+     * deployment's managed state store is resolved on the view's behalf. Everything after that is the
+     * same seam the sync path uses, so a view is written by the same writer over the same binding.
+     *
+     * <p>Write mode and ddl policy take the sync defaults. A view converges on its key, which is what
+     * upsert means; and the ddl policy governs how an incoming schema change is handled, not whether the
+     * target may be created, so refusing to drift costs the materialization nothing.
+     */
+    private SupplierEx<? extends SinkWriter> viewSink(ViewBlock view, Map<String, TargetTable> targets) {
+        if (!(view instanceof ViewBlock.Inline inline)) {
+            throw new IllegalArgumentException(
+                    "view block is a use-reference; resolve it to an inline view first");
+        }
+        ViewTargetResolver.ViewTarget target = ViewTargetResolver.resolve(inline);
+        SourceResource store = StoredArtifacts.requireSource(artifacts(), target.sourceId());
+        return sinkWriterBinder.bind(
+                store.connector(), store.config(), WriteMode.UPSERT, DdlPolicy.FAIL,
+                viewTargetTable(target, targets));
+    }
+
+    /**
+     * The target model a view materializes under: the resolved collection name, carrying the discovered
+     * fields when exactly one source table feeds it. Several tables reaching one view is an assembly, and
+     * its shape is not any single source table's - so the fields are left to the connector rather than
+     * guessed from whichever table happened to be first.
+     */
+    private static TargetTable viewTargetTable(
+            ViewTargetResolver.ViewTarget target, Map<String, TargetTable> targets) {
+        List<TargetField> fields = targets != null && targets.size() == 1
+                ? targets.values().iterator().next().fields()
+                : List.of();
+        return new TargetTable(target.collection(), fields);
     }
 
     /**

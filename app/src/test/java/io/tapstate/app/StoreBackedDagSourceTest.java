@@ -18,6 +18,7 @@ import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
 import io.tapstate.core.model.TableRef;
 import io.tapstate.core.model.TransformBody;
+import io.tapstate.core.model.ViewBlock;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.CatalogStore;
 import io.tapstate.spi.store.ConnectionTestResultStore;
@@ -68,6 +69,26 @@ class StoreBackedDagSourceTest {
         assertThat(edges(dag)).containsExactlyInAnyOrder(
                 edge("orders_src", "keep_even"),
                 edge("keep_even", "serve.sync_1"));
+    }
+
+    @Test
+    void a_declared_view_materializes_into_the_managed_state_store() {
+        // No serve block anywhere: declaring the view is the whole instruction, and the store it lands
+        // in is the deployment's own rather than anything the pipeline names.
+        FakeStorePort store = new FakeStorePort();
+        store.artifacts().save(cdcSource("orders_src", "orders"));
+        store.artifacts().save(connectionSupplier(ViewTargetResolver.STATE_STORE_SOURCE_ID));
+        store.artifacts().save(new PipelineResource(
+                "p", null,
+                List.of("orders_src"),
+                null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders_src"), "id", null, null),
+                null, null, null));
+
+        DAG dag = new StoreBackedDagSource(store).dagFor("p");
+
+        assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "view.order_state");
+        assertThat(edges(dag)).containsExactly(edge("orders_src", "view.order_state"));
     }
 
     @Test
