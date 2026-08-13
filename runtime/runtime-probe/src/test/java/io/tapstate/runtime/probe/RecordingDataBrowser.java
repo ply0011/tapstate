@@ -2,10 +2,10 @@ package io.tapstate.runtime.probe;
 
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowser;
+import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserTableInfo;
 import java.util.List;
-import java.util.Map;
 
 /**
  * A data browser that records what it was driven with and hands back a fixed answer, so each probe
@@ -17,7 +17,7 @@ final class RecordingDataBrowser implements DataBrowser {
 
     private final List<String> collections;
     private final DataBrowserTableInfo stats;
-    private final List<Map<String, Object>> rows;
+    private final DataBrowserPreview preview;
 
     ConnectionConfig drivenWith;
     String drivenCollection;
@@ -25,10 +25,10 @@ final class RecordingDataBrowser implements DataBrowser {
     boolean closed;
 
     private RecordingDataBrowser(
-            List<String> collections, DataBrowserTableInfo stats, List<Map<String, Object>> rows) {
+            List<String> collections, DataBrowserTableInfo stats, DataBrowserPreview preview) {
         this.collections = collections;
         this.stats = stats;
-        this.rows = rows;
+        this.preview = preview;
     }
 
     static RecordingDataBrowser listing(List<String> collections) {
@@ -39,8 +39,8 @@ final class RecordingDataBrowser implements DataBrowser {
         return new RecordingDataBrowser(null, stats, null);
     }
 
-    static RecordingDataBrowser matching(List<Map<String, Object>> rows) {
-        return new RecordingDataBrowser(null, null, rows);
+    static RecordingDataBrowser matching(DataBrowserPreview preview) {
+        return new RecordingDataBrowser(null, null, preview);
     }
 
     @Override
@@ -57,10 +57,10 @@ final class RecordingDataBrowser implements DataBrowser {
     }
 
     @Override
-    public List<Map<String, Object>> find(ConnectionConfig config, DataBrowserQuery query) {
+    public DataBrowserPreview find(ConnectionConfig config, DataBrowserQuery query) {
         drivenWith = config;
         drivenQuery = query;
-        return require(rows, "find");
+        return require(preview, "find");
     }
 
     @Override

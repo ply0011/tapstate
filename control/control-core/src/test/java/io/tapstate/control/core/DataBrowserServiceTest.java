@@ -10,6 +10,7 @@ import io.tapstate.core.model.SourceResource;
 import io.tapstate.runtime.probe.DataBrowserCollectionsProbe;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserTableInfo;
 import java.util.ArrayList;
@@ -25,6 +26,9 @@ import org.junit.jupiter.api.Test;
  * reads run on, refusing a name that is not one, and driving the whitelisted probes.
  */
 class DataBrowserServiceTest {
+
+    /** What a probe answers when a test does not care what came back. */
+    private static final DataBrowserPreview NOTHING = new DataBrowserPreview(List.of(), null, false);
 
     private static final SourceResource VIEWS = new SourceResource(
             "views", null, "mongodb",
@@ -96,7 +100,7 @@ class DataBrowserServiceTest {
                     read.set(collection);
                     return new DataBrowserTableInfo(0L, 0L, 0L);
                 },
-                (config, query) -> List.of());
+                (config, query) -> NOTHING);
 
         assertThatThrownBy(() -> service.stats("views", "absent")).isInstanceOf(TapstateException.class);
         assertThat(read.get()).isNull();
@@ -114,7 +118,7 @@ class DataBrowserServiceTest {
                 (config, collection) -> null,
                 (config, query) -> {
                     read.set(query);
-                    return List.of();
+                    return NOTHING;
                 });
 
         assertThatThrownBy(() -> service.find("views", "absent", Map.of(), 10))
@@ -133,7 +137,7 @@ class DataBrowserServiceTest {
                     read.set(collection);
                     return expected;
                 },
-                (config, query) -> List.of());
+                (config, query) -> NOTHING);
 
         assertThat(service.stats("views", "order_state")).isSameAs(expected);
         assertThat(read.get()).isEqualTo("order_state");
@@ -142,7 +146,8 @@ class DataBrowserServiceTest {
     @Test
     void carriesTheCollectionFilterAndLimitIntoTheQueryTheFindProbeIsDrivenWith() {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
-        List<Map<String, Object>> expected = List.of(Map.of("order_id", "ord_123"));
+        DataBrowserPreview expected =
+                new DataBrowserPreview(List.of(Map.of("order_id", "ord_123")), 512L, true);
         DataBrowserService service = new DataBrowserService(
                 store(VIEWS),
                 config -> List.of("order_state"),
@@ -152,10 +157,10 @@ class DataBrowserServiceTest {
                     return expected;
                 });
 
-        List<Map<String, Object>> rows =
+        DataBrowserPreview preview =
                 service.find("views", "order_state", Map.of("status", "paid"), 25);
 
-        assertThat(rows).isSameAs(expected);
+        assertThat(preview).isSameAs(expected);
         assertThat(driven.get().collection()).isEqualTo("order_state");
         assertThat(driven.get().filter()).containsEntry("status", "paid");
         assertThat(driven.get().limit()).isEqualTo(25);
@@ -165,7 +170,7 @@ class DataBrowserServiceTest {
 
     private static DataBrowserService service(ArtifactStore store, DataBrowserCollectionsProbe listing) {
         return new DataBrowserService(
-                store, listing, (config, collection) -> null, (config, query) -> List.of());
+                store, listing, (config, collection) -> null, (config, query) -> NOTHING);
     }
 
     private static ArtifactStore store(Resource... stored) {

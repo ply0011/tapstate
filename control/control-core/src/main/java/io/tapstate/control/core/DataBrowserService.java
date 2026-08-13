@@ -7,6 +7,7 @@ import io.tapstate.runtime.probe.DataBrowserFindProbe;
 import io.tapstate.runtime.probe.DataBrowserStatsProbe;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserTableInfo;
 import java.util.List;
@@ -61,7 +62,7 @@ public final class DataBrowserService {
     }
 
     /** Reads up to {@code limit} rows matching {@code filter} from one of the source's collections. */
-    public List<Map<String, Object>> find(
+    public DataBrowserPreview find(
             String sourceId, String collection, Map<String, Object> filter, int limit) {
         ConnectionConfig config = requireCollection(sourceId, collection);
         return findProbe.find(config, new DataBrowserQuery(collection, filter, limit));

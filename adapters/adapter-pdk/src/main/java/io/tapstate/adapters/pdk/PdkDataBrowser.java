@@ -3,6 +3,7 @@ package io.tapstate.adapters.pdk;
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowser;
+import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSort;
 import io.tapstate.spi.store.DataBrowserTableInfo;
@@ -118,7 +119,7 @@ public final class PdkDataBrowser implements DataBrowser {
     }
 
     @Override
-    public List<Map<String, Object>> find(ConnectionConfig config, DataBrowserQuery query) {
+    public DataBrowserPreview find(ConnectionConfig config, DataBrowserQuery query) {
         return pool.call(config, connector -> {
             ExecuteCommandFunction execute = require(
                     connector, connector.functions().getExecuteCommandFunction(), "executeCommand");
@@ -130,7 +131,7 @@ public final class PdkDataBrowser implements DataBrowser {
             drive(connector, () -> {
                 TapExecuteCommand command = TapExecuteCommand.create()
                         .command(QUERY_COMMAND)
-                        .params(params(config, query));
+                        .params(params(config, query, beyond(query.limit())));
                 execute.execute(connector.context(), command, result -> collect(result, rows, reported));
                 return null;
             });
@@ -138,7 +139,14 @@ public final class PdkDataBrowser implements DataBrowser {
             if (failure != null) {
                 throw readFailed(connector.connectorId(), failure);
             }
-            return rows;
+            // The row past the bound arrived, so the collection holds more than this read carries. The
+            // row itself is not part of the answer: a caller that asked for ten and is handed eleven has
+            // had its bound broken to satisfy a footnote.
+            boolean moreAvailable = rows.size() > query.limit();
+            if (moreAvailable) {
+                rows.subList(query.limit(), rows.size()).clear();
+            }
+            return new DataBrowserPreview(rows, approximateTotal(connector, query), moreAvailable);
         });
     }
 
@@ -147,6 +155,45 @@ public final class PdkDataBrowser implements DataBrowser {
     public void close() {
         evictions.shutdownNow();
         pool.close();
+    }
+
+    /**
+     * One row past what the caller asked for: whether it arrives is the only honest way to tell a
+     * collection that ends at the bound from one that merely reaches it. A full answer looks like the
+     * obvious signal and is wrong exactly when the collection holds the bound and not one more.
+     *
+     * <p>An unbounded request has no row past it to ask for, so it is left as it is; nothing is being
+     * held back from a caller that asked for everything.
+     */
+    private static int beyond(int limit) {
+        return limit == Integer.MAX_VALUE ? limit : limit + 1;
+    }
+
+    /**
+     * How many rows the collection holds, or null when that could not be told cheaply. Offered only
+     * for an unfiltered read, and only off the store's own metadata: a connector counts a filtered
+     * collection by scanning it, which on a large one spends the whole read budget answering a
+     * footnote — and is the one query that cannot be narrowed to finish sooner.
+     *
+     * <p>A count nobody can supply is a missing footnote, never a failed read. A connector that
+     * registers no size function, one that reports nothing, and one that fails reporting all land on
+     * null, which this face already reads as "not reported" rather than as zero — refusing instead
+     * would deny a working read over a connector that offers one function fewer.
+     */
+    private static Long approximateTotal(PdkConnector connector, DataBrowserQuery query) {
+        if (!query.filter().isEmpty()) {
+            return null;
+        }
+        GetTableInfoFunction info = connector.functions().getGetTableInfoFunction();
+        if (info == null) {
+            return null;
+        }
+        try {
+            TableInfo reported = drive(connector, () -> info.getTableInfo(connector.context(), query.collection()));
+            return reported == null ? null : reported.getNumOfRows();
+        } catch (RuntimeException failedToCount) {
+            return null;
+        }
     }
 
     // ---- the pooled instance ---------------------------------------------------------------------
@@ -187,7 +234,7 @@ public final class PdkDataBrowser implements DataBrowser {
      * <p>The map carries what the read needs and nothing that would widen it: no command to dispatch
      * on, and no database, so the read reaches only what the connection already points at.
      */
-    private static Map<String, Object> params(ConnectionConfig config, DataBrowserQuery query) {
+    private static Map<String, Object> params(ConnectionConfig config, DataBrowserQuery query, int limit) {
         Map<String, Object> params = new LinkedHashMap<>();
         // Which database a read may touch follows from the connection and is assembled here, never taken
         // from the request. Omitting it leans on a fallback only one connector has, and a read that lands
@@ -214,7 +261,9 @@ public final class PdkDataBrowser implements DataBrowser {
             params.put("sort", ordering);
         }
         // An int, not a long: the connector casts this straight to int, so a long fails at the cast.
-        params.put("limit", query.limit());
+        // What is sent is the drive's own bound, one past what the caller asked for, so the request the
+        // caller made stays what it was and the extra row never leaves this class.
+        params.put("limit", limit);
         return params;
     }
 

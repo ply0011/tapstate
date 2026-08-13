@@ -2,9 +2,8 @@ package io.tapstate.runtime.probe;
 
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowser;
+import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -28,7 +27,7 @@ public final class DelegatingDataBrowserFindProbe implements DataBrowserFindProb
     }
 
     @Override
-    public List<Map<String, Object>> find(ConnectionConfig config, DataBrowserQuery query) {
+    public DataBrowserPreview find(ConnectionConfig config, DataBrowserQuery query) {
         return browser.find(config, query);
     }
 }

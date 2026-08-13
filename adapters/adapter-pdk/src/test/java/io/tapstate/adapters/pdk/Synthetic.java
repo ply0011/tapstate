@@ -773,6 +773,41 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.ReadFace", readFace("ReadFace", register));
     }
 
+    /**
+     * A data-browser connector holding {@code held} rows, whose query honours the limit it is given and
+     * whose {@code getTableInfo} reports that same count. Honouring the limit is what makes "is there
+     * more" observable at all: a connector that ignored it would answer every read with the whole
+     * collection and no bound could be told apart from any other.
+     */
+    static Path boundedQuerySource(Path dir, int held) {
+        String register = "functions.supportGetTableInfoFunction((c, table) ->"
+                + "  TableInfo.create().numOfRows(" + held + "L).storageSize(4096L).avgObjSize(8L));"
+                + boundedQuery(held);
+        return SyntheticJar.compileToJar(dir, "synthetic.BoundedQuery", readFace("BoundedQuery", register));
+    }
+
+    /**
+     * The same bounded query with no {@code getTableInfo} registered — the shape of a connector that
+     * can serve a read but cannot say how much it holds. Reachable: which functions a connector offers
+     * is a property of the connector, not of the request.
+     */
+    static Path unreportedSizeQuerySource(Path dir, int held) {
+        return SyntheticJar.compileToJar(dir, "synthetic.UnreportedSizeQuery",
+                readFace("UnreportedSizeQuery", boundedQuery(held)));
+    }
+
+    private static String boundedQuery(int held) {
+        return "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  int limit = ((Number) command.getParams().get(\"limit\")).intValue();"
+                + "  int emitted = Math.min(" + held + ", limit);"
+                + "  List<Map<String,Object>> batch = new ArrayList<>();"
+                + "  for (int i = 0; i < emitted; i++) {"
+                + "    Map<String,Object> row = new LinkedHashMap<>(); row.put(\"n\", i); batch.add(row);"
+                + "  }"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch));"
+                + "});";
+    }
+
     /** A data-browser connector whose query reports its failure through {@code ExecuteResult.error}. */
     static Path erroringQuerySource(Path dir) {
         String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"

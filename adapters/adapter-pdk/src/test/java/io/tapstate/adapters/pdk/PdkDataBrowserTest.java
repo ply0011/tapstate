@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSort;
 import io.tapstate.spi.store.DataBrowserSort.Direction;
@@ -191,9 +192,9 @@ class PdkDataBrowserTest {
         // spelling that reaches anything but a query.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
-        assertThat(echoed(rows, "command")).isEqualTo("executeQuery");
+        assertThat(echoed(preview, "command")).isEqualTo("executeQuery");
     }
 
     @Test
@@ -203,9 +204,9 @@ class PdkDataBrowserTest {
         // downstream as "that is all there is", with nothing reporting otherwise.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
-        assertThat(rows).hasSize(4);
+        assertThat(preview.rows()).hasSize(4);
     }
 
     @Test
@@ -215,10 +216,10 @@ class PdkDataBrowserTest {
         // is driving, and nowhere above it.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.find(config(),
+        DataBrowserPreview preview = reader.find(config(),
                 new DataBrowserQuery("orders", Map.of(), new DataBrowserSort("status", Direction.DESC), 10));
 
-        assertThat(echoed(rows, "sort")).isEqualTo(Map.of("status", -1));
+        assertThat(echoed(preview, "sort")).isEqualTo(Map.of("status", -1));
     }
 
     @Test
@@ -228,9 +229,9 @@ class PdkDataBrowserTest {
         // thing this face promised not to impose.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
-        assertThat(echoed(rows, "sort")).isEqualTo("<none-was-sent>");
+        assertThat(echoed(preview, "sort")).isEqualTo("<none-was-sent>");
     }
 
     @Test
@@ -241,9 +242,9 @@ class PdkDataBrowserTest {
         // none, reports nothing wrong. Three databases share one mongod here, two of them ours.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.find(config("shop"), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config("shop"), new DataBrowserQuery("orders", Map.of(), 10));
 
-        assertThat(echoed(rows, "database-as-it-arrived")).isEqualTo("shop");
+        assertThat(echoed(preview, "database-as-it-arrived")).isEqualTo("shop");
     }
 
     @Test
@@ -254,18 +255,18 @@ class PdkDataBrowserTest {
         // which leaves that connection exactly where it was before this face existed.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
-        assertThat(echoed(rows, "database-as-it-arrived")).isEqualTo("<none-was-sent>");
+        assertThat(echoed(preview, "database-as-it-arrived")).isEqualTo("<none-was-sent>");
     }
 
     @Test
     void findCarriesTheCollectionIntoTheParams(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
-        assertThat(echoed(rows, "collection")).isEqualTo("orders");
+        assertThat(echoed(preview, "collection")).isEqualTo("orders");
     }
 
     @Test
@@ -277,6 +278,75 @@ class PdkDataBrowserTest {
 
         assertThatCode(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .doesNotThrowAnyException();
+    }
+
+    // ---- what the read leaves behind -------------------------------------------------------------
+
+    @Test
+    void findReportsThereIsMoreWhenTheCollectionHoldsPastTheLimit(@TempDir Path dir) {
+        // Ten rows off a collection of twenty-five and ten rows off a collection of ten are the same
+        // answer to look at, and the smaller reading is the one believed. The read is one-shot, so
+        // there is no continuation token whose presence would hint otherwise either.
+        PdkDataBrowser reader = reader(Synthetic.boundedQuerySource(dir, 25), "synthetic.BoundedQuery");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+
+        assertThat(preview.moreAvailable()).isTrue();
+        // The row asked for to learn that is the bridge's business and not part of the answer: a caller
+        // that asked for ten and is handed eleven has had its bound broken to satisfy a footnote.
+        assertThat(preview.rows()).hasSize(10);
+    }
+
+    @Test
+    void findReportsThereIsNoMoreWhenTheCollectionEndsExactlyAtTheLimit(@TempDir Path dir) {
+        // The case that decides how "is there more" may be computed at all. A full page is the obvious
+        // signal and it is wrong here - the collection ends exactly there - so the only honest answer
+        // comes from asking for one row past the bound and seeing whether it arrives.
+        PdkDataBrowser reader = reader(Synthetic.boundedQuerySource(dir, 10), "synthetic.BoundedQuery");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+
+        assertThat(preview.moreAvailable()).isFalse();
+        assertThat(preview.rows()).hasSize(10);
+    }
+
+    @Test
+    void findReportsTheCollectionTotalWhenNothingWasFilteredOut(@TempDir Path dir) {
+        // The count comes off the store's own metadata rather than a scan, which is what makes it
+        // affordable to offer at all - and why it is an estimate that drifts rather than a total.
+        PdkDataBrowser reader = reader(Synthetic.boundedQuerySource(dir, 25), "synthetic.BoundedQuery");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+
+        assertThat(preview.approximateTotal()).isEqualTo(25L);
+    }
+
+    @Test
+    void findWithholdsTheTotalWhenTheReadWasFiltered(@TempDir Path dir) {
+        // Metadata counts the collection, not the filter, so the only true answer here would be a
+        // counted one - a full scan on the first read of a large collection, and the read timeout with
+        // it. Withholding it is the deliberate trade: a footer that says less over a read that stalls.
+        PdkDataBrowser reader = reader(Synthetic.boundedQuerySource(dir, 25), "synthetic.BoundedQuery");
+
+        DataBrowserPreview preview = reader.find(
+                config(), new DataBrowserQuery("orders", Map.of("status", "paid"), 10));
+
+        assertThat(preview.approximateTotal()).isNull();
+        assertThat(preview.rows()).hasSize(10);
+    }
+
+    @Test
+    void findWithholdsTheTotalWhenTheConnectorDoesNotReportOne(@TempDir Path dir) {
+        // A count nobody can supply is a missing footnote, never a failed read: refusing here would
+        // deny a working read over a connector that simply registers one function fewer.
+        PdkDataBrowser reader = reader(
+                Synthetic.unreportedSizeQuerySource(dir, 25), "synthetic.UnreportedSizeQuery");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+
+        assertThat(preview.approximateTotal()).isNull();
+        assertThat(preview.rows()).hasSize(10);
+        assertThat(preview.moreAvailable()).isTrue();
     }
 
     @Test
@@ -314,8 +384,8 @@ class PdkDataBrowserTest {
     }
 
     /** The value the read-face connector echoed back for {@code what}, or null if it echoed no such row. */
-    private static Object echoed(List<Map<String, Object>> rows, String what) {
-        return rows.stream()
+    private static Object echoed(DataBrowserPreview preview, String what) {
+        return preview.rows().stream()
                 .filter(row -> what.equals(row.get("echoed")))
                 .map(row -> row.get("value"))
                 .findFirst()

@@ -1,7 +1,6 @@
 package io.tapstate.spi.store;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * Reads what a stored connection's own database holds: the collections it exposes, what one of them
@@ -29,8 +28,13 @@ public interface DataBrowser extends ExecutionPort, AutoCloseable {
     /** Reports what the connector knows about one collection's size. */
     DataBrowserTableInfo stats(ConnectionConfig config, String collection);
 
-    /** Runs {@code query} against the connection's own database and returns the rows it matched. */
-    List<Map<String, Object>> find(ConnectionConfig config, DataBrowserQuery query);
+    /**
+     * Runs {@code query} against the connection's own database and returns the rows it matched, along
+     * with what could be told cheaply about how much was left behind. A read is bounded, so answering
+     * with the rows alone would leave a caller unable to tell a small collection from the start of a
+     * large one.
+     */
+    DataBrowserPreview find(ConnectionConfig config, DataBrowserQuery query);
 
     /**
      * Releases everything the reads hold. Narrowed from the inherited signature: a reader that cannot

@@ -1,9 +1,8 @@
 package io.tapstate.runtime.probe;
 
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
-import java.util.List;
-import java.util.Map;
 
 /**
  * The synchronous call that answers "show me the rows": one bounded read of one collection. It is a
@@ -11,7 +10,8 @@ import java.util.Map;
  * crosses this seam rather than decoupling through the store, and why nothing survives the call on
  * the runtime side for a later one to resume from.
  *
- * <p>The request names a collection, a filter and a bound, and deliberately nothing else. There is no
+ * <p>The request names a collection, a filter, an optional order and a bound, and deliberately
+ * nothing else. There is no
  * command to dispatch on, so no request spelling reaches anything but a query; there is no database,
  * so a read reaches only what the connection already points at. Both omissions are the seam's, not
  * the caller's to restore.
@@ -23,6 +23,9 @@ import java.util.Map;
  */
 public interface DataBrowserFindProbe {
 
-    /** Runs {@code query} against {@code config}'s own database and returns the rows it matched. */
-    List<Map<String, Object>> find(ConnectionConfig config, DataBrowserQuery query);
+    /**
+     * Runs {@code query} against {@code config}'s own database and returns the rows it matched, along
+     * with what could be told cheaply about how much was left behind.
+     */
+    DataBrowserPreview find(ConnectionConfig config, DataBrowserQuery query);
 }
