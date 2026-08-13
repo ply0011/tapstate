@@ -9,6 +9,7 @@ import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
+import io.tapstate.spi.store.DataBrowserSort;
 import io.tapstate.spi.store.DataBrowserTableInfo;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,16 @@ import java.util.Objects;
  * the connection it was resolved from — the control plane's own tables sit on the same server.
  */
 public final class DataBrowserService {
+
+    /** How many rows a read that asks for no particular number is served. */
+    public static final int DEFAULT_LIMIT = 10;
+
+    /**
+     * The most rows one read will serve. What keeps a preview a preview: rows are read whole into
+     * memory in one shot and handed to a terminal, so an unbounded request would be a way to pull a
+     * collection through this face. Taking everything is what the query service is for.
+     */
+    public static final int MAX_LIMIT = 200;
 
     private final ArtifactStore store;
     private final DataBrowserCollectionsProbe collectionsProbe;
@@ -61,11 +72,33 @@ public final class DataBrowserService {
         return statsProbe.stats(config, collection);
     }
 
-    /** Reads up to {@code limit} rows matching {@code filter} from one of the source's collections. */
+    /**
+     * Reads up to {@code limit} rows matching {@code filter} from one of the source's collections, in
+     * {@code sort}'s order when one is asked for.
+     *
+     * <p>Both {@code sort} and {@code limit} are nullable, and null is a request rather than a gap: no
+     * order asked for means the database's own, and no size asked for means this face's default. They
+     * are settled here, once, because every surface that offers this verb reaches it — a default per
+     * surface would be several defaults drifting apart under a face whose whole claim is that they
+     * are one request.
+     */
     public DataBrowserPreview find(
-            String sourceId, String collection, Map<String, Object> filter, int limit) {
+            String sourceId,
+            String collection,
+            Map<String, Object> filter,
+            DataBrowserSort sort,
+            Integer limit) {
+        int bound = limit == null ? DEFAULT_LIMIT : limit;
+        // Before the collection is resolved, which costs a round trip to the connector: a request that
+        // cannot be served whatever comes back should not pay for it, or reach a connector at all.
+        if (bound < 1 || bound > MAX_LIMIT) {
+            throw new TapstateException(
+                    DataBrowserError.INVALID_LIMIT,
+                    Map.of("limit", String.valueOf(bound), "max", String.valueOf(MAX_LIMIT)),
+                    null);
+        }
         ConnectionConfig config = requireCollection(sourceId, collection);
-        return findProbe.find(config, new DataBrowserQuery(collection, filter, limit));
+        return findProbe.find(config, new DataBrowserQuery(collection, filter, sort, bound));
     }
 
     /**

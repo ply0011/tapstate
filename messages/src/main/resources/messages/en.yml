@@ -266,6 +266,9 @@ control.unauthenticated:
 control.unreachable:
   message: "The Tapstate Server is unreachable."
   solution: "Check the Server URL and availability, then retry the tool call."
+data-browser.invalid-limit:
+  message: "A read of {limit} rows is not served; ask for between 1 and {max}."
+  solution: "Ask for at most {max} rows, or narrow the read with a filter."
 data-browser.unknown-collection:
   message: "Source '{source}' has no collection named '{collection}'."
   solution: "List what the source holds and read one of those names."
