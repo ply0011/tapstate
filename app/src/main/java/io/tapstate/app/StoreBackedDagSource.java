@@ -74,7 +74,10 @@ final class StoreBackedDagSource implements DagSource {
 
     @Override
     public DAG dagFor(String pipelineId) {
-        PipelineResource pipeline = StoredArtifacts.requirePipeline(artifacts(), pipelineId);
+        // Expanded before anything reads the blocks, so every later step - target resolution included -
+        // sees one shape rather than having to know a reference from a body.
+        PipelineResource pipeline = PipelineInlining.inline(
+                StoredArtifacts.requirePipeline(artifacts(), pipelineId), artifacts());
         Map<String, SourceVertex> sourceVertices = sourceVertices(pipeline);
         Map<String, String> sourceKeyByTable = sourceKeyByTable(sourceVertices);
         // The linear builder does not expose a per-sink upstream table set. Binding every selected table keeps
