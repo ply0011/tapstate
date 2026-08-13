@@ -531,6 +531,37 @@ serving interfaces and should not be used as evidence that Serve has shipped.
 Stable data APIs, production application queries, subscriptions, webhooks, messaging
 adapters, and downstream push delivery remain future capabilities.
 
+### How is tapstate related to TapData, and why try it before production readiness?
+
+tapstate is an open-source product created by the team behind TapData and builds on
+the team’s experience with enterprise CDC and real-time data movement.
+
+The products are designed around different primary jobs:
+
+- **TapData** primarily addresses data replication and movement: reliably capturing changes and delivering data from source systems to downstream destinations.
+- **tapstate** is intended to provide a complete operational-state offering: **Capture / Stream / Transform / Serve** within one product boundary, continuously turning changes across systems into maintained, application-ready business state.
+
+tapstate is therefore not simply an open-source edition or renamed version of TapData.
+It expands the product boundary beyond replication: the outcome is maintained
+operational state, not only delivery into another database.
+
+Trying Alpha+ is useful for teams that want to:
+
+- Evaluate the source-to-state programming model
+- Test the cross-source operational-state concept
+- Inspect how declared views become maintained state
+- Explore the Data Browser and MCP-based development workflow
+- Influence future Serve interfaces, deployment models, and correctness semantics
+
+Alpha+ should not be used for production-critical workloads. It lacks high
+availability, durable incremental recovery, application-facing Serve interfaces,
+production database lifecycle management, complete security and monitoring hardening,
+and defined operational guarantees.
+
+The reason to try it now is to evaluate and shape the operational-state
+architecture—not to treat the preview as a production replacement for TapData’s
+replication capabilities.
+
 ## Community
 
 - Website: https://tapstate.com
