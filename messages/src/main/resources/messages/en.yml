@@ -47,6 +47,12 @@ capture.start-from-unparsable:
 capture.event-table-not-selected:
   message: "The capture stream emitted table `{table}`, which this pipeline did not select."
   solution: "Update the source table selection or verify the connector emits the configured table names."
+cli.alias-install-dir-unknown:
+  message: "No installed `tapstate` was found in `{path}`."
+  solution: "Run this where tapstate is installed, or set TAPSTATE_INSTALL_DIR to that directory - the same variable the installer honours."
+cli.alias-name-taken:
+  message: "`{path}` already exists and is not the tapstate shortcut."
+  solution: "Leave it in place - tapstate works without the shortcut. Remove that file yourself if you want the `tap` name, then run `tapstate alias install` again."
 cli.artifact-exists:
   message: "An artifact already exists at {path}."
   solution: "Choose a different id or --out, or pass --force to overwrite."

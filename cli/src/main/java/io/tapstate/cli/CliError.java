@@ -19,6 +19,20 @@ enum CliError implements TapstateErrorCode {
     /** The scaffold target file already exists and {@code --force} was not given. */
     ARTIFACT_EXISTS("cli.artifact-exists", Set.of("path")),
 
+    /**
+     * The optional {@code tap} shortcut cannot be managed because that name belongs to something else;
+     * {@code path} is where it sits. Refused rather than replaced or deleted: the name is a working
+     * command on that machine, and a convenience shortcut does not get to remove one.
+     */
+    ALIAS_NAME_TAKEN("cli.alias-name-taken", Set.of("path")),
+
+    /**
+     * The shortcut cannot be managed because no installed {@code tapstate} was found where one was
+     * expected; {@code path} is the directory looked in. Refused rather than guessed at: another
+     * directory would manage a shortcut for an installation the user did not mean.
+     */
+    ALIAS_INSTALL_DIR_UNKNOWN("cli.alias-install-dir-unknown", Set.of("path")),
+
     /** A connector id supplied to the wizard that is not in the bundled catalog. */
     UNKNOWN_CONNECTOR("cli.unknown-connector", Set.of("connector")),
 
