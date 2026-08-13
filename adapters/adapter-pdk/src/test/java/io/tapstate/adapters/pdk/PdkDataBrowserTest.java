@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserQuery;
+import io.tapstate.spi.store.DataBrowserTableInfo;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -81,8 +83,8 @@ class PdkDataBrowserTest {
         PdkDataBrowser reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
         Path marker = marker(dir);
 
-        reader.tableNames(config());
-        reader.tableNames(config());
+        reader.collections(config());
+        reader.collections(config());
 
         assertThat(drives(marker)).containsExactly("init");
     }
@@ -94,8 +96,8 @@ class PdkDataBrowserTest {
         PdkDataBrowser reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
         Path marker = marker(dir);
 
-        reader.tableNames(config("one"));
-        reader.tableNames(config("two"));
+        reader.collections(config("one"));
+        reader.collections(config("two"));
 
         assertThat(drives(marker)).containsExactly("init", "init");
     }
@@ -106,7 +108,7 @@ class PdkDataBrowserTest {
         // so shutting the face down has to hand them back rather than drop the reference.
         PdkDataBrowser reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
         Path marker = marker(dir);
-        reader.tableNames(config());
+        reader.collections(config());
 
         reader.close();
 
@@ -121,7 +123,7 @@ class PdkDataBrowserTest {
         ConnectorInstancePool.Limits limits = ConnectorInstancePool.DEFAULTS.withIdle(Duration.ofMillis(50));
         PdkDataBrowser reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording", limits);
         Path marker = marker(dir);
-        reader.tableNames(config());
+        reader.collections(config());
 
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
         while (!drives(marker).contains("stop") && System.nanoTime() < deadline) {
@@ -134,22 +136,22 @@ class PdkDataBrowserTest {
     // ---- getTableNames ---------------------------------------------------------------------------
 
     @Test
-    void tableNamesCollectsEveryBatchTheConnectorEmits(@TempDir Path dir) {
+    void collectionsCollectsEveryBatchTheConnectorEmits(@TempDir Path dir) {
         // The function hands its names to a consumer it may call more than once - mongodb calls it per
         // batchSize names. A drive that keeps only the batch it saw last silently loses collections, and
         // a lost collection reads downstream as "that collection does not exist".
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<String> names = reader.tableNames(config());
+        List<String> names = reader.collections(config());
 
         assertThat(names).containsExactly("orders", "shipments");
     }
 
     @Test
-    void tableNamesFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
+    void collectionsFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
 
-        assertThatThrownBy(() -> reader.tableNames(config()))
+        assertThatThrownBy(() -> reader.collections(config()))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.capability-missing");
@@ -158,10 +160,10 @@ class PdkDataBrowserTest {
     // ---- getTableInfo ----------------------------------------------------------------------------
 
     @Test
-    void tableInfoCarriesTheRowCountAndSizesTheConnectorReports(@TempDir Path dir) {
+    void statsCarriesTheRowCountAndSizesTheConnectorReports(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        DataBrowserTableInfo info = reader.tableInfo(config(), "orders");
+        DataBrowserTableInfo info = reader.stats(config(), "orders");
 
         assertThat(info.numOfRows()).isEqualTo(512L);
         assertThat(info.storageSize()).isEqualTo(4096L);
@@ -169,10 +171,10 @@ class PdkDataBrowserTest {
     }
 
     @Test
-    void tableInfoFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
+    void statsFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
 
-        assertThatThrownBy(() -> reader.tableInfo(config(), "orders"))
+        assertThatThrownBy(() -> reader.stats(config(), "orders"))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.capability-missing");
@@ -181,104 +183,104 @@ class PdkDataBrowserTest {
     // ---- executeCommand --------------------------------------------------------------------------
 
     @Test
-    void queryPinsTheCommandToExecuteQuery(@TempDir Path dir) {
+    void findPinsTheCommandToExecuteQuery(@TempDir Path dir) {
         // The command name is the connector's dispatch key: "execute" and "update" reach write paths on
         // the same function. It is assembled here and is not a caller input, so the read face has no
         // spelling that reaches anything but a query.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
         assertThat(echoed(rows, "command")).isEqualTo("executeQuery");
     }
 
     @Test
-    void queryCollectsEveryResultBatchTheConnectorEmits(@TempDir Path dir) {
+    void findCollectsEveryResultBatchTheConnectorEmits(@TempDir Path dir) {
         // executeQuery hands its rows to a consumer per batch (mongodb's default batch is 1000), so a
         // drive that assumes one callback returns a truncated page - and a truncated page is read
         // downstream as "that is all there is", with nothing reporting otherwise.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
         assertThat(rows).hasSize(3);
     }
 
     @Test
-    void queryNamesTheConnectionsOwnDatabaseInTheParams(@TempDir Path dir) {
+    void findNamesTheConnectionsOwnDatabaseInTheParams(@TempDir Path dir) {
         // Which database a read may touch follows from the connection, never from the request. Leaving
         // the param out happens to work against one connector, which fills its own in when the request
         // omits it - the other mongo variants do not, and a read that lands in the wrong database, or in
         // none, reports nothing wrong. Three databases share one mongod here, two of them ours.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.query(config("shop"), new DataBrowserQuery("orders", Map.of(), 10));
+        List<Map<String, Object>> rows = reader.find(config("shop"), new DataBrowserQuery("orders", Map.of(), 10));
 
         assertThat(echoed(rows, "database-as-it-arrived")).isEqualTo("shop");
     }
 
     @Test
-    void queryOmitsTheDatabaseParamWhenTheConnectionCarriesNone(@TempDir Path dir) {
+    void findOmitsTheDatabaseParamWhenTheConnectionCarriesNone(@TempDir Path dir) {
         // Nothing validates that a stored connection's settings name a database, so this is reachable.
         // Sending the key with a null value is the one answer that is worse than either alternative: it
         // names no database and, being present, stops the connector filling its own in. Omit it instead,
         // which leaves that connection exactly where it was before this face existed.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
         assertThat(echoed(rows, "database-as-it-arrived")).isEqualTo("<none-was-sent>");
     }
 
     @Test
-    void queryCarriesTheCollectionIntoTheParams(@TempDir Path dir) {
+    void findCarriesTheCollectionIntoTheParams(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
         assertThat(echoed(rows, "collection")).isEqualTo("orders");
     }
 
     @Test
-    void queryHandsTheConnectorAParamsMapItCanWriteInto(@TempDir Path dir) {
+    void findHandsTheConnectorAParamsMapItCanWriteInto(@TempDir Path dir) {
         // A connector fills a missing param into the caller's own map rather than a copy - mongodb puts
         // the connection's database in when the request omits it. An immutable map throws there, and
         // only on the paths that omit that param, so it stays green until it does not.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        assertThatCode(() -> reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatCode(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .doesNotThrowAnyException();
     }
 
     @Test
-    void queryFailsWithACodeWhenTheConnectorReportsAnError(@TempDir Path dir) {
+    void findFailsWithACodeWhenTheConnectorReportsAnError(@TempDir Path dir) {
         // The failure arrives through the result rather than as a throw, so a drive that reads only
         // getResult() returns an empty page for a query that in fact failed.
         PdkDataBrowser reader = reader(Synthetic.erroringQuerySource(dir), "synthetic.ErroringQuery");
 
-        assertThatThrownBy(() -> reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.read-failed");
     }
 
     @Test
-    void queryFailsWithACodeWhenTheConnectorThrows(@TempDir Path dir) {
+    void findFailsWithACodeWhenTheConnectorThrows(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.throwingQuerySource(dir), "synthetic.ThrowingQuery");
 
-        assertThatThrownBy(() -> reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.read-failed");
     }
 
     @Test
-    void queryFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
+    void findFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
         // The read face is reachable by a user, so a connector that cannot serve it is a coded refusal
         // naming the connector and the capability - not the bare crash a caller invariant would take.
         PdkDataBrowser reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
 
-        assertThatThrownBy(() -> reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.capability-missing");

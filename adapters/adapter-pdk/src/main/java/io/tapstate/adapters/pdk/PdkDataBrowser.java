@@ -2,6 +2,9 @@ package io.tapstate.adapters.pdk;
 
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowser;
+import io.tapstate.spi.store.DataBrowserQuery;
+import io.tapstate.spi.store.DataBrowserTableInfo;
 import io.tapdata.pdk.apis.entity.ExecuteResult;
 import io.tapdata.pdk.apis.entity.TapExecuteCommand;
 import io.tapdata.pdk.apis.functions.connection.GetTableInfoFunction;
@@ -51,7 +54,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *       param, which is why it stays green until it does not.
  * </ul>
  */
-public final class PdkDataBrowser implements AutoCloseable {
+public final class PdkDataBrowser implements DataBrowser {
 
     /**
      * The one command the read face dispatches. A connector routes writes through this same function
@@ -85,8 +88,8 @@ public final class PdkDataBrowser implements AutoCloseable {
         evictions.scheduleWithFixedDelay(pool::sweep, period, period, TimeUnit.MILLISECONDS);
     }
 
-    /** Lists the collections the connection's own database holds, in the order the connector reports them. */
-    public List<String> tableNames(ConnectionConfig config) {
+    @Override
+    public List<String> collections(ConnectionConfig config) {
         return pool.call(config, connector -> {
             GetTableNamesFunction names = require(
                     connector, connector.functions().getGetTableNamesFunction(), "getTableNames");
@@ -101,8 +104,8 @@ public final class PdkDataBrowser implements AutoCloseable {
         });
     }
 
-    /** Reports what the connector knows about one collection's size. */
-    public DataBrowserTableInfo tableInfo(ConnectionConfig config, String collection) {
+    @Override
+    public DataBrowserTableInfo stats(ConnectionConfig config, String collection) {
         return pool.call(config, connector -> {
             GetTableInfoFunction info = require(
                     connector, connector.functions().getGetTableInfoFunction(), "getTableInfo");
@@ -113,8 +116,8 @@ public final class PdkDataBrowser implements AutoCloseable {
         });
     }
 
-    /** Runs {@code query} against the connection's own database and returns the rows it matched. */
-    public List<Map<String, Object>> query(ConnectionConfig config, DataBrowserQuery query) {
+    @Override
+    public List<Map<String, Object>> find(ConnectionConfig config, DataBrowserQuery query) {
         return pool.call(config, connector -> {
             ExecuteCommandFunction execute = require(
                     connector, connector.functions().getExecuteCommandFunction(), "executeCommand");

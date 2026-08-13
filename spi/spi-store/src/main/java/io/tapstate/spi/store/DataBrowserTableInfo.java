@@ -1,4 +1,4 @@
-package io.tapstate.adapters.pdk;
+package io.tapstate.spi.store;
 
 /**
  * What a connector reports about one collection: how many rows it holds and how large it is. An

@@ -1,4 +1,4 @@
-package io.tapstate.adapters.pdk;
+package io.tapstate.spi.store;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;

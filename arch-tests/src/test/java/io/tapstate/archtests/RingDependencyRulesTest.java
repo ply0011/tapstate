@@ -370,7 +370,8 @@ class RingDependencyRulesTest {
                 .as("every connector-driving port carries the execution-port marker")
                 .contains(
                         "io.tapstate.spi.store.ConnectionTester",
-                        "io.tapstate.spi.store.SchemaDiscoverer");
+                        "io.tapstate.spi.store.SchemaDiscoverer",
+                        "io.tapstate.spi.store.DataBrowser");
         noClasses().that().resideInAPackage("io.tapstate.control..")
                 .should().dependOnClassesThat(anSpiExecutionPort)
                 .allowEmptyShould(true)
