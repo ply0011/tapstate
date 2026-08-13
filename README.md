@@ -1,20 +1,37 @@
 # tapstate — preview
 
+## Build one current business view from data that changes across operational systems
+
+Orders, accounts, inventory, and customer state rarely live in one place. tapstate is
+an open-source **unified operational data engine** designed to turn database log
+changes into continuously maintained, application-ready state.
+
 **Capture. Transform. Serve. One deployable.**
 
-tapstate is an open-source unified operational data engine. It captures and unifies
-database changes, then serves live operational state to applications and AI agents.
-
-Instead of operating separate CDC, event-streaming, stream-processing, and serving
-products, tapstate is designed to provide one data path and one operational surface:
-
 ```text
-production systems -> log-based CDC -> incremental transform -> live operational state
-                                                            -> pull or push consumers
+database log changes -> incremental transform and consolidation -> live operational state
+                                                               -> applications and AI agents
 ```
 
-tapstate is built for platform and data infrastructure teams that need current
-business state without turning freshness into an integration project.
+Instead of operating separate CDC, event-streaming, stream-processing, and serving
+products, tapstate is designed to provide one data path and one operational surface.
+
+### See the current preview work
+
+The released preview proves a deliberately narrow, single-source slice of that path:
+a real MySQL snapshot and CDC update are transformed in flight and materialized into
+a MongoDB-backed preview store.
+
+```sh
+curl -sSL https://install.tapstate.dev | sh
+```
+
+The script creates an isolated `tapstate-demo` directory and runs the complete
+verification flow. The runtime is an early, single-node preview—not production-ready.
+It does not yet demonstrate cross-source consolidation, high availability, durable
+offset resume, exactly-once delivery, a stable State Data API, or push delivery.
+See [Project status](#project-status) and the
+[full quickstart](docs/quickstart-online.md) before evaluating it for a workload.
 
 > From the team behind TapData, hardened through years of production CDC and real-time data movement work.
 
