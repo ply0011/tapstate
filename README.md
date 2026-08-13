@@ -2,7 +2,7 @@
 
 ## Build one current business view from data that changes across operational systems
 
-Orders, accounts, inventory, and customer state rarely live in one place. tapstate is
+Orders, accounts, inventory, and customer state rarely live in one database. tapstate is
 an open-source **unified operational data engine** designed to turn database log
 changes into continuously maintained, application-ready state.
 
@@ -16,21 +16,19 @@ database log changes -> incremental transform and consolidation -> live operatio
 Instead of operating separate CDC, event-streaming, stream-processing, and serving
 products, tapstate is designed to provide one data path and one operational surface.
 
-### See the current preview work
+### Try the verified preview
 
-The released preview proves a deliberately narrow, single-source slice of that path:
-a real MySQL snapshot and CDC update are transformed in flight and materialized into
-a MongoDB-backed preview store.
+The current public preview runs a deliberately narrow, single-source path:
+MySQL snapshot plus CDC → map transform → MongoDB-backed preview store.
 
 ```sh
 curl -sSL https://install.tapstate.dev | sh
 ```
 
-The script creates an isolated `tapstate-demo` directory and runs the complete
-verification flow. The runtime is an early, single-node preview—not production-ready.
-It does not yet demonstrate cross-source consolidation, high availability, durable
-offset resume, exactly-once delivery, a stable State Data API, or push delivery.
-See [Project status](#project-status) and the
+The script creates an isolated `tapstate-demo` directory, verifies snapshot
+materialization, and prints the commands for exercising a CDC update. The runtime is
+an early, single-node preview—not production-ready. It does not yet demonstrate
+cross-source consolidation. See [Project status](#project-status) and the
 [full quickstart](docs/quickstart-online.md) before evaluating it for a workload.
 
 > From the team behind TapData, hardened through years of production CDC and real-time data movement work.
