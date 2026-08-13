@@ -410,6 +410,10 @@ It does not claim to replace every use of Kafka, Flink, streaming databases, or
 warehouses. Those systems remain appropriate when event distribution, general-purpose
 stream computation, or historical analytics is the primary requirement.
 
+**Alpha+ demonstrates only an early slice of this boundary:** MySQL capture, an
+in-flight map transform, and materialization into the preview store. It does not yet
+demonstrate cross-source consolidation or application-facing Serve.
+
 ### What does “four products in one” mean? Is tapstate one binary?
 
 “Four products in one” refers to four operational responsibilities:
@@ -431,13 +435,19 @@ backing store. Only the offline CLI is a standalone native binary.
 “One deployable” therefore means one integrated product experience—not one executable
 file.
 
-### Whose MongoDB is it, and what does tapstate manage?
+### What role does MongoDB play, and what does tapstate manage?
 
-Alpha+ includes a single-node MongoDB replica set as tapstate’s reference backing
-store. Users do not need to install MongoDB separately, provide a MongoDB URI, or
-configure its namespaces and indexes for the demo path.
+Tapstate’s intended storage model is to own the lifecycle and semantics of the state
+it maintains while allowing deployment choices to evolve. MongoDB is the reference
+backing store because its document model naturally represents nested business objects,
+such as an order containing shipment state. This choice does not make tapstate a
+MongoDB-only architecture. Customer-managed MongoDB and other external-store
+deployment options remain future work.
 
-Within this preview experience, tapstate manages:
+**In Alpha+,** the local installation includes a single-node MongoDB replica set as
+the Tapstate-managed **preview** store. Users do not install MongoDB separately,
+provide a MongoDB URI, or configure its namespaces and indexes for the demo path.
+Tapstate manages:
 
 - Bootstrap and connection configuration
 - Readiness checks
@@ -445,17 +455,9 @@ Within this preview experience, tapstate manages:
 - Indexes required by tapstate-maintained state
 - Startup and teardown as part of the local deployment
 
-This is a **Tapstate-managed preview store**, not a production MongoDB service.
-Alpha+ does not promise high availability, backup and restore, upgrades, migration,
-capacity management, comprehensive monitoring, security hardening, or an operational
-SLA.
-
-MongoDB is the reference backing store because its document model naturally
-represents the nested business objects tapstate maintains, such as an order containing
-shipment state. This choice does not make tapstate a MongoDB-only architecture.
-
-Using a customer-managed external MongoDB—or another external store—is a future
-deployment option, not part of the Alpha+ promise.
+This preview scope is not a production MongoDB service. Alpha+ does not promise high
+availability, backup and restore, upgrades, migration, capacity management,
+comprehensive monitoring, security hardening, or an operational SLA.
 
 ### How will tapstate handle recovery and correctness, and what works in Alpha+?
 
@@ -503,13 +505,12 @@ maintained state and query surface. Otherwise, behavior would vary according to 
 external database’s indexing, query language, consistency model, permissions, and
 availability.
 
-**In Alpha+, query is deliberately narrow.** It only serves declared views in the
-Tapstate-managed preview store. A user cannot configure an arbitrary MySQL, Oracle,
-MongoDB, or another sync target as the backend for a tapstate query.
-
-Alpha+ provides administrative and evaluation access through the planned Data
-Browser, terminal watch experience, and MCP read tools. These are inspection tools,
-not Serve. A stable application-facing State Data API remains future work.
+**Alpha+ does not deliver the application-facing query surface described above.**
+It provides administrative and evaluation access to declared views through the
+planned Data Browser, terminal watch experience, and MCP read tools. These are
+inspection tools, not Serve. They inspect only Tapstate-owned preview state; they do
+not turn arbitrary MySQL, Oracle, MongoDB, or external sync targets into tapstate
+query backends. A stable application-facing State Data API remains future work.
 
 ### What does “Serve” mean, and is it available in Alpha+?
 
