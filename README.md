@@ -16,7 +16,7 @@ database log changes -> incremental transform and consolidation -> live operatio
 Instead of operating separate CDC, event-streaming, stream-processing, and serving
 products, tapstate is designed to provide one data path and one operational surface.
 
-### Try the verified preview
+### Try the runnable preview
 
 The current public preview runs a deliberately narrow, single-source path:
 MySQL snapshot plus CDC → map transform → MongoDB-backed preview store.
