@@ -281,7 +281,7 @@ class RingDependencyRulesTest {
     void r5_controlToRuntimeSyncWhitelistHasNoFurtherChannel() {
         // A control-to-runtime sync channel is a runtime interface control reaches for. The whitelist is
         // a closed set of exactly six such interfaces: connection test, schema discovery, and the four
-        // channels the query surface needs (listing a source's collections, reading its documents,
+        // channels the data browser needs (listing a source's collections, reading its documents,
         // reading its table stats, and following its changes). The probes' value types are storage-port
         // types (the connection config or query request they take, the result they return), carried as
         // payload, not channels of their own. This gate bans a further channel — another probe interface
@@ -296,10 +296,10 @@ class RingDependencyRulesTest {
                         .and(DescribedPredicate.describe("interfaces", JavaClass::isInterface))
                         .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.ConnectionProbe")))
                         .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.SchemaDiscoveryProbe")))
-                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.StoreCollectionsProbe")))
-                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.StoreFindProbe")))
-                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.StoreStatsProbe")))
-                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.StoreTailProbe")))
+                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.DataBrowserCollectionsProbe")))
+                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.DataBrowserFindProbe")))
+                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.DataBrowserStatsProbe")))
+                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.DataBrowserTailProbe")))
                         .as("a control-to-runtime sync channel outside the whitelist");
         noClasses().that().resideInAPackage("io.tapstate.control..")
                 .should().dependOnClassesThat(aRuntimeSyncChannelOutsideTheWhitelist)
@@ -351,7 +351,7 @@ class RingDependencyRulesTest {
         // ports), and the spi execution ports — the ports the probes delegate to, the ones that drive a
         // connector — live in that same package. Compiling against them from control-core would silently
         // bypass the runtime seam: legal to the package rule above, but a reversal of the sync-whitelist
-        // decision (testing, discovery and store queries run where the connectors run — the runtime
+        // decision (testing, discovery and data-browser reads run where the connectors run — the runtime
         // side). This gate turns that bypass red instead of leaving it to prose.
         //
         // Identified by the marker interface, not by name. A name list fails in the worst direction:
