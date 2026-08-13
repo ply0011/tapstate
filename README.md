@@ -389,6 +389,26 @@ verbs exit with code `3`.
 - Deployment: coming soon
 - FAQ: coming soon
 
+## FAQ
+
+### How is tapstate different from CDC, Kafka, Flink, streaming databases, or a warehouse?
+
+They solve different parts of the data path:
+
+- CDC tools capture database changes but do not by themselves consolidate and serve application-ready state.
+- Kafka distributes durable event streams and decouples producers from consumers. It remains valuable when events need independent consumers or replay outside tapstate’s product boundary.
+- Flink and similar processors provide general-purpose stateful stream computation, typically alongside separate capture, messaging, and serving infrastructure.
+- Streaming databases and materialized-view engines maintain continuously updated views, but commonly rely on upstream capture or messaging and have their own query or sink boundaries.
+- Warehouses are designed primarily for historical analysis, governance, and analytical workloads—not as the default operational serving path for applications.
+
+tapstate focuses on the complete database-to-operational-state path: capture database
+changes, transform and consolidate them incrementally, maintain current state, and
+expose that state to operational consumers through one deployable product experience.
+
+It does not claim to replace every use of Kafka, Flink, streaming databases, or
+warehouses. Those systems remain appropriate when event distribution, general-purpose
+stream computation, or historical analytics is the primary requirement.
+
 ## Community
 
 - Website: https://tapstate.com
