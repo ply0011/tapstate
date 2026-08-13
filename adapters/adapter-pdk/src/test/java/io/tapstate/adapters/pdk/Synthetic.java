@@ -725,6 +725,11 @@ final class Synthetic {
      * {@code database} into the caller's own params map — so a caller that passes an immutable map
      * fails here exactly as it would there. The query echoes what it was handed back as rows, so a
      * test can assert on the request the drive assembled.
+     *
+     * <p>The {@code database} echo is captured <em>before</em> the connector fills its own in, and the
+     * fill stays unconditional. Both halves are load-bearing: reading the param after the fill would
+     * report the connector's value whatever the caller sent, and making the fill conditional would take
+     * the write away from the one test that proves the map is writable.
      */
     static Path readFaceSource(Path dir) {
         String register = ""
@@ -736,6 +741,12 @@ final class Synthetic {
                 + "  TableInfo.create().numOfRows(512L).storageSize(4096L).avgObjSize(8L));"
                 + "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
                 + "  Map<String,Object> params = command.getParams();"
+                // Sentinels rather than null: the echo travels back as a row value, and a null one is
+                // indistinguishable from "no such echo" at the far end. Absent and present-but-null are
+                // kept apart because they are different mistakes -- the second one also defeats the fill
+                // below, so a caller that sends null is worse off than one that sends nothing.
+                + "  Object arrivedDatabase = params.get(\"database\") != null ? params.get(\"database\")"
+                + "    : (params.containsKey(\"database\") ? \"<sent-but-null>\" : \"<none-was-sent>\");"
                 + "  params.put(\"database\", \"filled-in-by-the-connector\");"
                 + "  Map<String,Object> first = new LinkedHashMap<>();"
                 + "  first.put(\"echoed\", \"command\"); first.put(\"value\", command.getCommand());"
@@ -745,6 +756,10 @@ final class Synthetic {
                 + "  second.put(\"echoed\", \"collection\"); second.put(\"value\", params.get(\"collection\"));"
                 + "  List<Map<String,Object>> batch2 = new ArrayList<>(); batch2.add(second);"
                 + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch2));"
+                + "  Map<String,Object> third = new LinkedHashMap<>();"
+                + "  third.put(\"echoed\", \"database-as-it-arrived\"); third.put(\"value\", arrivedDatabase);"
+                + "  List<Map<String,Object>> batch3 = new ArrayList<>(); batch3.add(third);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch3));"
                 + "});";
         return SyntheticJar.compileToJar(dir, "synthetic.ReadFace", readFace("ReadFace", register));
     }

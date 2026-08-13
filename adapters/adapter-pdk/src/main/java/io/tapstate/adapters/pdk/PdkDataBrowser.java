@@ -126,7 +126,7 @@ public final class PdkDataBrowser implements AutoCloseable {
             drive(connector, () -> {
                 TapExecuteCommand command = TapExecuteCommand.create()
                         .command(QUERY_COMMAND)
-                        .params(params(query));
+                        .params(params(config, query));
                 execute.execute(connector.context(), command, result -> collect(result, rows, reported));
                 return null;
             });
@@ -183,8 +183,19 @@ public final class PdkDataBrowser implements AutoCloseable {
      * <p>The map carries what the read needs and nothing that would widen it: no command to dispatch
      * on, and no database, so the read reaches only what the connection already points at.
      */
-    private static Map<String, Object> params(DataBrowserQuery query) {
+    private static Map<String, Object> params(ConnectionConfig config, DataBrowserQuery query) {
         Map<String, Object> params = new LinkedHashMap<>();
+        // Which database a read may touch follows from the connection and is assembled here, never taken
+        // from the request. Omitting it leans on a fallback only one connector has, and a read that lands
+        // in the wrong database reports nothing wrong.
+        //
+        // Only when the connection names one. Nothing validates that it does, and sending the key with a
+        // null value is worse than sending nothing: it names no database and, being present, stops the
+        // connector filling its own in.
+        Object database = config.settings().get("database");
+        if (database != null) {
+            params.put("database", database);
+        }
         params.put("collection", query.collection());
         // A filter is always present, empty meaning every row: a connector hands its absence straight to
         // the driver as a null filter, which the driver rejects.

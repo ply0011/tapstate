@@ -201,7 +201,33 @@ class PdkDataBrowserTest {
 
         List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
-        assertThat(rows).hasSize(2);
+        assertThat(rows).hasSize(3);
+    }
+
+    @Test
+    void queryNamesTheConnectionsOwnDatabaseInTheParams(@TempDir Path dir) {
+        // Which database a read may touch follows from the connection, never from the request. Leaving
+        // the param out happens to work against one connector, which fills its own in when the request
+        // omits it - the other mongo variants do not, and a read that lands in the wrong database, or in
+        // none, reports nothing wrong. Three databases share one mongod here, two of them ours.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        List<Map<String, Object>> rows = reader.query(config("shop"), new DataBrowserQuery("orders", Map.of(), 10));
+
+        assertThat(echoed(rows, "database-as-it-arrived")).isEqualTo("shop");
+    }
+
+    @Test
+    void queryOmitsTheDatabaseParamWhenTheConnectionCarriesNone(@TempDir Path dir) {
+        // Nothing validates that a stored connection's settings name a database, so this is reachable.
+        // Sending the key with a null value is the one answer that is worse than either alternative: it
+        // names no database and, being present, stops the connector filling its own in. Omit it instead,
+        // which leaves that connection exactly where it was before this face existed.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
+
+        assertThat(echoed(rows, "database-as-it-arrived")).isEqualTo("<none-was-sent>");
     }
 
     @Test
