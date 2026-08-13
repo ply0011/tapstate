@@ -430,6 +430,32 @@ backing store. Only the offline CLI is a standalone native binary.
 “One deployable” therefore means one integrated product experience—not one executable
 file.
 
+### Whose MongoDB is it, and what does tapstate manage?
+
+Alpha+ includes a single-node MongoDB replica set as tapstate’s reference backing
+store. Users do not need to install MongoDB separately, provide a MongoDB URI, or
+configure its namespaces and indexes for the demo path.
+
+Within this preview experience, tapstate manages:
+
+- Bootstrap and connection configuration
+- Readiness checks
+- Internal database and collection namespaces
+- Indexes required by tapstate-maintained state
+- Startup and teardown as part of the local deployment
+
+This is a **Tapstate-managed preview store**, not a production MongoDB service.
+Alpha+ does not promise high availability, backup and restore, upgrades, migration,
+capacity management, comprehensive monitoring, security hardening, or an operational
+SLA.
+
+MongoDB is the reference backing store because its document model naturally
+represents the nested business objects tapstate maintains, such as an order containing
+shipment state. This choice does not make tapstate a MongoDB-only architecture.
+
+Using a customer-managed external MongoDB—or another external store—is a future
+deployment option, not part of the Alpha+ promise.
+
 ## Community
 
 - Website: https://tapstate.com
