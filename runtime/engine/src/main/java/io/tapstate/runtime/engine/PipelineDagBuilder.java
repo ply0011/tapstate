@@ -15,6 +15,7 @@ import io.tapstate.core.model.ServeBlock;
 import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
 import io.tapstate.core.model.TransformBody;
+import io.tapstate.core.model.ViewBlock;
 import io.tapstate.spi.sink.SinkWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -34,6 +35,13 @@ public final class PipelineDagBuilder {
      * between the builder that stamps it and the engine that reads it.
      */
     static final String SERVE_VERTEX_PREFIX = "serve.";
+
+    /**
+     * The name prefix every view materialization vertex carries. Kept distinct from the serve prefix so
+     * a measurement can still say which output it belongs to - delivered outward, or materialized into
+     * the state store - while both count as output the engine sums.
+     */
+    static final String VIEW_VERTEX_PREFIX = "view.";
 
     private PipelineDagBuilder() {
     }
@@ -77,12 +85,31 @@ public final class PipelineDagBuilder {
             }
         }
 
+        if (pipeline.view() instanceof ViewBlock.Use) {
+            throw new IllegalArgumentException(
+                    "view block is a use-reference; resolve it to an inline view first");
+        }
+        // A view id names data, not a vertex that can be read from: the view compiles to a terminal
+        // sink, so a downstream reference to it resolves to whatever the view itself reads. Without
+        // this the parser's own default - serve.from = the view's id - resolves to no vertex at all.
+        Map<String, List<Vertex>> readsAs = new HashMap<>();
+
+        if (pipeline.view() instanceof ViewBlock.Inline view) {
+            // A declared view IS its own instruction to materialize: the pipeline needs no serve block
+            // to reach the state store, and the vertex is a terminal sink like any other.
+            List<Vertex> upstream = resolve(view.from(), byKey, bindings);
+            Vertex vertex = dag.newVertex(VIEW_VERTEX_PREFIX + view.id(),
+                    sinkVertex(bindings.viewSinks().apply(view), sinkAck));
+            connect(dag, upstream, vertex, outboundOrdinal, inboundOrdinal);
+            readsAs.put(view.id(), upstream);
+        }
+
         if (pipeline.serve() instanceof ServeBlock.Use) {
             throw new IllegalArgumentException(
                     "serve block is a use-reference; resolve it to an inline serve first");
         }
         if (pipeline.serve() instanceof ServeBlock.Inline serve && serve.sync() != null) {
-            List<Vertex> upstream = resolve(serve.from(), byKey, bindings);
+            List<Vertex> upstream = resolve(serve.from(), byKey, bindings, readsAs);
             List<SyncElement> sync = serve.sync();
             for (int i = 0; i < sync.size(); i++) {
                 SyncElement element = sync.get(i);
@@ -153,6 +180,22 @@ public final class PipelineDagBuilder {
      * not a user error - it bare-throws rather than emitting a broken DAG.
      */
     private static List<Vertex> resolve(FromRef ref, Map<String, Vertex> byKey, DagBindings bindings) {
+        return resolve(ref, byKey, bindings, Map.of());
+    }
+
+    /**
+     * As above, but first honours the names that stand for data rather than for a vertex - today a
+     * declared view, which is a terminal sink and so cannot itself be read from. Reading such a name
+     * means reading what it reads, which is a fan-out from the shared upstream rather than a chain.
+     */
+    private static List<Vertex> resolve(FromRef ref, Map<String, Vertex> byKey, DagBindings bindings,
+            Map<String, List<Vertex>> readsAs) {
+        if (ref instanceof FromRef.Literal literal) {
+            List<Vertex> aliased = readsAs.get(literal.ref());
+            if (aliased != null) {
+                return aliased;
+            }
+        }
         List<String> keys = bindings.upstreams().apply(ref);
         if (keys == null || keys.isEmpty()) {
             throw new IllegalStateException("reference " + ref + " resolved to no upstream vertex");

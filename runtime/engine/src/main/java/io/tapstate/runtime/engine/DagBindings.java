@@ -5,6 +5,7 @@ import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import io.tapstate.core.model.FromRef;
 import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
+import io.tapstate.core.model.ViewBlock;
 import io.tapstate.spi.sink.SinkWriter;
 import io.tapstate.spi.transform.TransformPort;
 import java.util.List;
@@ -26,6 +27,11 @@ import java.util.function.Function;
  *       writes it. A bare writer factory, not a vertex: the builder alone wraps it in the one generic
  *       sink adapter, so no caller can substitute a per-connector sink processor. Write mode, ddl
  *       policy and the target connector fold in behind the writer the factory opens on the member.
+ *   <li>{@code viewSinks} - a pipeline's {@code view:} block to the factory of the sink writer that
+ *       materializes it. Same shape and same reason as {@code sinkWriters}: a bare writer factory the
+ *       builder alone wraps, so no caller can substitute a per-store sink processor. Where the view
+ *       lands - which store, which collection, which indexes - folds in behind the factory, so the
+ *       engine never learns the state store's addressing.
  *   <li>{@code upstreams} - a resolved {@code from:} reference to the producer vertex keys it names
  *       (source ids or step ids). Reference resolution against the source universe lives with the
  *       caller, so the engine never sees the table universe.
@@ -36,7 +42,8 @@ public record DagBindings(
         Function<Step, SupplierEx<? extends TransformPort>> transformPorts,
         Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
         Function<FromRef, List<String>> upstreams,
-        Function<String, List<String>> sourceKeys) {
+        Function<String, List<String>> sourceKeys,
+        Function<ViewBlock, SupplierEx<? extends SinkWriter>> viewSinks) {
 
     public DagBindings(
             Function<String, ProcessorMetaSupplier> sourceVertices,
@@ -44,5 +51,17 @@ public record DagBindings(
             Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
             Function<FromRef, List<String>> upstreams) {
         this(sourceVertices, transformPorts, sinkWriters, upstreams, sourceId -> List.of(sourceId));
+    }
+
+    public DagBindings(
+            Function<String, ProcessorMetaSupplier> sourceVertices,
+            Function<Step, SupplierEx<? extends TransformPort>> transformPorts,
+            Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
+            Function<FromRef, List<String>> upstreams,
+            Function<String, List<String>> sourceKeys) {
+        this(sourceVertices, transformPorts, sinkWriters, upstreams, sourceKeys, view -> {
+            throw new IllegalStateException(
+                    "pipeline declares a view but no view-sink binding was supplied");
+        });
     }
 }
