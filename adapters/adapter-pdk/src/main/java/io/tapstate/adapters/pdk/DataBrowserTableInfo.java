@@ -12,5 +12,5 @@ package io.tapstate.adapters.pdk;
  * estimate that drifts rather than a counted total. {@code storageSize} and {@code avgObjSize} are
  * bytes.
  */
-public record StoreTableInfo(Long numOfRows, Long storageSize, Long avgObjSize) {
+public record DataBrowserTableInfo(Long numOfRows, Long storageSize, Long avgObjSize) {
 }

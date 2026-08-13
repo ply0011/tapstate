@@ -658,7 +658,7 @@ final class Synthetic {
                 Map.of("PDK-API-Version", "1.3.5"));
     }
 
-    /** The shared scaffold for a store-read connector: the three read-face functions the caller fills in. */
+    /** The shared scaffold for a data-browser connector: the three read-face functions the caller fills in. */
     private static String readFace(String simpleName, String registerBody) {
         return readFace(simpleName, registerBody,
                 "  public void init(TapConnectionContext c) {}"
@@ -666,7 +666,7 @@ final class Synthetic {
     }
 
     /**
-     * A store-read connector that appends every {@code init} and {@code stop} it is driven through to
+     * A data-browser connector that appends every {@code init} and {@code stop} it is driven through to
      * the file named by the {@code synthetic.marker} system property. Counting these from the outside
      * needs a channel that outlives one connector's isolated class loader — a static counter inside the
      * connector is reset by every fresh load, which is exactly the thing under test — and a file read
@@ -719,7 +719,7 @@ final class Synthetic {
     }
 
     /**
-     * A store-read connector registering all three read-face functions, each shaped after the real
+     * A data-browser connector registering all three read-face functions, each shaped after the real
      * mongodb connector's own behaviour: table names arrive in more than one consumer batch, query
      * results arrive in more than one {@code ExecuteResult}, and the query fills a missing
      * {@code database} into the caller's own params map — so a caller that passes an immutable map
@@ -749,7 +749,7 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.ReadFace", readFace("ReadFace", register));
     }
 
-    /** A store-read connector whose query reports its failure through {@code ExecuteResult.error}. */
+    /** A data-browser connector whose query reports its failure through {@code ExecuteResult.error}. */
     static Path erroringQuerySource(Path dir) {
         String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
                 + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>()"
@@ -758,7 +758,7 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.ErroringQuery", readFace("ErroringQuery", register));
     }
 
-    /** A store-read connector whose query throws out of the function itself. */
+    /** A data-browser connector whose query throws out of the function itself. */
     static Path throwingQuerySource(Path dir) {
         String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
                 + "  throw new RuntimeException(\"execute boom\");"

@@ -18,9 +18,9 @@ import java.util.Objects;
  * <p>{@code filter} is held as an unmodifiable defensive copy; a null map is normalized to empty,
  * which reads every row. {@code limit} bounds one read.
  */
-public record StoreQuery(String collection, Map<String, Object> filter, int limit) {
+public record DataBrowserQuery(String collection, Map<String, Object> filter, int limit) {
 
-    public StoreQuery {
+    public DataBrowserQuery {
         Objects.requireNonNull(collection, "collection");
         filter = filter == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(filter));
     }

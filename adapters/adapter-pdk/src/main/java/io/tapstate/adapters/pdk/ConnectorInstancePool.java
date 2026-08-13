@@ -119,7 +119,7 @@ final class ConnectorInstancePool<T> implements AutoCloseable {
         // Calls run off the caller's thread so one that never returns can be abandoned at the call
         // limit; daemon threads so an abandoned call cannot hold the host open on the way out.
         this.calls = Executors.newCachedThreadPool(runnable -> {
-            Thread thread = new Thread(runnable, "store-read-call");
+            Thread thread = new Thread(runnable, "data-browser-call");
             thread.setDaemon(true);
             return thread;
         });

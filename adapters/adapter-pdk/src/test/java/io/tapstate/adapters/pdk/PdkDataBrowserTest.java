@@ -20,30 +20,30 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The store-read PDK bridge: {@link PdkStoreReader} driving the three read-face functions a connector
+ * The data-browser PDK bridge: {@link PdkDataBrowser} driving the three read-face functions a connector
  * may register — {@code getTableNames}, {@code getTableInfo} and {@code executeCommand}. Synthetic
  * connectors compiled at test time prove the drive and the coded-error paths without a real connector
  * jar or the PDK runtime; each is shaped after the behaviour a real connector actually exhibits, so a
  * drive that holds here holds there.
  */
-class PdkStoreReaderTest {
+class PdkDataBrowserTest {
 
-    private final List<PdkStoreReader> readers = new ArrayList<>();
+    private final List<PdkDataBrowser> readers = new ArrayList<>();
 
     @AfterEach
     void closeReaders() {
-        readers.forEach(PdkStoreReader::close);
+        readers.forEach(PdkDataBrowser::close);
         System.clearProperty("synthetic.marker");
     }
 
     /** A reader over a provisioner that hands back one fixed connector ref, whatever id is asked for. */
-    private PdkStoreReader reader(Path jar, String className) {
+    private PdkDataBrowser reader(Path jar, String className) {
         return reader(jar, className, ConnectorInstancePool.DEFAULTS);
     }
 
-    private PdkStoreReader reader(Path jar, String className, ConnectorInstancePool.Limits limits) {
+    private PdkDataBrowser reader(Path jar, String className, ConnectorInstancePool.Limits limits) {
         ConnectorRef ref = new ConnectorRef(List.of(jar), className, "2.0.8", null);
-        PdkStoreReader reader = new PdkStoreReader(connectorId -> ref, limits, Clock.systemUTC());
+        PdkDataBrowser reader = new PdkDataBrowser(connectorId -> ref, limits, Clock.systemUTC());
         readers.add(reader);
         return reader;
     }
@@ -78,7 +78,7 @@ class PdkStoreReaderTest {
         // Opening is a class loader, a linked jar and a constructed connector, and initializing is what
         // builds the driver's own connection pool behind it. Paying that per query is what rules out any
         // caller that reads on a timer.
-        PdkStoreReader reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
+        PdkDataBrowser reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
         Path marker = marker(dir);
 
         reader.tableNames(config());
@@ -91,7 +91,7 @@ class PdkStoreReaderTest {
     void opensASecondConnectorOnceTheConnectionSettingsChange(@TempDir Path dir) throws IOException {
         // The instance holds the settings it was opened with, so an applied change has to reach the next
         // read. Kept across it, the read answers from the old database and reports nothing wrong.
-        PdkStoreReader reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
+        PdkDataBrowser reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
         Path marker = marker(dir);
 
         reader.tableNames(config("one"));
@@ -104,7 +104,7 @@ class PdkStoreReaderTest {
     void stopsThePooledConnectorWhenTheReaderCloses(@TempDir Path dir) throws IOException {
         // A pooled instance is live: it holds its class loader open and its driver's connections with it,
         // so shutting the face down has to hand them back rather than drop the reference.
-        PdkStoreReader reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
+        PdkDataBrowser reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
         Path marker = marker(dir);
         reader.tableNames(config());
 
@@ -119,7 +119,7 @@ class PdkStoreReaderTest {
         // a face nobody is using holds its connections for as long as nobody uses it - which is exactly
         // when they should have been given back.
         ConnectorInstancePool.Limits limits = ConnectorInstancePool.DEFAULTS.withIdle(Duration.ofMillis(50));
-        PdkStoreReader reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording", limits);
+        PdkDataBrowser reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording", limits);
         Path marker = marker(dir);
         reader.tableNames(config());
 
@@ -138,7 +138,7 @@ class PdkStoreReaderTest {
         // The function hands its names to a consumer it may call more than once - mongodb calls it per
         // batchSize names. A drive that keeps only the batch it saw last silently loses collections, and
         // a lost collection reads downstream as "that collection does not exist".
-        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
         List<String> names = reader.tableNames(config());
 
@@ -147,7 +147,7 @@ class PdkStoreReaderTest {
 
     @Test
     void tableNamesFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
-        PdkStoreReader reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
+        PdkDataBrowser reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
 
         assertThatThrownBy(() -> reader.tableNames(config()))
                 .isInstanceOf(TapstateException.class)
@@ -159,9 +159,9 @@ class PdkStoreReaderTest {
 
     @Test
     void tableInfoCarriesTheRowCountAndSizesTheConnectorReports(@TempDir Path dir) {
-        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        StoreTableInfo info = reader.tableInfo(config(), "orders");
+        DataBrowserTableInfo info = reader.tableInfo(config(), "orders");
 
         assertThat(info.numOfRows()).isEqualTo(512L);
         assertThat(info.storageSize()).isEqualTo(4096L);
@@ -170,7 +170,7 @@ class PdkStoreReaderTest {
 
     @Test
     void tableInfoFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
-        PdkStoreReader reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
+        PdkDataBrowser reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
 
         assertThatThrownBy(() -> reader.tableInfo(config(), "orders"))
                 .isInstanceOf(TapstateException.class)
@@ -185,9 +185,9 @@ class PdkStoreReaderTest {
         // The command name is the connector's dispatch key: "execute" and "update" reach write paths on
         // the same function. It is assembled here and is not a caller input, so the read face has no
         // spelling that reaches anything but a query.
-        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.query(config(), new StoreQuery("orders", Map.of(), 10));
+        List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
         assertThat(echoed(rows, "command")).isEqualTo("executeQuery");
     }
@@ -197,18 +197,18 @@ class PdkStoreReaderTest {
         // executeQuery hands its rows to a consumer per batch (mongodb's default batch is 1000), so a
         // drive that assumes one callback returns a truncated page - and a truncated page is read
         // downstream as "that is all there is", with nothing reporting otherwise.
-        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.query(config(), new StoreQuery("orders", Map.of(), 10));
+        List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
         assertThat(rows).hasSize(2);
     }
 
     @Test
     void queryCarriesTheCollectionIntoTheParams(@TempDir Path dir) {
-        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        List<Map<String, Object>> rows = reader.query(config(), new StoreQuery("orders", Map.of(), 10));
+        List<Map<String, Object>> rows = reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
         assertThat(echoed(rows, "collection")).isEqualTo("orders");
     }
@@ -218,9 +218,9 @@ class PdkStoreReaderTest {
         // A connector fills a missing param into the caller's own map rather than a copy - mongodb puts
         // the connection's database in when the request omits it. An immutable map throws there, and
         // only on the paths that omit that param, so it stays green until it does not.
-        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        assertThatCode(() -> reader.query(config(), new StoreQuery("orders", Map.of(), 10)))
+        assertThatCode(() -> reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .doesNotThrowAnyException();
     }
 
@@ -228,9 +228,9 @@ class PdkStoreReaderTest {
     void queryFailsWithACodeWhenTheConnectorReportsAnError(@TempDir Path dir) {
         // The failure arrives through the result rather than as a throw, so a drive that reads only
         // getResult() returns an empty page for a query that in fact failed.
-        PdkStoreReader reader = reader(Synthetic.erroringQuerySource(dir), "synthetic.ErroringQuery");
+        PdkDataBrowser reader = reader(Synthetic.erroringQuerySource(dir), "synthetic.ErroringQuery");
 
-        assertThatThrownBy(() -> reader.query(config(), new StoreQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.read-failed");
@@ -238,9 +238,9 @@ class PdkStoreReaderTest {
 
     @Test
     void queryFailsWithACodeWhenTheConnectorThrows(@TempDir Path dir) {
-        PdkStoreReader reader = reader(Synthetic.throwingQuerySource(dir), "synthetic.ThrowingQuery");
+        PdkDataBrowser reader = reader(Synthetic.throwingQuerySource(dir), "synthetic.ThrowingQuery");
 
-        assertThatThrownBy(() -> reader.query(config(), new StoreQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.read-failed");
@@ -250,9 +250,9 @@ class PdkStoreReaderTest {
     void queryFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
         // The read face is reachable by a user, so a connector that cannot serve it is a coded refusal
         // naming the connector and the capability - not the bare crash a caller invariant would take.
-        PdkStoreReader reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
+        PdkDataBrowser reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
 
-        assertThatThrownBy(() -> reader.query(config(), new StoreQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.query(config(), new DataBrowserQuery("orders", Map.of(), 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.capability-missing");

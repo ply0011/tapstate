@@ -53,7 +53,7 @@ public enum Domain {
     // connector pool with nothing free. Distinct from IO, which reports that the storage mechanism
     // itself failed, and from STORE, which polices reaching a backend at startup -- a code sitting
     // next to store.unreachable would read as an operator's problem rather than a caller's
-    STORE_READ,
+    DATA_BROWSER,
     // source-specific control operations: identity, optimistic concurrency and reference protection
     SOURCE,
     // local MCP presentation: sidecar input, connector-spec and upstream-response failures

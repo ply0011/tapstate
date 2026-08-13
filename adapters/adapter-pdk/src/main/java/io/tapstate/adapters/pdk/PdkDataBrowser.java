@@ -51,7 +51,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *       param, which is why it stays green until it does not.
  * </ul>
  */
-public final class PdkStoreReader implements AutoCloseable {
+public final class PdkDataBrowser implements AutoCloseable {
 
     /**
      * The one command the read face dispatches. A connector routes writes through this same function
@@ -66,15 +66,15 @@ public final class PdkStoreReader implements AutoCloseable {
     private final ConnectorInstancePool<PdkConnector> pool;
     private final ScheduledExecutorService evictions;
 
-    public PdkStoreReader(ConnectorProvisioner provisioner) {
+    public PdkDataBrowser(ConnectorProvisioner provisioner) {
         this(provisioner, ConnectorInstancePool.DEFAULTS, Clock.systemUTC());
     }
 
-    PdkStoreReader(ConnectorProvisioner provisioner, ConnectorInstancePool.Limits limits, Clock clock) {
+    PdkDataBrowser(ConnectorProvisioner provisioner, ConnectorInstancePool.Limits limits, Clock clock) {
         this.pool = new ConnectorInstancePool<>(
-                config -> openAndInitialize(provisioner, config), PdkStoreReader::shutDown, limits, clock);
+                config -> openAndInitialize(provisioner, config), PdkDataBrowser::shutDown, limits, clock);
         this.evictions = Executors.newSingleThreadScheduledExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "store-read-eviction");
+            Thread thread = new Thread(runnable, "data-browser-eviction");
             thread.setDaemon(true);
             return thread;
         });
@@ -102,19 +102,19 @@ public final class PdkStoreReader implements AutoCloseable {
     }
 
     /** Reports what the connector knows about one collection's size. */
-    public StoreTableInfo tableInfo(ConnectionConfig config, String collection) {
+    public DataBrowserTableInfo tableInfo(ConnectionConfig config, String collection) {
         return pool.call(config, connector -> {
             GetTableInfoFunction info = require(
                     connector, connector.functions().getGetTableInfoFunction(), "getTableInfo");
             TableInfo reported = drive(connector, () -> info.getTableInfo(connector.context(), collection));
             return reported == null
-                    ? new StoreTableInfo(null, null, null)
-                    : new StoreTableInfo(reported.getNumOfRows(), reported.getStorageSize(), reported.getAvgObjSize());
+                    ? new DataBrowserTableInfo(null, null, null)
+                    : new DataBrowserTableInfo(reported.getNumOfRows(), reported.getStorageSize(), reported.getAvgObjSize());
         });
     }
 
     /** Runs {@code query} against the connection's own database and returns the rows it matched. */
-    public List<Map<String, Object>> query(ConnectionConfig config, StoreQuery query) {
+    public List<Map<String, Object>> query(ConnectionConfig config, DataBrowserQuery query) {
         return pool.call(config, connector -> {
             ExecuteCommandFunction execute = require(
                     connector, connector.functions().getExecuteCommandFunction(), "executeCommand");
@@ -183,7 +183,7 @@ public final class PdkStoreReader implements AutoCloseable {
      * <p>The map carries what the read needs and nothing that would widen it: no command to dispatch
      * on, and no database, so the read reaches only what the connection already points at.
      */
-    private static Map<String, Object> params(StoreQuery query) {
+    private static Map<String, Object> params(DataBrowserQuery query) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("collection", query.collection());
         // A filter is always present, empty meaning every row: a connector hands its absence straight to
