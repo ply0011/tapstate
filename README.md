@@ -213,9 +213,10 @@ The checked-in quickstart and CLI demonstrate:
 ### Product direction—not current capability
 
 Alpha+ work is intended to add cross-source order-state consolidation, a
-Tapstate-managed **preview** store experience, and CLI/MCP inspection of
-Tapstate-owned state. These remain planned until their producing workstreams pass
-acceptance and the release evidence is published.
+Tapstate-managed **preview** store experience, and administrative inspection through
+the Data Browser, terminal watch experience, and MCP read tools. These remain planned
+until their producing workstreams pass acceptance and the release evidence is
+published. Inspection tooling is not part of Serve.
 
 The broader product direction includes pull and push serving surfaces, a stable State
 Data API, and correctness-by-construction for maintained operational state. None of
@@ -506,9 +507,29 @@ availability.
 Tapstate-managed preview store. A user cannot configure an arbitrary MySQL, Oracle,
 MongoDB, or another sync target as the backend for a tapstate query.
 
-Alpha+ provides preview inspection through the planned CLI and MCP store tools. A
-stable application-facing State Data API and broader serving interfaces remain
-future work.
+Alpha+ provides administrative and evaluation access through the planned Data
+Browser, terminal watch experience, and MCP read tools. These are inspection tools,
+not Serve. A stable application-facing State Data API remains future work.
+
+### What does “Serve” mean, and is it available in Alpha+?
+
+Serve is tapstate’s intended application-facing delivery layer for maintained
+operational state. It will support two consumption models:
+
+- **Pull:** applications and agents request current state through stable data APIs and supported query interfaces.
+- **Push:** tapstate delivers state changes through webhooks, Kafka or other messaging systems, downstream databases, and subscription interfaces.
+
+Both models are intended to operate from the same Tapstate-maintained state and
+transformation semantics. This is the fourth responsibility in **Capture / Stream /
+Transform / Serve**.
+
+**Alpha+ does not validate or deliver Serve.** Its Data Browser, terminal watch
+experience, and MCP read tools are administrative, development, and evaluation
+surfaces for inspecting the preview store. They are not stable application-facing
+serving interfaces and should not be used as evidence that Serve has shipped.
+
+Stable data APIs, production application queries, subscriptions, webhooks, messaging
+adapters, and downstream push delivery remain future capabilities.
 
 ## Community
 
