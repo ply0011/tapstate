@@ -57,6 +57,15 @@ final class MongoEndpoints implements Endpoints {
         return collection(uri, table).find().into(new ArrayList<>());
     }
 
+    /**
+     * Every index on the collection, read from the store itself rather than from the product's record of
+     * what it asked for. An index the product believes it created and never did is exactly the failure
+     * this is here to catch, so asking the product would answer the wrong question.
+     */
+    public List<Document> indexes(String uri, String table) {
+        return collection(uri, table).listIndexes().into(new ArrayList<>());
+    }
+
     @Override
     public long count(String uri, String table) {
         return collection(uri, table).countDocuments();
