@@ -17,6 +17,15 @@ actuation.not-a-pipeline:
 actuation.source-schema-not-discovered:
   message: "Source `{source}` needs a discovered schema before its tables can be selected."
   solution: "Run schema discovery for the source, then apply or start the pipeline again."
+actuation.view-key-missing:
+  message: "View `{view}` declares no primary key."
+  solution: "Give the view a primaryKey naming the column that identifies one record, so updates converge on it instead of appending a copy."
+actuation.view-storage-tier-unsupported:
+  message: "View `{view}` declares the `{tier}` storage tier, which this release does not materialize."
+  solution: "Remove the tier from the view. Only the warm tier is materialized today; hot and cold are reserved."
+actuation.view-store-not-configured:
+  message: "The managed state store `{store}` a view materializes into is not configured."
+  solution: "Start the deployment's managed state store, or register a source under that id for views to materialize into."
 actuation.source-table-not-discovered:
   message: "Source `{source}` does not declare discovered table `{table}`."
   solution: "Discover the source again or change the pipeline table selector to a discovered table."

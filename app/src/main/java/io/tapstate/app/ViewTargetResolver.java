@@ -1,10 +1,12 @@
 package io.tapstate.app;
 
+import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.model.Storage;
 import io.tapstate.core.model.ViewBlock;
 import io.tapstate.spi.sink.TargetIndex;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -55,18 +57,32 @@ final class ViewTargetResolver {
      * path believed it was updating.
      */
     static ViewTarget resolve(ViewBlock.Inline view) {
-        Storage.Warm warm = view.storage() == null ? null : view.storage().warm();
+        Storage storage = view.storage();
+        if (storage != null && storage.hot() != null) {
+            throw unsupportedTier(view, "hot");
+        }
+        if (storage != null && storage.cold() != null) {
+            throw unsupportedTier(view, "cold");
+        }
+        if (view.primaryKey() == null || view.primaryKey().isBlank()) {
+            throw new TapstateException(
+                    ActuationError.VIEW_KEY_MISSING, Map.of("view", view.id()), null);
+        }
+        Storage.Warm warm = storage == null ? null : storage.warm();
         String collection = warm != null ? warm.collection() : view.id();
 
         List<TargetIndex> indexes = new ArrayList<>();
-        if (view.primaryKey() != null && !view.primaryKey().isBlank()) {
-            indexes.add(new TargetIndex(List.of(view.primaryKey()), true));
-        }
+        indexes.add(new TargetIndex(List.of(view.primaryKey()), true));
         if (warm != null && warm.indexes() != null) {
             for (String field : warm.indexes()) {
                 indexes.add(new TargetIndex(List.of(field), false));
             }
         }
         return new ViewTarget(STATE_STORE_SOURCE_ID, collection, indexes);
+    }
+
+    private static TapstateException unsupportedTier(ViewBlock.Inline view, String tier) {
+        return new TapstateException(ActuationError.VIEW_STORAGE_TIER_UNSUPPORTED,
+                Map.of("view", view.id(), "tier", tier), null);
     }
 }

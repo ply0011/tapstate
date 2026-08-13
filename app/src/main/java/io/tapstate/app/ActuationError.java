@@ -48,7 +48,25 @@ enum ActuationError implements TapstateErrorCode {
     FROM_REGEX_INVALID("actuation.from-regex-invalid", Set.of("regex")),
 
     /** A serve.from regex matches no upstream vertex; {@code regex} carries the expression. */
-    FROM_REGEX_EMPTY("actuation.from-regex-empty", Set.of("regex"));
+    FROM_REGEX_EMPTY("actuation.from-regex-empty", Set.of("regex")),
+
+    /**
+     * A view declares no key, so nothing identifies the record a change updates; {@code view} is its id.
+     * Materializing without one would append a copy per change rather than converge on the record.
+     */
+    VIEW_KEY_MISSING("actuation.view-key-missing", Set.of("view")),
+
+    /**
+     * A view declares a storage tier this release does not materialize; {@code view} is its id and
+     * {@code tier} names the tier. Refused rather than ignored: a silently dropped tier reads as working.
+     */
+    VIEW_STORAGE_TIER_UNSUPPORTED("actuation.view-storage-tier-unsupported", Set.of("view", "tier")),
+
+    /**
+     * A pipeline declares a view but the managed state store it materializes into is not configured;
+     * {@code store} is the source id expected to supply it.
+     */
+    VIEW_STORE_NOT_CONFIGURED("actuation.view-store-not-configured", Set.of("store"));
 
     private final String code;
     private final Set<String> placeholders;

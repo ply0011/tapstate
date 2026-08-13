@@ -1,7 +1,9 @@
 package io.tapstate.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.model.FromRef;
 import io.tapstate.core.model.Storage;
 import io.tapstate.core.model.ViewBlock;
@@ -14,6 +16,43 @@ import org.junit.jupiter.api.Test;
  * resolution over the model, so these assert the naming contract without a store in reach.
  */
 class ViewTargetResolverTest {
+
+    @Test
+    void a_view_with_no_key_is_refused_rather_than_materialized_without_one() {
+        // Upsert matches on the key. Without one every change would append a second copy of the record
+        // the write path believed it was updating - the silent corruption this refusal exists to stop.
+        ViewBlock.Inline view = new ViewBlock.Inline(
+                "order_state", FromRef.literal("orders_src"), null, null, null);
+
+        assertThatThrownBy(() -> ViewTargetResolver.resolve(view))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(e -> assertThat(((TapstateException) e).code().code())
+                        .isEqualTo("actuation.view-key-missing"));
+    }
+
+    @Test
+    void a_hot_tier_is_refused_by_name_rather_than_silently_ignored() {
+        ViewBlock.Inline view = new ViewBlock.Inline(
+                "order_state", FromRef.literal("orders_src"), "order_id",
+                new Storage(new Storage.Hot("10m"), new Storage.Warm("order_state", null), null), null);
+
+        assertThatThrownBy(() -> ViewTargetResolver.resolve(view))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(e -> assertThat(((TapstateException) e).code().code())
+                        .isEqualTo("actuation.view-storage-tier-unsupported"));
+    }
+
+    @Test
+    void a_cold_tier_is_refused_by_the_same_code_as_hot() {
+        ViewBlock.Inline view = new ViewBlock.Inline(
+                "order_state", FromRef.literal("orders_src"), "order_id",
+                new Storage(null, new Storage.Warm("order_state", null), new Storage.Cold(List.of("day"))), null);
+
+        assertThatThrownBy(() -> ViewTargetResolver.resolve(view))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(e -> assertThat(((TapstateException) e).code().code())
+                        .isEqualTo("actuation.view-storage-tier-unsupported"));
+    }
 
     @Test
     void a_view_without_storage_materializes_under_its_own_id() {

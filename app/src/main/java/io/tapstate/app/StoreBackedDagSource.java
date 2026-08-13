@@ -206,7 +206,13 @@ final class StoreBackedDagSource implements DagSource {
                     "view block is a use-reference; resolve it to an inline view first");
         }
         ViewTargetResolver.ViewTarget target = ViewTargetResolver.resolve(inline);
-        SourceResource store = StoredArtifacts.requireSource(artifacts(), target.sourceId());
+        // Coded rather than bare, unlike a source the author named: this store is the deployment's, so
+        // its absence is a condition an operator acts on rather than a defect on this side.
+        SourceResource store = artifacts().get(target.sourceId())
+                .filter(SourceResource.class::isInstance)
+                .map(SourceResource.class::cast)
+                .orElseThrow(() -> new TapstateException(ActuationError.VIEW_STORE_NOT_CONFIGURED,
+                        Map.of("store", target.sourceId()), null));
         return sinkWriterBinder.bind(
                 store.connector(), store.config(), WriteMode.UPSERT, DdlPolicy.FAIL,
                 viewTargetTable(target, targets));

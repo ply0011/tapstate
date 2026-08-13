@@ -1,8 +1,8 @@
+# @Deprecated codes stay listed as tombstones until intentionally retired.
 # Canonical first-party error codes — the build-time stability lock (ADR-0024 D5-5).
 # Sorted, one <domain>.<symbol> per line. The ErrorCodeGatesTest diffs the scanned codes
 # against this file. Adding a code = append it here in the same change set; renaming or
 # removing one = a breaking change to an external contract (review + major version).
-# @Deprecated codes stay listed as tombstones until intentionally retired.
 actuation.from-regex-empty
 actuation.from-regex-invalid
 actuation.not-a-pipeline
@@ -13,6 +13,9 @@ actuation.source-table-not-discovered
 actuation.source-table-regex-invalid
 actuation.source-table-selection-empty
 actuation.source-table-spec-unsupported
+actuation.view-key-missing
+actuation.view-storage-tier-unsupported
+actuation.view-store-not-configured
 artifact.in-use
 artifact.not-found
 artifact.pipeline-not-stopped

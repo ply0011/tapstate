@@ -111,6 +111,23 @@ class StoreBackedDagSourceTest {
     }
 
     @Test
+    void a_view_without_a_managed_store_to_land_in_says_so_by_name() {
+        // The store is the deployment's rather than the author's, so its absence is a deployment
+        // condition an operator can act on - not an invariant that should crash bare.
+        FakeStorePort store = new FakeStorePort();
+        store.artifacts().save(cdcSource("orders_src", "orders"));
+        store.artifacts().save(new PipelineResource(
+                "p", null, List.of("orders_src"), null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders_src"), "id", null, null),
+                null, null, null));
+
+        assertThatThrownBy(() -> new StoreBackedDagSource(store).dagFor("p"))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(e -> assertThat(((TapstateException) e).code().code())
+                        .isEqualTo("actuation.view-store-not-configured"));
+    }
+
+    @Test
     void a_declared_view_materializes_into_the_managed_state_store() {
         // No serve block anywhere: declaring the view is the whole instruction, and the store it lands
         // in is the deployment's own rather than anything the pipeline names.
