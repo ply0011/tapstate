@@ -75,13 +75,16 @@ class ControlFaceProjectionGatesTest {
      * oversight. User administration still has no face; the first administrator is created through the
      * bootstrap entry point, which is guarded on its own terms. Two operations ({@code user.passwd},
      * {@code user.list}) have no control-plane service behind them either, so opening those is a
-     * control-plane change and not merely a routing one.
+     * control-plane change and not merely a routing one. The three data-browser reads have a control-plane
+     * service behind them but no endpoint yet: their HTTP shape is a slice of its own, so routing them is
+     * a routing change and nothing more.
      *
      * <p>An entry here is a reviewed decision, not a running to-do list: a verb added to the registry with
      * no face must turn this gate red, and deleting its entry is how it earns one.
      */
     private static final Set<String> DEFERRED_WITH_NO_FACE = Set.of(
-            "user.create", "user.passwd", "user.list");
+            "user.create", "user.passwd", "user.list",
+            "data-browser.collections", "data-browser.find", "data-browser.stats");
 
     @Test
     @DisplayName("every registered operation is reachable over HTTP, bar the deferred ones")

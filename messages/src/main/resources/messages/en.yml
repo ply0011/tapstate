@@ -263,6 +263,9 @@ control.unauthenticated:
 control.unreachable:
   message: "The Tapstate Server is unreachable."
   solution: "Check the Server URL and availability, then retry the tool call."
+data-browser.unknown-collection:
+  message: "Source '{source}' has no collection named '{collection}'."
+  solution: "List what the source holds and read one of those names."
 mcp.connector-spec-unavailable:
   message: "Connector {connector} does not provide a complete live spec."
   solution: "Register the connector runtime and retry connector_get before source_create."

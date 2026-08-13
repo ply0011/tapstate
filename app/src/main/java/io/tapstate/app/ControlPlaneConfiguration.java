@@ -7,6 +7,7 @@ import io.tapstate.adapters.pdk.ConnectorIntrospector;
 import io.tapstate.adapters.pdk.ConnectorProvisioner;
 import io.tapstate.adapters.pdk.PdkCapabilityDeriver;
 import io.tapstate.adapters.pdk.PdkConnectionTester;
+import io.tapstate.adapters.pdk.PdkDataBrowser;
 import io.tapstate.adapters.pdk.PdkSchemaDiscoverer;
 import io.tapstate.adapters.pdk.RegistryConnectorProvisioner;
 import io.tapstate.adapters.pdk.SeedConnectorSweep;
@@ -22,6 +23,7 @@ import io.tapstate.control.core.ConnectorConfigValidator;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.LoginService;
 import io.tapstate.control.core.OperationRegistry;
 import io.tapstate.control.core.PasswordHasher;
@@ -41,10 +43,17 @@ import io.tapstate.core.logging.LogSink;
 import io.tapstate.core.logging.RingBufferLogSink;
 import io.tapstate.core.logging.SecretRedactor;
 import io.tapstate.runtime.probe.ConnectionProbe;
+import io.tapstate.runtime.probe.DataBrowserCollectionsProbe;
+import io.tapstate.runtime.probe.DataBrowserFindProbe;
+import io.tapstate.runtime.probe.DataBrowserStatsProbe;
 import io.tapstate.runtime.probe.DelegatingConnectionProbe;
+import io.tapstate.runtime.probe.DelegatingDataBrowserCollectionsProbe;
+import io.tapstate.runtime.probe.DelegatingDataBrowserFindProbe;
+import io.tapstate.runtime.probe.DelegatingDataBrowserStatsProbe;
 import io.tapstate.runtime.probe.DelegatingSchemaDiscoveryProbe;
 import io.tapstate.runtime.probe.SchemaDiscoveryProbe;
 import io.tapstate.spi.store.AuditStore;
+import io.tapstate.spi.store.DataBrowser;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionTestResultStore;
 import io.tapstate.spi.store.ConnectionTester;
@@ -324,6 +333,38 @@ class ControlPlaneConfiguration {
     @Bean
     SchemaQueryService schemaQueryService(SchemaStore schemaStore) {
         return new SchemaQueryService(schemaStore);
+    }
+
+    // The read face over a declared source's own database. Unlike the two connection probes, the browser
+    // holds live state between calls — a pool of initialized connector instances — so the assembly root
+    // owns its shutdown; the three probes share that one browser rather than holding one each, which is
+    // also why only the browser bean closes.
+
+    @Bean(destroyMethod = "close")
+    DataBrowser dataBrowser(ConnectorProvisioner provisioner) {
+        return new PdkDataBrowser(provisioner);
+    }
+
+    @Bean
+    DataBrowserCollectionsProbe dataBrowserCollectionsProbe(DataBrowser browser) {
+        return new DelegatingDataBrowserCollectionsProbe(browser);
+    }
+
+    @Bean
+    DataBrowserStatsProbe dataBrowserStatsProbe(DataBrowser browser) {
+        return new DelegatingDataBrowserStatsProbe(browser);
+    }
+
+    @Bean
+    DataBrowserFindProbe dataBrowserFindProbe(DataBrowser browser) {
+        return new DelegatingDataBrowserFindProbe(browser);
+    }
+
+    @Bean
+    DataBrowserService dataBrowserService(
+            ArtifactStore artifactStore, DataBrowserCollectionsProbe collectionsProbe,
+            DataBrowserStatsProbe statsProbe, DataBrowserFindProbe findProbe) {
+        return new DataBrowserService(artifactStore, collectionsProbe, statsProbe, findProbe);
     }
 
     @Bean

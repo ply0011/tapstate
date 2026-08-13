@@ -23,6 +23,27 @@ class OperationTest {
     }
 
     @Test
+    void acceptsAKebabDomainJustAsAnErrorCodeDoes() {
+        // An operation id and an error code are the same shape — <domain>.<symbol>, lower kebab in
+        // either segment — and a domain whose name is two words is spelled the same way in both. A rule
+        // that admitted the hyphen only after the dot would force one of the two to spell its domain
+        // differently from the other, for the same domain.
+        Operation op = new Operation("data-browser.collections", Scope.READ, false, null, Map.of());
+
+        assertThat(op.id()).isEqualTo("data-browser.collections");
+    }
+
+    @Test
+    void rejectsASegmentThatIsNotWellFormedKebab() {
+        for (String id : new String[] {"-data.collections", "data-.collections", "data--browser.find",
+                "data-browser.-find", "data-browser.find-"}) {
+            assertThatThrownBy(() -> new Operation(id, Scope.READ, false, null, Map.of()))
+                    .as(id)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
     void exposureIsDefensivelyCopiedAndUnmodifiable() {
         Map<Frontend, Maturity> source = new HashMap<>();
         source.put(Frontend.CLI, Maturity.POC);

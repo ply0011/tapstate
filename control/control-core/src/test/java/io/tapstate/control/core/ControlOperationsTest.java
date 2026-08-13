@@ -30,6 +30,9 @@ class ControlOperationsTest {
                         "connector.register",
                         "connector.list",
                         "connector.get",
+                        "data-browser.collections",
+                        "data-browser.find",
+                        "data-browser.stats",
                         "cluster.members",
                         "pipeline.start",
                         "pipeline.stop",
@@ -75,6 +78,12 @@ class ControlOperationsTest {
         // mutates nothing, so it is read.
         assertThat(registry.resolve("connector.list").scope()).isEqualTo(Scope.READ);
         assertThat(registry.resolve("connector.get").scope()).isEqualTo(Scope.READ);
+        // the three data-browser verbs look at what a declared source's own database holds. They read
+        // through to the connector and persist nothing at all — not even the result, unlike the two
+        // connection probes — so they are read-scoped.
+        for (String id : List.of("data-browser.collections", "data-browser.find", "data-browser.stats")) {
+            assertThat(registry.resolve(id).scope()).as(id).isEqualTo(Scope.READ);
+        }
         // cluster.members reads live topology; it is authenticated like every registry operation, but
         // needs no write or admin privilege.
         assertThat(registry.resolve("cluster.members").scope()).isEqualTo(Scope.READ);
@@ -124,6 +133,9 @@ class ControlOperationsTest {
                 "connection.schema",
                 "connector.list",
                 "connector.get",
+                "data-browser.collections",
+                "data-browser.find",
+                "data-browser.stats",
                 "cluster.members",
                 "user.list",
                 "token.list",
@@ -140,7 +152,7 @@ class ControlOperationsTest {
         // A scope statement about the registry alone: the CLI face opens every registered operation and
         // clips none of them below POC. Whether each one has a verb behind it is not knowable from here
         // — control-core cannot see the CLI — and is gated where both are visible, in arch-tests.
-        assertThat(registry.exposedOn(Frontend.CLI, Maturity.POC)).hasSize(32);
+        assertThat(registry.exposedOn(Frontend.CLI, Maturity.POC)).hasSize(35);
         assertThat(registry.all()).allSatisfy(op ->
                 assertThat(op.exposure()).as(op.id()).containsEntry(Frontend.CLI, Maturity.POC));
     }

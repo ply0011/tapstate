@@ -34,7 +34,14 @@ public record Operation(
         String description,
         Map<Frontend, Maturity> exposure) {
 
-    private static final Pattern ID = Pattern.compile("[a-z0-9]+(\\.[a-z0-9-]+)+");
+    /**
+     * {@code <domain>.<verb>}, every segment lower kebab. The same shape and the same spelling rule an
+     * error code uses, deliberately: they name the same domains, so a domain of two words must not be
+     * spelled one way here and another there.
+     */
+    private static final String SEGMENT = "[a-z][a-z0-9]*(?:-[a-z0-9]+)*";
+
+    private static final Pattern ID = Pattern.compile(SEGMENT + "(?:\\." + SEGMENT + ")+");
 
     public Operation {
         if (id == null || id.isBlank()) {

@@ -85,6 +85,21 @@ public final class ControlOperations {
             mcp("connector.get", Scope.READ, false,
                     "Get a connector's complete live config spec, content hash, origin, and runtime availability.");
 
+    // data-browser domain: the read face over a declared source's own database — list its collections,
+    // read one collection's rows, report one collection's size. All three read through to the connector
+    // and persist nothing, not even the result, so they are read-scoped and unaudited. That is what
+    // separates them from the two connection probes, which look similar but store what they found.
+    //
+    // Which database a read reaches follows from the source's own connection; no verb takes one, and the
+    // find request has no field for one. The control plane's tables sit on the same server as the data,
+    // so that confinement is the point of the shape rather than a simplification of it.
+    public static final Operation DATA_BROWSER_COLLECTIONS =
+            new Operation("data-browser.collections", Scope.READ, false, null, CLI_POC);
+    public static final Operation DATA_BROWSER_FIND =
+            new Operation("data-browser.find", Scope.READ, false, null, CLI_POC);
+    public static final Operation DATA_BROWSER_STATS =
+            new Operation("data-browser.stats", Scope.READ, false, null, CLI_POC);
+
     // cluster domain: topology is sensitive, so listing members is a registry operation (authenticated
     // like every other verb) rather than an anonymous endpoint — only the process-liveness probe stays
     // outside the registry. Reading topology mutates nothing, so it is read-scoped and unaudited.
@@ -145,6 +160,9 @@ public final class ControlOperations {
             CONNECTOR_REGISTER,
             CONNECTOR_LIST,
             CONNECTOR_GET,
+            DATA_BROWSER_COLLECTIONS,
+            DATA_BROWSER_FIND,
+            DATA_BROWSER_STATS,
             CLUSTER_MEMBERS,
             PIPELINE_START,
             PIPELINE_STOP,

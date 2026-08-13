@@ -58,6 +58,7 @@ control.forbidden
 control.malformed-request
 control.unauthenticated
 control.unreachable
+data-browser.unknown-collection
 dsl.ambiguous-reference
 dsl.composition
 dsl.config-required
