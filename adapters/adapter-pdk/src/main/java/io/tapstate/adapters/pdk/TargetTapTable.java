@@ -1,9 +1,15 @@
 package io.tapstate.adapters.pdk;
 
 import io.tapstate.spi.sink.TargetField;
+import io.tapstate.spi.sink.TargetIndex;
 import io.tapstate.spi.sink.TargetTable;
+import io.tapdata.entity.event.ddl.index.TapCreateIndexEvent;
 import io.tapdata.entity.schema.TapField;
+import io.tapdata.entity.schema.TapIndex;
+import io.tapdata.entity.schema.TapIndexField;
 import io.tapdata.entity.schema.TapTable;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Builds a PDK {@link TapTable} descriptor from a resolved tapstate {@link TargetTable}: each target
@@ -31,5 +37,29 @@ final class TargetTapTable {
             table.add(column);
         }
         return table;
+    }
+
+    /**
+     * The create-index event for a target's declared indexes, or null when it declares none. Null rather
+     * than an empty event: an empty one still asks the connector to do work it was never given, and a
+     * store that treats "create these zero indexes" as a real request is entitled to.
+     *
+     * <p>Index fields are ascending. A target index states which columns it covers and whether they are
+     * unique; per-column direction is not something the write side can express yet, so the projection
+     * picks the one order a range scan over a key can rely on rather than inventing a default per store.
+     */
+    static TapCreateIndexEvent createIndexEvent(TargetTable target) {
+        if (target.indexes().isEmpty()) {
+            return null;
+        }
+        List<TapIndex> indexes = new ArrayList<>();
+        for (TargetIndex index : target.indexes()) {
+            TapIndex tapIndex = new TapIndex().unique(index.unique());
+            for (String field : index.fields()) {
+                tapIndex.indexField(new TapIndexField().name(field).fieldAsc(true));
+            }
+            indexes.add(tapIndex);
+        }
+        return new TapCreateIndexEvent().indexList(indexes);
     }
 }
