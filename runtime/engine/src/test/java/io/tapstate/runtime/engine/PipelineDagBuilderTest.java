@@ -74,6 +74,28 @@ class PipelineDagBuilderTest {
     }
 
     @Test
+    void a_transform_chain_feeding_a_view_wires_source_through_step_into_the_materialization() {
+        // The shape the quickstart demo ships: one source, one stateless step, and a view as the only
+        // output. If this stopped building, the demo would fail on a clean machine and nowhere else.
+        PipelineResource pipeline = new PipelineResource(
+                "p", null,
+                List.of("orders_src"),
+                List.of(filter("shape_orders", "row.id % 2 == 0", FromRef.literal("orders_src"))),
+                view("order_state", FromRef.literal("shape_orders")),
+                null, null, null);
+
+        DAG dag = PipelineDagBuilder.build(pipeline, bindings(Map.of(
+                FromRef.literal("orders_src"), List.of("orders_src"),
+                FromRef.literal("shape_orders"), List.of("shape_orders"))));
+
+        assertThat(vertexNames(dag))
+                .containsExactlyInAnyOrder("orders_src", "shape_orders", "view.order_state");
+        assertThat(edges(dag)).containsExactlyInAnyOrder(
+                edge("orders_src", "shape_orders"),
+                edge("shape_orders", "view.order_state"));
+    }
+
+    @Test
     void view_and_serve_each_get_the_data_rather_than_one_swallowing_the_other() {
         // The parser defaults serve.from to the view's id when a pipeline declares both, so this is
         // the shape a real workspace produces - not a hand-built curiosity.

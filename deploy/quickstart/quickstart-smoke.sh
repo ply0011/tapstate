@@ -291,7 +291,7 @@ else
   bad "no teardown printed: $RUN_OUT"
 fi
 # The snapshot payoff is a real row count, printed with no user action (the fake docker returns 5).
-if printf '%s' "$RUN_OUT" | grep -q 'the target now holds 5 rows'; then
+if printf '%s' "$RUN_OUT" | grep -q 'the view now holds 5 rows'; then
   ok "prints the snapshot row count automatically (no user action)"
 else
   bad "snapshot row count not printed: $RUN_OUT"
@@ -321,7 +321,7 @@ fi
 # The same check must not fire on a run that did deliver: the failure path above is worth nothing if it
 # also rejects the successful one.
 run_phase_fakes 5
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'the target now holds 5 rows'; then
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'the view now holds 5 rows'; then
   ok "still succeeds when the target holds the seeded rows"
 else
   bad "a delivering run was rejected (rc=$RUN_RC): $RUN_OUT"
