@@ -1,0 +1,169 @@
+package io.tapstate.adapters.pdk;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.tapstate.core.common.TapstateException;
+import io.tapstate.spi.store.ConnectionConfig;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * The store-read PDK bridge: {@link PdkStoreReader} driving the three read-face functions a connector
+ * may register — {@code getTableNames}, {@code getTableInfo} and {@code executeCommand}. Synthetic
+ * connectors compiled at test time prove the drive and the coded-error paths without a real connector
+ * jar or the PDK runtime; each is shaped after the behaviour a real connector actually exhibits, so a
+ * drive that holds here holds there.
+ */
+class PdkStoreReaderTest {
+
+    /** A reader over a provisioner that hands back one fixed connector ref, whatever id is asked for. */
+    private static PdkStoreReader reader(Path jar, String className) {
+        ConnectorRef ref = new ConnectorRef(List.of(jar), className, "2.0.8", null);
+        return new PdkStoreReader(connectorId -> ref);
+    }
+
+    private static ConnectionConfig config() {
+        return new ConnectionConfig("conn-1", "demo", Map.of());
+    }
+
+    // ---- getTableNames ---------------------------------------------------------------------------
+
+    @Test
+    void tableNamesCollectsEveryBatchTheConnectorEmits(@TempDir Path dir) {
+        // The function hands its names to a consumer it may call more than once - mongodb calls it per
+        // batchSize names. A drive that keeps only the batch it saw last silently loses collections, and
+        // a lost collection reads downstream as "that collection does not exist".
+        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        List<String> names = reader.tableNames(config());
+
+        assertThat(names).containsExactly("orders", "shipments");
+    }
+
+    @Test
+    void tableNamesFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
+        PdkStoreReader reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
+
+        assertThatThrownBy(() -> reader.tableNames(config()))
+                .isInstanceOf(TapstateException.class)
+                .extracting(e -> ((TapstateException) e).code().code())
+                .isEqualTo("connector.capability-missing");
+    }
+
+    // ---- getTableInfo ----------------------------------------------------------------------------
+
+    @Test
+    void tableInfoCarriesTheRowCountAndSizesTheConnectorReports(@TempDir Path dir) {
+        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        StoreTableInfo info = reader.tableInfo(config(), "orders");
+
+        assertThat(info.numOfRows()).isEqualTo(512L);
+        assertThat(info.storageSize()).isEqualTo(4096L);
+        assertThat(info.avgObjSize()).isEqualTo(8L);
+    }
+
+    @Test
+    void tableInfoFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
+        PdkStoreReader reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
+
+        assertThatThrownBy(() -> reader.tableInfo(config(), "orders"))
+                .isInstanceOf(TapstateException.class)
+                .extracting(e -> ((TapstateException) e).code().code())
+                .isEqualTo("connector.capability-missing");
+    }
+
+    // ---- executeCommand --------------------------------------------------------------------------
+
+    @Test
+    void queryPinsTheCommandToExecuteQuery(@TempDir Path dir) {
+        // The command name is the connector's dispatch key: "execute" and "update" reach write paths on
+        // the same function. It is assembled here and is not a caller input, so the read face has no
+        // spelling that reaches anything but a query.
+        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        List<Map<String, Object>> rows = reader.query(config(), new StoreQuery("orders", Map.of(), 10));
+
+        assertThat(echoed(rows, "command")).isEqualTo("executeQuery");
+    }
+
+    @Test
+    void queryCollectsEveryResultBatchTheConnectorEmits(@TempDir Path dir) {
+        // executeQuery hands its rows to a consumer per batch (mongodb's default batch is 1000), so a
+        // drive that assumes one callback returns a truncated page - and a truncated page is read
+        // downstream as "that is all there is", with nothing reporting otherwise.
+        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        List<Map<String, Object>> rows = reader.query(config(), new StoreQuery("orders", Map.of(), 10));
+
+        assertThat(rows).hasSize(2);
+    }
+
+    @Test
+    void queryCarriesTheCollectionIntoTheParams(@TempDir Path dir) {
+        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        List<Map<String, Object>> rows = reader.query(config(), new StoreQuery("orders", Map.of(), 10));
+
+        assertThat(echoed(rows, "collection")).isEqualTo("orders");
+    }
+
+    @Test
+    void queryHandsTheConnectorAParamsMapItCanWriteInto(@TempDir Path dir) {
+        // A connector fills a missing param into the caller's own map rather than a copy - mongodb puts
+        // the connection's database in when the request omits it. An immutable map throws there, and
+        // only on the paths that omit that param, so it stays green until it does not.
+        PdkStoreReader reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        assertThatCode(() -> reader.query(config(), new StoreQuery("orders", Map.of(), 10)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void queryFailsWithACodeWhenTheConnectorReportsAnError(@TempDir Path dir) {
+        // The failure arrives through the result rather than as a throw, so a drive that reads only
+        // getResult() returns an empty page for a query that in fact failed.
+        PdkStoreReader reader = reader(Synthetic.erroringQuerySource(dir), "synthetic.ErroringQuery");
+
+        assertThatThrownBy(() -> reader.query(config(), new StoreQuery("orders", Map.of(), 10)))
+                .isInstanceOf(TapstateException.class)
+                .extracting(e -> ((TapstateException) e).code().code())
+                .isEqualTo("connector.read-failed");
+    }
+
+    @Test
+    void queryFailsWithACodeWhenTheConnectorThrows(@TempDir Path dir) {
+        PdkStoreReader reader = reader(Synthetic.throwingQuerySource(dir), "synthetic.ThrowingQuery");
+
+        assertThatThrownBy(() -> reader.query(config(), new StoreQuery("orders", Map.of(), 10)))
+                .isInstanceOf(TapstateException.class)
+                .extracting(e -> ((TapstateException) e).code().code())
+                .isEqualTo("connector.read-failed");
+    }
+
+    @Test
+    void queryFailsWithACodeWhenTheConnectorDoesNotRegisterIt(@TempDir Path dir) {
+        // The read face is reachable by a user, so a connector that cannot serve it is a coded refusal
+        // naming the connector and the capability - not the bare crash a caller invariant would take.
+        PdkStoreReader reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
+
+        assertThatThrownBy(() -> reader.query(config(), new StoreQuery("orders", Map.of(), 10)))
+                .isInstanceOf(TapstateException.class)
+                .extracting(e -> ((TapstateException) e).code().code())
+                .isEqualTo("connector.capability-missing");
+    }
+
+    /** The value the read-face connector echoed back for {@code what}, or null if it echoed no such row. */
+    private static Object echoed(List<Map<String, Object>> rows, String what) {
+        return rows.stream()
+                .filter(row -> what.equals(row.get("echoed")))
+                .map(row -> row.get("value"))
+                .findFirst()
+                .orElse(null);
+    }
+}

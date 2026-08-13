@@ -657,4 +657,82 @@ final class Synthetic {
                 Map.of("base-spec.json", "{\"id\":\"base\"}", "variant-spec.json", "{\"id\":\"variant\"}"),
                 Map.of("PDK-API-Version", "1.3.5"));
     }
+
+    /** The shared scaffold for a store-read connector: the three read-face functions the caller fills in. */
+    private static String readFace(String simpleName, String registerBody) {
+        return ""
+                + "package synthetic;"
+                + "import io.tapdata.pdk.apis.TapConnector;"
+                + "import io.tapdata.pdk.apis.functions.ConnectorFunctions;"
+                + "import io.tapdata.entity.codec.TapCodecsRegistry;"
+                + "import io.tapdata.pdk.apis.context.TapConnectionContext;"
+                + "import io.tapdata.pdk.apis.entity.ConnectionOptions;"
+                + "import io.tapdata.pdk.apis.entity.ExecuteResult;"
+                + "import io.tapdata.pdk.apis.entity.TestItem;"
+                + "import io.tapdata.pdk.apis.functions.connection.TableInfo;"
+                + "import io.tapdata.entity.schema.TapTable;"
+                + "import java.util.ArrayList;"
+                + "import java.util.LinkedHashMap;"
+                + "import java.util.List;"
+                + "import java.util.Map;"
+                + "import java.util.function.Consumer;"
+                + "public class " + simpleName + " implements TapConnector {"
+                + "  public void registerCapabilities(ConnectorFunctions functions, TapCodecsRegistry codecs) {"
+                + registerBody
+                + "  }"
+                + "  public void init(TapConnectionContext c) {}"
+                + "  public void stop(TapConnectionContext c) {}"
+                + "  public void discoverSchema(TapConnectionContext c, List<String> t, int n, Consumer<List<TapTable>> s) {}"
+                + "  public ConnectionOptions connectionTest(TapConnectionContext c, Consumer<TestItem> s) { return ConnectionOptions.create(); }"
+                + "  public int tableCount(TapConnectionContext c) { return 1; }"
+                + "}";
+    }
+
+    /**
+     * A store-read connector registering all three read-face functions, each shaped after the real
+     * mongodb connector's own behaviour: table names arrive in more than one consumer batch, query
+     * results arrive in more than one {@code ExecuteResult}, and the query fills a missing
+     * {@code database} into the caller's own params map — so a caller that passes an immutable map
+     * fails here exactly as it would there. The query echoes what it was handed back as rows, so a
+     * test can assert on the request the drive assembled.
+     */
+    static Path readFaceSource(Path dir) {
+        String register = ""
+                + "functions.supportGetTableNamesFunction((c, batchSize, consumer) -> {"
+                + "  List<String> first = new ArrayList<>(); first.add(\"orders\"); consumer.accept(first);"
+                + "  List<String> second = new ArrayList<>(); second.add(\"shipments\"); consumer.accept(second);"
+                + "});"
+                + "functions.supportGetTableInfoFunction((c, table) ->"
+                + "  TableInfo.create().numOfRows(512L).storageSize(4096L).avgObjSize(8L));"
+                + "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  Map<String,Object> params = command.getParams();"
+                + "  params.put(\"database\", \"filled-in-by-the-connector\");"
+                + "  Map<String,Object> first = new LinkedHashMap<>();"
+                + "  first.put(\"echoed\", \"command\"); first.put(\"value\", command.getCommand());"
+                + "  List<Map<String,Object>> batch1 = new ArrayList<>(); batch1.add(first);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch1));"
+                + "  Map<String,Object> second = new LinkedHashMap<>();"
+                + "  second.put(\"echoed\", \"collection\"); second.put(\"value\", params.get(\"collection\"));"
+                + "  List<Map<String,Object>> batch2 = new ArrayList<>(); batch2.add(second);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch2));"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.ReadFace", readFace("ReadFace", register));
+    }
+
+    /** A store-read connector whose query reports its failure through {@code ExecuteResult.error}. */
+    static Path erroringQuerySource(Path dir) {
+        String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>()"
+                + "    .error(new RuntimeException(\"query boom\")));"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.ErroringQuery", readFace("ErroringQuery", register));
+    }
+
+    /** A store-read connector whose query throws out of the function itself. */
+    static Path throwingQuerySource(Path dir) {
+        String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  throw new RuntimeException(\"execute boom\");"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.ThrowingQuery", readFace("ThrowingQuery", register));
+    }
 }

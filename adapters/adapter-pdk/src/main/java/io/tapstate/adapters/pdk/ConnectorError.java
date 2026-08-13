@@ -145,7 +145,25 @@ public enum ConnectorError implements TapstateErrorCode {
      * The connector failed while writing a batch. {@code connector} is the connector id;
      * {@code detail} is the failure the connector reported.
      */
-    WRITE_FAILED("connector.write-failed", Set.of("connector", "detail"));
+    WRITE_FAILED("connector.write-failed", Set.of("connector", "detail")),
+
+    /**
+     * The connector failed while reading the store — it threw out of the read, or reported the failure
+     * through the result it handed back. {@code connector} is the connector id; {@code detail} is the
+     * failure the connector reported. Distinct from a capture read: that one is a pipeline moving data,
+     * this one is a user looking at it, and the two fail for different reasons and reach different
+     * people.
+     */
+    READ_FAILED("connector.read-failed", Set.of("connector", "detail")),
+
+    /**
+     * The connector registers no function for the capability this read needs, so the read cannot be
+     * served at all. {@code connector} is the connector id; {@code capability} names the function that
+     * is absent. This is a user-facing refusal rather than an invariant violation: which connectors can
+     * serve a read is a property of the connector, not something the request was validated against, so
+     * a user can reach it by asking to read a source whose connector does not offer it.
+     */
+    CAPABILITY_MISSING("connector.capability-missing", Set.of("connector", "capability"));
 
     private final String code;
     private final Set<String> placeholders;

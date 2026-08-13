@@ -224,6 +224,12 @@ connector.test-failed:
 connector.write-failed:
   message: "Connector '{connector}' failed while writing: {detail}."
   solution: "Check the target is reachable and the connection settings are correct."
+connector.read-failed:
+  message: "Connector '{connector}' failed while reading the store: {detail}."
+  solution: "Check the store is reachable and the connection settings are correct."
+connector.capability-missing:
+  message: "Connector '{connector}' does not provide '{capability}', which this read needs."
+  solution: "Read a source whose connector provides this capability, or use a verb that does not need it."
 control.audit-blocked:
   message: "Operation '{op}' was refused because its required audit record could not be written."
   solution: "An audited operation must leave an audit record before it runs; check the store is reachable and healthy, then retry."

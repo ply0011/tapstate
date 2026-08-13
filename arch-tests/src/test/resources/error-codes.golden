@@ -31,6 +31,7 @@ connector.ambiguous-connector-class
 connector.ambiguous-registration
 connector.api-level-incompatible
 connector.api-level-unknown
+connector.capability-missing
 connector.capture-failed
 connector.class-not-found
 connector.discover-failed
@@ -40,6 +41,7 @@ connector.not-found
 connector.not-official
 connector.not-registered
 connector.projection-failed
+connector.read-failed
 connector.registration-conflict
 connector.spec-invalid
 connector.spec-not-found
