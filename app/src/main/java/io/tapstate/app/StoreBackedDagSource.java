@@ -187,7 +187,7 @@ final class StoreBackedDagSource implements DagSource {
                 element -> sinkWriter(element, targets, servedTables),
                 ref -> upstreams(ref, sourceKeyByTable, sourceKeysById, sourceVertices, stepIds),
                 sourceKeysById::get,
-                view -> viewSink(view, targets));
+                view -> viewSink(view, targets, servedTables));
     }
 
     /**
@@ -200,7 +200,8 @@ final class StoreBackedDagSource implements DagSource {
      * upsert means; and the ddl policy governs how an incoming schema change is handled, not whether the
      * target may be created, so refusing to drift costs the materialization nothing.
      */
-    private SupplierEx<? extends SinkWriter> viewSink(ViewBlock view, Map<String, TargetTable> targets) {
+    private SupplierEx<? extends SinkWriter> viewSink(
+            ViewBlock view, Map<String, TargetTable> targets, Set<String> servedTables) {
         if (!(view instanceof ViewBlock.Inline inline)) {
             throw new IllegalArgumentException(
                     "view block is a use-reference; resolve it to an inline view first");
@@ -213,9 +214,18 @@ final class StoreBackedDagSource implements DagSource {
                 .map(SourceResource.class::cast)
                 .orElseThrow(() -> new TapstateException(ActuationError.VIEW_STORE_NOT_CONFIGURED,
                         Map.of("store", target.sourceId()), null));
+        // Keyed by every source table that can reach the view, all answering with the one collection.
+        // The sink resolves a target by the table a row came from, so a view - which collapses those
+        // tables into a single object - has to answer to each of their names. Keyed by the view's own
+        // name instead, every lookup misses and the rows land under the source table: the right rows,
+        // silently in the wrong collection, which no topology assertion can see.
+        TargetTable viewTable = viewTargetTable(target, targets);
+        Map<String, TargetTable> bySourceTable = new LinkedHashMap<>();
+        for (String sourceTable : servedTables) {
+            bySourceTable.put(sourceTable, viewTable);
+        }
         return sinkWriterBinder.bind(
-                store.connector(), store.config(), WriteMode.UPSERT, DdlPolicy.FAIL,
-                viewTargetTable(target, targets));
+                store.connector(), store.config(), WriteMode.UPSERT, DdlPolicy.FAIL, bySourceTable);
     }
 
     /**

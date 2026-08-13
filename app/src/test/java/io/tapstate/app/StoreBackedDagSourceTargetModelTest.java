@@ -39,6 +39,30 @@ import org.junit.jupiter.api.Test;
 class StoreBackedDagSourceTargetModelTest {
 
     @Test
+    void a_view_target_is_keyed_by_the_source_tables_that_reach_it() {
+        // The sink resolves a target by the table the row came from, so a view - which collapses every
+        // upstream table into one collection - must answer to each of those table names. Keyed by the
+        // view's own name instead, every lookup misses and the rows land under the source table: the
+        // right rows, silently in the wrong collection.
+        InMemoryStorePort store = new InMemoryStorePort();
+        store.artifacts().save(new SourceResource("orders_src", null, "mysql", Map.of("host", "h"),
+                SourceMode.CDC, List.of(TableRef.literal("orders")), null, null, null));
+        store.artifacts().save(new SourceResource(ViewTargetResolver.STATE_STORE_SOURCE_ID, null,
+                "mongodb", Map.of("uri", "u"), null, null, null, null, null));
+        store.artifacts().save(new PipelineResource("p", null, List.of("orders_src"), null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders_src"), "order_id", null, null),
+                null, null, null));
+        List<Map<String, TargetTable>> bound = new ArrayList<>();
+
+        new StoreBackedDagSource(store, mapCapturingBinder(bound)).dagFor("p");
+
+        assertThat(bound).singleElement().satisfies(targets -> {
+            assertThat(targets).containsOnlyKeys("orders");
+            assertThat(targets.get("orders").name()).isEqualTo("order_state");
+        });
+    }
+
+    @Test
     void a_view_target_carries_the_key_index_the_collection_is_read_by() {
         // The index travels with the target model rather than being applied out of band, so whoever
         // creates the collection creates its index in the same act.
@@ -251,6 +275,32 @@ class StoreBackedDagSourceTargetModelTest {
     }
 
     /** A binder that records the target it is handed and returns a sink supplier the build never opens. */
+    /**
+     * Captures the whole target map rather than a single model. The sink looks a target up by the table a
+     * row came from, so which keys the map carries is the load-bearing part - a map holding the right model
+     * under the wrong key is indistinguishable from a correct one until rows actually move.
+     */
+    private static StoreBackedDagSource.SinkWriterBinder mapCapturingBinder(
+            List<Map<String, TargetTable>> bound) {
+        return new StoreBackedDagSource.SinkWriterBinder() {
+            @Override
+            public SupplierEx<? extends SinkWriter> bind(String connectorId, Map<String, Object> settings,
+                    io.tapstate.spi.sink.WriteMode writeMode, io.tapstate.spi.sink.DdlPolicy ddl,
+                    TargetTable target) {
+                bound.add(target == null ? Map.of() : Map.of(target.name(), target));
+                return (SupplierEx<SinkWriter>) () -> null;
+            }
+
+            @Override
+            public SupplierEx<? extends SinkWriter> bind(String connectorId, Map<String, Object> settings,
+                    io.tapstate.spi.sink.WriteMode writeMode, io.tapstate.spi.sink.DdlPolicy ddl,
+                    Map<String, TargetTable> targets) {
+                bound.add(targets);
+                return (SupplierEx<SinkWriter>) () -> null;
+            }
+        };
+    }
+
     private static StoreBackedDagSource.SinkWriterBinder capturingBinder(List<TargetTable> bound) {
         return (connectorId, settings, writeMode, ddl, target) -> {
             bound.add(target);
