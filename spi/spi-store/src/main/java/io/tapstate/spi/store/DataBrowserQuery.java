@@ -16,12 +16,20 @@ import java.util.Objects;
  * databases the connection was never meant to read.
  *
  * <p>{@code filter} is held as an unmodifiable defensive copy; a null map is normalized to empty,
- * which reads every row. {@code limit} bounds one read.
+ * which reads every row. {@code limit} bounds one read. {@code sort} may be null, which asks for no
+ * particular order and leaves it to the database — that is a request, not an omission, so it is not
+ * normalized into some default.
  */
-public record DataBrowserQuery(String collection, Map<String, Object> filter, int limit) {
+public record DataBrowserQuery(
+        String collection, Map<String, Object> filter, DataBrowserSort sort, int limit) {
 
     public DataBrowserQuery {
         Objects.requireNonNull(collection, "collection");
         filter = filter == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(filter));
+    }
+
+    /** A read in the database's own order. */
+    public DataBrowserQuery(String collection, Map<String, Object> filter, int limit) {
+        this(collection, filter, null, limit);
     }
 }

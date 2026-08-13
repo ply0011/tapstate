@@ -4,6 +4,7 @@ import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowser;
 import io.tapstate.spi.store.DataBrowserQuery;
+import io.tapstate.spi.store.DataBrowserSort;
 import io.tapstate.spi.store.DataBrowserTableInfo;
 import io.tapdata.pdk.apis.entity.ExecuteResult;
 import io.tapdata.pdk.apis.entity.TapExecuteCommand;
@@ -203,6 +204,15 @@ public final class PdkDataBrowser implements DataBrowser {
         // A filter is always present, empty meaning every row: a connector hands its absence straight to
         // the driver as a null filter, which the driver rejects.
         params.put("filter", new LinkedHashMap<>(query.filter()));
+        // Only when an order was asked for. Absent means the database's own order, and the key has to be
+        // left out to say that: a connector reads a present sort and an absent one differently, so an
+        // empty map here would be a request for an order rather than the absence of one.
+        DataBrowserSort sort = query.sort();
+        if (sort != null) {
+            Map<String, Object> ordering = new LinkedHashMap<>();
+            ordering.put(sort.field(), sort.direction() == DataBrowserSort.Direction.ASC ? 1 : -1);
+            params.put("sort", ordering);
+        }
         // An int, not a long: the connector casts this straight to int, so a long fails at the cast.
         params.put("limit", query.limit());
         return params;

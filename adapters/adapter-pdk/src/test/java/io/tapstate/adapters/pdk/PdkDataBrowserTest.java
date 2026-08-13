@@ -7,6 +7,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowserQuery;
+import io.tapstate.spi.store.DataBrowserSort;
+import io.tapstate.spi.store.DataBrowserSort.Direction;
 import io.tapstate.spi.store.DataBrowserTableInfo;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -203,7 +205,32 @@ class PdkDataBrowserTest {
 
         List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
 
-        assertThat(rows).hasSize(3);
+        assertThat(rows).hasSize(4);
+    }
+
+    @Test
+    void findCarriesTheRequestedSortIntoTheParams(@TempDir Path dir) {
+        // The seam carries an order as a neutral field-and-direction pair; turning that into the encoding
+        // one connector's query expects belongs here, in the bridge that already knows which connector it
+        // is driving, and nowhere above it.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        List<Map<String, Object>> rows = reader.find(config(),
+                new DataBrowserQuery("orders", Map.of(), new DataBrowserSort("status", Direction.DESC), 10));
+
+        assertThat(echoed(rows, "sort")).isEqualTo(Map.of("status", -1));
+    }
+
+    @Test
+    void findOmitsTheSortParamWhenTheRequestAsksForNoOrder(@TempDir Path dir) {
+        // No order means the database's own, and that is a real answer rather than a missing one. Sending
+        // an empty or null sort instead would be a request for an order nobody asked for, which is the one
+        // thing this face promised not to impose.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        List<Map<String, Object>> rows = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+
+        assertThat(echoed(rows, "sort")).isEqualTo("<none-was-sent>");
     }
 
     @Test

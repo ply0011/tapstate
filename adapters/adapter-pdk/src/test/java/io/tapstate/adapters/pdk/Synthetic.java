@@ -760,6 +760,15 @@ final class Synthetic {
                 + "  third.put(\"echoed\", \"database-as-it-arrived\"); third.put(\"value\", arrivedDatabase);"
                 + "  List<Map<String,Object>> batch3 = new ArrayList<>(); batch3.add(third);"
                 + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch3));"
+                // Same sentinel treatment as the database above, and for the same reason: a request that
+                // asks for no order must leave the key out entirely, because a connector reads a present
+                // sort and an absent one differently.
+                + "  Object arrivedSort = params.containsKey(\"sort\") ? params.get(\"sort\")"
+                + "    : \"<none-was-sent>\";"
+                + "  Map<String,Object> fourth = new LinkedHashMap<>();"
+                + "  fourth.put(\"echoed\", \"sort\"); fourth.put(\"value\", arrivedSort);"
+                + "  List<Map<String,Object>> batch4 = new ArrayList<>(); batch4.add(fourth);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch4));"
                 + "});";
         return SyntheticJar.compileToJar(dir, "synthetic.ReadFace", readFace("ReadFace", register));
     }
