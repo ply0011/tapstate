@@ -230,6 +230,15 @@ connector.read-failed:
 connector.capability-missing:
   message: "Connector '{connector}' does not provide '{capability}', which this read needs."
   solution: "Read a source whose connector provides this capability, or use a verb that does not need it."
+connector.instances-busy:
+  message: "Every connection to '{connector}' was still busy after {timeout}."
+  solution: "Another read of this connection is still running; retry, or narrow the read so it finishes sooner."
+connector.instance-limit-reached:
+  message: "This host already holds its limit of {limit} live connector connections and all of them are busy."
+  solution: "Wait for a running read to finish, or reduce how many connections are being read at once."
+connector.read-timeout:
+  message: "Reading '{connector}' took longer than {timeout} and was stopped."
+  solution: "Narrow the read with a filter or a smaller limit, or check the store is not overloaded."
 control.audit-blocked:
   message: "Operation '{op}' was refused because its required audit record could not be written."
   solution: "An audited operation must leave an audit record before it runs; check the store is reachable and healthy, then retry."

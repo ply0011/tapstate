@@ -1,8 +1,8 @@
+# @Deprecated codes stay listed as tombstones until intentionally retired.
 # Canonical first-party error codes — the build-time stability lock (ADR-0024 D5-5).
 # Sorted, one <domain>.<symbol> per line. The ErrorCodeGatesTest diffs the scanned codes
 # against this file. Adding a code = append it here in the same change set; renaming or
 # removing one = a breaking change to an external contract (review + major version).
-# @Deprecated codes stay listed as tombstones until intentionally retired.
 actuation.from-regex-empty
 actuation.from-regex-invalid
 actuation.not-a-pipeline
@@ -35,6 +35,8 @@ connector.capability-missing
 connector.capture-failed
 connector.class-not-found
 connector.discover-failed
+connector.instance-limit-reached
+connector.instances-busy
 connector.load-failed
 connector.no-connector-class
 connector.not-found
@@ -42,6 +44,7 @@ connector.not-official
 connector.not-registered
 connector.projection-failed
 connector.read-failed
+connector.read-timeout
 connector.registration-conflict
 connector.spec-invalid
 connector.spec-not-found

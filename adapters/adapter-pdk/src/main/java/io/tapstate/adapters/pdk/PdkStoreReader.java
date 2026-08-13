@@ -9,17 +9,28 @@ import io.tapdata.pdk.apis.functions.connection.GetTableNamesFunction;
 import io.tapdata.pdk.apis.functions.connection.TableInfo;
 import io.tapdata.pdk.apis.functions.connector.source.ExecuteCommandFunction;
 
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * The PDK bridge for reading a store: it provisions a connector, refuses it with a code if it will
- * not load or its declared API level is incompatible, and drives the three read functions a connector
- * may register — listing its collections, reporting one collection's size, and running a query. The
- * PDK types stay inside this class; neither the requests nor the results carry any of them.
+ * The PDK bridge for reading a store: it takes a live connector instance from the pool, refuses the
+ * read with a code if the connector will not load or does not register the function the verb needs,
+ * and drives the three read functions — listing its collections, reporting one collection's size, and
+ * running a query. The PDK types stay inside this class; neither the requests nor the results carry
+ * any of them.
+ *
+ * <p>Instances are pooled rather than opened per read, and the reason is not only cost: opening a
+ * connector builds a fresh isolated class loader and — once initialized — the connector's own driver
+ * connection pool, so a read face that opened one per call could not carry a caller that reads on a
+ * timer. Initialization therefore happens once, when the instance enters the pool, not on every read.
+ * The pool is live state, so this reader owns a lifecycle: {@link #close()} hands it all back.
  *
  * <p>Unlike the capture read, this face is reachable by a user asking to look at their data, so a
  * connector that does not register the function a verb needs is a coded refusal naming the connector
@@ -40,7 +51,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *       param, which is why it stays green until it does not.
  * </ul>
  */
-public final class PdkStoreReader {
+public final class PdkStoreReader implements AutoCloseable {
 
     /**
      * The one command the read face dispatches. A connector routes writes through this same function
@@ -52,56 +63,59 @@ public final class PdkStoreReader {
     /** How many collection names to ask for per consumer call; the listing is collected whole regardless. */
     private static final int NAME_BATCH_SIZE = 1000;
 
-    private final ConnectorProvisioner provisioner;
+    private final ConnectorInstancePool<PdkConnector> pool;
+    private final ScheduledExecutorService evictions;
 
     public PdkStoreReader(ConnectorProvisioner provisioner) {
-        this.provisioner = provisioner;
+        this(provisioner, ConnectorInstancePool.DEFAULTS, Clock.systemUTC());
+    }
+
+    PdkStoreReader(ConnectorProvisioner provisioner, ConnectorInstancePool.Limits limits, Clock clock) {
+        this.pool = new ConnectorInstancePool<>(
+                config -> openAndInitialize(provisioner, config), PdkStoreReader::shutDown, limits, clock);
+        this.evictions = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "store-read-eviction");
+            thread.setDaemon(true);
+            return thread;
+        });
+        // The pool keeps no timer of its own, so an idle instance is only given up if something asks it
+        // to be. Checking on the next read instead would never fire on the face nobody is using, which
+        // is exactly the face whose connections should have been handed back.
+        long period = Math.max(1, limits.idle().toMillis() / 2);
+        evictions.scheduleWithFixedDelay(pool::sweep, period, period, TimeUnit.MILLISECONDS);
     }
 
     /** Lists the collections the connection's own database holds, in the order the connector reports them. */
     public List<String> tableNames(ConnectionConfig config) {
-        PdkConnector connector = open(config);
-        try {
+        return pool.call(config, connector -> {
             GetTableNamesFunction names = require(
                     connector, connector.functions().getGetTableNamesFunction(), "getTableNames");
             List<String> collected = new ArrayList<>();
+            // The consumer is called once per batch, so every call accumulates - assigning here would
+            // return only the connector's last batch and lose every collection before it.
             drive(connector, () -> {
-                connector.connector().init(connector.context());
-                // The consumer is called once per batch, so every call accumulates - assigning here would
-                // return only the connector's last batch and lose every collection before it.
                 names.tableNames(connector.context(), NAME_BATCH_SIZE, collected::addAll);
                 return null;
             });
             return collected;
-        } finally {
-            connector.stopQuietly();
-            connector.close();
-        }
+        });
     }
 
     /** Reports what the connector knows about one collection's size. */
     public StoreTableInfo tableInfo(ConnectionConfig config, String collection) {
-        PdkConnector connector = open(config);
-        try {
+        return pool.call(config, connector -> {
             GetTableInfoFunction info = require(
                     connector, connector.functions().getGetTableInfoFunction(), "getTableInfo");
-            TableInfo reported = drive(connector, () -> {
-                connector.connector().init(connector.context());
-                return info.getTableInfo(connector.context(), collection);
-            });
+            TableInfo reported = drive(connector, () -> info.getTableInfo(connector.context(), collection));
             return reported == null
                     ? new StoreTableInfo(null, null, null)
                     : new StoreTableInfo(reported.getNumOfRows(), reported.getStorageSize(), reported.getAvgObjSize());
-        } finally {
-            connector.stopQuietly();
-            connector.close();
-        }
+        });
     }
 
     /** Runs {@code query} against the connection's own database and returns the rows it matched. */
     public List<Map<String, Object>> query(ConnectionConfig config, StoreQuery query) {
-        PdkConnector connector = open(config);
-        try {
+        return pool.call(config, connector -> {
             ExecuteCommandFunction execute = require(
                     connector, connector.functions().getExecuteCommandFunction(), "executeCommand");
             List<Map<String, Object>> rows = new ArrayList<>();
@@ -110,7 +124,6 @@ public final class PdkStoreReader {
             // as a short page, which reads exactly like a complete one.
             AtomicReference<Throwable> reported = new AtomicReference<>();
             drive(connector, () -> {
-                connector.connector().init(connector.context());
                 TapExecuteCommand command = TapExecuteCommand.create()
                         .command(QUERY_COMMAND)
                         .params(params(query));
@@ -122,18 +135,45 @@ public final class PdkStoreReader {
                 throw readFailed(connector.connectorId(), failure);
             }
             return rows;
-        } finally {
-            connector.stopQuietly();
-            connector.close();
+        });
+    }
+
+    /** Hands back every pooled connector and stops evicting. */
+    @Override
+    public void close() {
+        evictions.shutdownNow();
+        pool.close();
+    }
+
+    // ---- the pooled instance ---------------------------------------------------------------------
+
+    /**
+     * Opens one connector for {@code config} and initializes it, which is the step that builds whatever
+     * the connector holds at runtime — for a database connector, its own connection pool. Pooling an
+     * un-initialized instance would rebuild that on every read and save nothing.
+     */
+    private static PdkConnector openAndInitialize(ConnectorProvisioner provisioner, ConnectionConfig config) {
+        PdkConnector connector = PdkConnector.open(
+                config.connectorId(), provisioner.resolve(config.connectorId()), config.settings());
+        try {
+            drive(connector, () -> {
+                connector.connector().init(connector.context());
+                return null;
+            });
+        } catch (RuntimeException | Error e) {
+            shutDown(connector);
+            throw e;
         }
+        return connector;
+    }
+
+    /** Stops and closes one pooled connector; the pool calls this exactly once per instance. */
+    private static void shutDown(PdkConnector connector) {
+        connector.stopQuietly();
+        connector.close();
     }
 
     // ---- drive helpers ---------------------------------------------------------------------------
-
-    private PdkConnector open(ConnectionConfig config) {
-        return PdkConnector.open(
-                config.connectorId(), provisioner.resolve(config.connectorId()), config.settings());
-    }
 
     /**
      * The params one query is driven with. Mutable by contract, not by accident: a connector fills a

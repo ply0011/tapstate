@@ -660,6 +660,37 @@ final class Synthetic {
 
     /** The shared scaffold for a store-read connector: the three read-face functions the caller fills in. */
     private static String readFace(String simpleName, String registerBody) {
+        return readFace(simpleName, registerBody,
+                "  public void init(TapConnectionContext c) {}"
+                        + "  public void stop(TapConnectionContext c) {}");
+    }
+
+    /**
+     * A store-read connector that appends every {@code init} and {@code stop} it is driven through to
+     * the file named by the {@code synthetic.marker} system property. Counting these from the outside
+     * needs a channel that outlives one connector's isolated class loader — a static counter inside the
+     * connector is reset by every fresh load, which is exactly the thing under test — and a file read
+     * back by the test is that channel.
+     */
+    static Path lifecycleRecordingSource(Path dir) {
+        String register = "functions.supportGetTableNamesFunction((c, batchSize, consumer) -> {"
+                + "  List<String> names = new ArrayList<>(); names.add(\"orders\"); consumer.accept(names);"
+                + "});";
+        String lifecycle = ""
+                + "  public void init(TapConnectionContext c) { mark(\"init\"); }"
+                + "  public void stop(TapConnectionContext c) { mark(\"stop\"); }"
+                + "  private static void mark(String what) {"
+                + "    try {"
+                + "      java.nio.file.Files.writeString("
+                + "        java.nio.file.Path.of(System.getProperty(\"synthetic.marker\")), what + \"\\n\","
+                + "        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);"
+                + "    } catch (java.io.IOException e) { throw new RuntimeException(e); }"
+                + "  }";
+        return SyntheticJar.compileToJar(dir, "synthetic.LifecycleRecording",
+                readFace("LifecycleRecording", register, lifecycle));
+    }
+
+    private static String readFace(String simpleName, String registerBody, String lifecycleBody) {
         return ""
                 + "package synthetic;"
                 + "import io.tapdata.pdk.apis.TapConnector;"
@@ -680,8 +711,7 @@ final class Synthetic {
                 + "  public void registerCapabilities(ConnectorFunctions functions, TapCodecsRegistry codecs) {"
                 + registerBody
                 + "  }"
-                + "  public void init(TapConnectionContext c) {}"
-                + "  public void stop(TapConnectionContext c) {}"
+                + lifecycleBody
                 + "  public void discoverSchema(TapConnectionContext c, List<String> t, int n, Consumer<List<TapTable>> s) {}"
                 + "  public ConnectionOptions connectionTest(TapConnectionContext c, Consumer<TestItem> s) { return ConnectionOptions.create(); }"
                 + "  public int tableCount(TapConnectionContext c) { return 1; }"

@@ -163,7 +163,30 @@ public enum ConnectorError implements TapstateErrorCode {
      * serve a read is a property of the connector, not something the request was validated against, so
      * a user can reach it by asking to read a source whose connector does not offer it.
      */
-    CAPABILITY_MISSING("connector.capability-missing", Set.of("connector", "capability"));
+    CAPABILITY_MISSING("connector.capability-missing", Set.of("connector", "capability")),
+
+    /**
+     * Every live instance of this connection stayed busy for the whole wait, so the read was refused
+     * rather than queued behind a query that may never end. {@code connector} is the connector id;
+     * {@code timeout} is how long the read waited. A caller that sees this repeatedly is contending
+     * with other reads of the same connection, not with a broken one.
+     */
+    INSTANCES_BUSY("connector.instances-busy", Set.of("connector", "timeout")),
+
+    /**
+     * The host already holds as many live connector instances as it allows and every one of them is
+     * busy, so none could be closed to make room. {@code limit} is the ceiling that was reached. The
+     * ceiling is counted in instances because each one carries its connector's own connection pool;
+     * this is a host-wide condition rather than a property of the connection being read.
+     */
+    INSTANCE_LIMIT_REACHED("connector.instance-limit-reached", Set.of("limit")),
+
+    /**
+     * The read ran longer than the read face allows and was abandoned. {@code connector} is the
+     * connector id; {@code timeout} is how long it was given. The instance it ran on is closed rather
+     * than reused, because the abandoned read is still inside it.
+     */
+    READ_TIMEOUT("connector.read-timeout", Set.of("connector", "timeout"));
 
     private final String code;
     private final Set<String> placeholders;

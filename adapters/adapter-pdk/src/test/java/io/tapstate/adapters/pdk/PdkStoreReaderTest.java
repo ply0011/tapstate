@@ -6,9 +6,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -21,14 +28,107 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class PdkStoreReaderTest {
 
+    private final List<PdkStoreReader> readers = new ArrayList<>();
+
+    @AfterEach
+    void closeReaders() {
+        readers.forEach(PdkStoreReader::close);
+        System.clearProperty("synthetic.marker");
+    }
+
     /** A reader over a provisioner that hands back one fixed connector ref, whatever id is asked for. */
-    private static PdkStoreReader reader(Path jar, String className) {
+    private PdkStoreReader reader(Path jar, String className) {
+        return reader(jar, className, ConnectorInstancePool.DEFAULTS);
+    }
+
+    private PdkStoreReader reader(Path jar, String className, ConnectorInstancePool.Limits limits) {
         ConnectorRef ref = new ConnectorRef(List.of(jar), className, "2.0.8", null);
-        return new PdkStoreReader(connectorId -> ref);
+        PdkStoreReader reader = new PdkStoreReader(connectorId -> ref, limits, Clock.systemUTC());
+        readers.add(reader);
+        return reader;
     }
 
     private static ConnectionConfig config() {
         return new ConnectionConfig("conn-1", "demo", Map.of());
+    }
+
+    private static ConnectionConfig config(String database) {
+        return new ConnectionConfig("conn-1", "demo", Map.of("database", database));
+    }
+
+    /**
+     * Points the lifecycle-recording connector at a file in {@code dir} and hands it back. Reading it
+     * is how a test counts drives of a connector that gets a fresh class loader every time it is
+     * opened — which is precisely what makes an in-connector counter useless here.
+     */
+    private static Path marker(Path dir) {
+        Path marker = dir.resolve("lifecycle.log");
+        System.setProperty("synthetic.marker", marker.toString());
+        return marker;
+    }
+
+    private static List<String> drives(Path marker) throws IOException {
+        return Files.exists(marker) ? Files.readAllLines(marker) : List.of();
+    }
+
+    // ---- the pooled instance ---------------------------------------------------------------------
+
+    @Test
+    void reusesOneConnectorAcrossReadsOfTheSameConnection(@TempDir Path dir) throws IOException {
+        // Opening is a class loader, a linked jar and a constructed connector, and initializing is what
+        // builds the driver's own connection pool behind it. Paying that per query is what rules out any
+        // caller that reads on a timer.
+        PdkStoreReader reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
+        Path marker = marker(dir);
+
+        reader.tableNames(config());
+        reader.tableNames(config());
+
+        assertThat(drives(marker)).containsExactly("init");
+    }
+
+    @Test
+    void opensASecondConnectorOnceTheConnectionSettingsChange(@TempDir Path dir) throws IOException {
+        // The instance holds the settings it was opened with, so an applied change has to reach the next
+        // read. Kept across it, the read answers from the old database and reports nothing wrong.
+        PdkStoreReader reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
+        Path marker = marker(dir);
+
+        reader.tableNames(config("one"));
+        reader.tableNames(config("two"));
+
+        assertThat(drives(marker)).containsExactly("init", "init");
+    }
+
+    @Test
+    void stopsThePooledConnectorWhenTheReaderCloses(@TempDir Path dir) throws IOException {
+        // A pooled instance is live: it holds its class loader open and its driver's connections with it,
+        // so shutting the face down has to hand them back rather than drop the reference.
+        PdkStoreReader reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording");
+        Path marker = marker(dir);
+        reader.tableNames(config());
+
+        reader.close();
+
+        assertThat(drives(marker)).containsExactly("init", "stop");
+    }
+
+    @Test
+    void stopsAConnectorThatHasSatIdleWithoutAnyFurtherReads(@TempDir Path dir) throws Exception {
+        // Eviction has to happen on its own. Checked only when the next read arrives, an idle instance on
+        // a face nobody is using holds its connections for as long as nobody uses it - which is exactly
+        // when they should have been given back.
+        ConnectorInstancePool.Limits limits = ConnectorInstancePool.DEFAULTS.withIdle(Duration.ofMillis(50));
+        PdkStoreReader reader = reader(Synthetic.lifecycleRecordingSource(dir), "synthetic.LifecycleRecording", limits);
+        Path marker = marker(dir);
+        reader.tableNames(config());
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (!drives(marker).contains("stop") && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+
+        assertThat(drives(marker)).containsExactly("init", "stop");
     }
 
     // ---- getTableNames ---------------------------------------------------------------------------
