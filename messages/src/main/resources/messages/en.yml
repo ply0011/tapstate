@@ -224,6 +224,9 @@ connector.test-failed:
 connector.write-failed:
   message: "Connector '{connector}' failed while writing: {detail}."
   solution: "Check the target is reachable and the connection settings are correct."
+connector.read-abandoned:
+  message: "Reading '{connector}' stopped before it finished, so the rows it returned are incomplete."
+  solution: "The read was interrupted rather than refused; run it again."
 connector.read-failed:
   message: "Connector '{connector}' failed while reading the store: {detail}."
   solution: "Check the store is reachable and the connection settings are correct."

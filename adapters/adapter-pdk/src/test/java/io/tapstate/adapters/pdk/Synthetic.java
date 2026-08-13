@@ -808,6 +808,25 @@ final class Synthetic {
                 + "});";
     }
 
+    /**
+     * A data-browser connector whose query gives up part way through and returns as if it had not.
+     * It emits one batch, then interrupts the thread it is running on — which is precisely the state
+     * that makes a real connector's read loop stop: the loop asks whether it is still alive between
+     * batches, and a connector reads that as "started and not interrupted". Nothing throws, nothing is
+     * reported through the result, and the rows already accumulated are dropped. What arrives at the
+     * bridge is a short answer that looks exactly like a small collection.
+     */
+    static Path abandoningQuerySource(Path dir) {
+        String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  Map<String,Object> row = new LinkedHashMap<>(); row.put(\"n\", 0);"
+                + "  List<Map<String,Object>> batch = new ArrayList<>(); batch.add(row);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch));"
+                + "  Thread.currentThread().interrupt();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.AbandoningQuery",
+                readFace("AbandoningQuery", register));
+    }
+
     /** A data-browser connector whose query reports its failure through {@code ExecuteResult.error}. */
     static Path erroringQuerySource(Path dir) {
         String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"

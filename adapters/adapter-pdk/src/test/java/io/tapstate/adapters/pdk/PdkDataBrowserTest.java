@@ -350,6 +350,43 @@ class PdkDataBrowserTest {
     }
 
     @Test
+    void findFailsWithACodeWhenTheConnectorGaveUpPartWayThrough(@TempDir Path dir) {
+        // A connector's read loop asks whether it is still alive between batches and, when it is not,
+        // returns without throwing and without reporting - dropping whatever it had. Every other signal
+        // this face has says the read went fine, and the rows that did arrive are a short answer
+        // indistinguishable from a small collection. Asking afterwards is the only way to tell.
+        PdkDataBrowser reader = reader(Synthetic.abandoningQuerySource(dir), "synthetic.AbandoningQuery");
+
+        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+                .isInstanceOf(TapstateException.class)
+                .extracting(e -> ((TapstateException) e).code().code())
+                .isEqualTo("connector.read-abandoned");
+    }
+
+    @Test
+    void findStillServesTheNextReadAfterOneWasAbandoned(@TempDir Path dir) {
+        // The interrupt that ended the abandoned read is left on a pooled thread, and reads are handed
+        // to whichever of those is free - so a flag left set would end the next read on that thread too,
+        // reporting a healthy connector as having given up. Whether it is cleared between calls belongs
+        // to the executor rather than to this class, which is why it is asserted and not assumed.
+        ConnectorRef abandoning = new ConnectorRef(
+                List.of(Synthetic.abandoningQuerySource(dir)), "synthetic.AbandoningQuery", "2.0.8", null);
+        ConnectorRef healthy = new ConnectorRef(
+                List.of(Synthetic.boundedQuerySource(dir, 4)), "synthetic.BoundedQuery", "2.0.8", null);
+        PdkDataBrowser reader = new PdkDataBrowser(
+                connectorId -> "abandoning".equals(connectorId) ? abandoning : healthy,
+                ConnectorInstancePool.DEFAULTS, Clock.systemUTC());
+        readers.add(reader);
+        DataBrowserQuery query = new DataBrowserQuery("orders", Map.of(), 10);
+
+        assertThatThrownBy(() -> reader.find(new ConnectionConfig("c1", "abandoning", Map.of()), query))
+                .isInstanceOf(TapstateException.class);
+
+        DataBrowserPreview preview = reader.find(new ConnectionConfig("c2", "healthy", Map.of()), query);
+        assertThat(preview.rows()).hasSize(4);
+    }
+
+    @Test
     void findFailsWithACodeWhenTheConnectorReportsAnError(@TempDir Path dir) {
         // The failure arrives through the result rather than as a throw, so a drive that reads only
         // getResult() returns an empty page for a query that in fact failed.

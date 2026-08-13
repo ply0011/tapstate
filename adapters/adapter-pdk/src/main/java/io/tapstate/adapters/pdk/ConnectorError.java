@@ -157,6 +157,15 @@ public enum ConnectorError implements TapstateErrorCode {
     READ_FAILED("connector.read-failed", Set.of("connector", "detail")),
 
     /**
+     * The connector gave up part way through a read and returned as if it had not. {@code connector} is
+     * the connector id. A read loop asks whether it is still alive between batches and, when it is not,
+     * returns without throwing and without reporting — dropping the rows it had already gathered. That
+     * leaves a short answer no other signal contradicts, and a short answer is indistinguishable from a
+     * small collection, so it would otherwise be handed to a caller as a complete one.
+     */
+    READ_ABANDONED("connector.read-abandoned", Set.of("connector")),
+
+    /**
      * The connector registers no function for the capability this read needs, so the read cannot be
      * served at all. {@code connector} is the connector id; {@code capability} names the function that
      * is absent. This is a user-facing refusal rather than an invariant violation: which connectors can

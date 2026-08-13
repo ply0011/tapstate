@@ -139,6 +139,15 @@ public final class PdkDataBrowser implements DataBrowser {
             if (failure != null) {
                 throw readFailed(connector.connectorId(), failure);
             }
+            // A read that was stopped mid-flight returns here looking like one that finished: the loop
+            // that gave up neither threw nor reported, and the rows that did arrive are a short answer
+            // no other signal contradicts. Asking afterwards is the only thing that separates the two,
+            // and this is the one verb it applies to - the name listing never asks about its own
+            // liveness, so it cannot end early without saying so.
+            if (!connector.isAlive()) {
+                throw new TapstateException(ConnectorError.READ_ABANDONED,
+                        Map.of("connector", connector.connectorId()), null);
+            }
             // The row past the bound arrived, so the collection holds more than this read carries. The
             // row itself is not part of the answer: a caller that asked for ten and is handed eleven has
             // had its bound broken to satisfy a footnote.
