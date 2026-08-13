@@ -486,6 +486,30 @@ Alpha+ therefore does not promise exactly-once delivery, transactionally consist
 snapshots across independent databases, durable incremental recovery, or complete
 failure-mode coverage.
 
+### What data will tapstate’s query surface serve?
+
+Tapstate’s query surface is intended to serve operational state that tapstate owns
+and maintains. Applications, operators, and agents should be able to inspect declared
+views without depending on the implementation details or query capabilities of an
+external destination.
+
+External sync targets have a different role. They are delivery destinations for data
+that users want to consume and manage in their own systems. They are not query backends
+behind tapstate’s query interface.
+
+Keeping these boundaries separate gives tapstate control over the semantics of its
+maintained state and query surface. Otherwise, behavior would vary according to each
+external database’s indexing, query language, consistency model, permissions, and
+availability.
+
+**In Alpha+, query is deliberately narrow.** It only serves declared views in the
+Tapstate-managed preview store. A user cannot configure an arbitrary MySQL, Oracle,
+MongoDB, or another sync target as the backend for a tapstate query.
+
+Alpha+ provides preview inspection through the planned CLI and MCP store tools. A
+stable application-facing State Data API and broader serving interfaces remain
+future work.
+
 ## Community
 
 - Website: https://tapstate.com
