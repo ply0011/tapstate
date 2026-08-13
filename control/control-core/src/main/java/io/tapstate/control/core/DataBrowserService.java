@@ -7,10 +7,7 @@ import io.tapstate.runtime.probe.DataBrowserFindProbe;
 import io.tapstate.runtime.probe.DataBrowserStatsProbe;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionConfig;
-import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
-import io.tapstate.spi.store.DataBrowserSort;
-import io.tapstate.spi.store.DataBrowserTableInfo;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -32,6 +29,11 @@ import java.util.Objects;
  * <p>Which database a read reaches follows from that source's own connection. The probes take no
  * database and the query request has no field for one, so nothing a caller sends can move a read off
  * the connection it was resolved from — the control plane's own tables sit on the same server.
+ *
+ * <p>What crosses in and out is the control ring's own vocabulary, never the storage ports': the surfaces
+ * send a {@link DataBrowserSortOrder} and receive a {@link DataBrowserStatsReport} /
+ * {@link DataBrowserPreviewReport}, and this class is where those meet the port types. A face that had to
+ * name a port type to read a row would be a face reaching past this service.
  */
 public final class DataBrowserService {
 
@@ -67,9 +69,9 @@ public final class DataBrowserService {
     }
 
     /** Reports what the connector knows about one of the source's collections. */
-    public DataBrowserTableInfo stats(String sourceId, String collection) {
+    public DataBrowserStatsReport stats(String sourceId, String collection) {
         ConnectionConfig config = requireCollection(sourceId, collection);
-        return statsProbe.stats(config, collection);
+        return DataBrowserStatsReport.from(statsProbe.stats(config, collection));
     }
 
     /**
@@ -82,11 +84,11 @@ public final class DataBrowserService {
      * surface would be several defaults drifting apart under a face whose whole claim is that they
      * are one request.
      */
-    public DataBrowserPreview find(
+    public DataBrowserPreviewReport find(
             String sourceId,
             String collection,
             Map<String, Object> filter,
-            DataBrowserSort sort,
+            DataBrowserSortOrder sort,
             Integer limit) {
         int bound = limit == null ? DEFAULT_LIMIT : limit;
         // Before the collection is resolved, which costs a round trip to the connector: a request that
@@ -98,7 +100,9 @@ public final class DataBrowserService {
                     null);
         }
         ConnectionConfig config = requireCollection(sourceId, collection);
-        return findProbe.find(config, new DataBrowserQuery(collection, filter, sort, bound));
+        DataBrowserQuery query = new DataBrowserQuery(
+                collection, filter, sort == null ? null : sort.toPortRequest(), bound);
+        return DataBrowserPreviewReport.from(findProbe.find(config, query));
     }
 
     /**

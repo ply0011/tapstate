@@ -16,6 +16,7 @@ import io.tapstate.control.core.ConnectorCatalogView;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.LoginService;
 import io.tapstate.control.core.OperationRegistry;
@@ -674,6 +675,27 @@ class AuthTest {
                     return Optional.empty();
                 }
             });
+        }
+
+        // The three data-browser controller methods are bundled too, so their service must be present for
+        // the context to stand up; this suite exercises the auth matrix, not the reads, so every probe is
+        // inert (their behaviour is proven in DataBrowserApiTest).
+        @Bean
+        DataBrowserService dataBrowserService(InMemoryArtifactStore store) {
+            return new DataBrowserService(
+                    store,
+                    config -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.collections is not exercised in this test");
+                    },
+                    (config, collection) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.stats is not exercised in this test");
+                    },
+                    (config, query) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.find is not exercised in this test");
+                    });
         }
 
         // The connector register controller is bundled with the whole ControlHttpFace, so its service must be

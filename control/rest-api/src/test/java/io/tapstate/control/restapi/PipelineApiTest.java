@@ -16,6 +16,7 @@ import io.tapstate.control.core.ConnectorCatalogView;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.LoginService;
 import io.tapstate.control.core.OperationRegistry;
@@ -442,6 +443,27 @@ class PipelineApiTest {
         @Bean
         ArtifactQueryService artifactQueryService(ArtifactStore store) {
             return new ArtifactQueryService(store);
+        }
+
+        // The data-browser controller is bundled too, so its service must be present for the context to
+        // stand up; this suite exercises the pipeline verbs, not the reads, so every probe is inert (their
+        // behaviour is proven in DataBrowserApiTest).
+        @Bean
+        DataBrowserService dataBrowserService(ArtifactStore store) {
+            return new DataBrowserService(
+                    store,
+                    config -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.collections is not exercised in this test");
+                    },
+                    (config, collection) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.stats is not exercised in this test");
+                    },
+                    (config, query) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.find is not exercised in this test");
+                    });
         }
 
         // The connection / connector controllers come in with the whole ControlHttpFace bundle, so their

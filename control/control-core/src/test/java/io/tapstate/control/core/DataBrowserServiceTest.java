@@ -129,19 +129,39 @@ class DataBrowserServiceTest {
 
     @Test
     void reportsWhatTheStatsProbeAnswersForACollectionThatIsThere() {
-        DataBrowserTableInfo expected = new DataBrowserTableInfo(512L, 40960L, 80L);
         AtomicReference<String> read = new AtomicReference<>();
         DataBrowserService service = new DataBrowserService(
                 store(VIEWS),
                 config -> List.of("order_state"),
                 (config, collection) -> {
                     read.set(collection);
-                    return expected;
+                    return new DataBrowserTableInfo(512L, 40960L, 80L);
                 },
                 (config, query) -> NOTHING);
 
-        assertThat(service.stats("views", "order_state")).isSameAs(expected);
+        DataBrowserStatsReport report = service.stats("views", "order_state");
+
+        assertThat(report.numOfRows()).isEqualTo(512L);
+        assertThat(report.storageSize()).isEqualTo(40960L);
+        assertThat(report.avgObjSize()).isEqualTo(80L);
         assertThat(read.get()).isEqualTo("order_state");
+    }
+
+    @Test
+    void reportsASizeTheConnectorDidNotGiveAsUnreportedRatherThanZero() {
+        // Null means the connector reported nothing, and the surfaces read it that way. Filling in a zero
+        // here would state as fact - to every face at once - the one thing nobody worked out.
+        DataBrowserService service = new DataBrowserService(
+                store(VIEWS),
+                config -> List.of("order_state"),
+                (config, collection) -> new DataBrowserTableInfo(null, null, null),
+                (config, query) -> NOTHING);
+
+        DataBrowserStatsReport report = service.stats("views", "order_state");
+
+        assertThat(report.numOfRows()).isNull();
+        assertThat(report.storageSize()).isNull();
+        assertThat(report.avgObjSize()).isNull();
     }
 
     @Test
@@ -158,10 +178,14 @@ class DataBrowserServiceTest {
                     return expected;
                 });
 
-        DataBrowserPreview preview =
+        DataBrowserPreviewReport preview =
                 service.find("views", "order_state", Map.of("status", "paid"), null, 25);
 
-        assertThat(preview).isSameAs(expected);
+        // The report is a projection of what the probe answered, carried whole rather than re-derived:
+        // every surface renders this, so a field lost here is lost on all four at once.
+        assertThat(preview.rows()).isEqualTo(expected.rows());
+        assertThat(preview.approximateTotal()).isEqualTo(512L);
+        assertThat(preview.moreAvailable()).isTrue();
         assertThat(driven.get().collection()).isEqualTo("order_state");
         assertThat(driven.get().filter()).containsEntry("status", "paid");
         assertThat(driven.get().limit()).isEqualTo(25);
@@ -172,10 +196,25 @@ class DataBrowserServiceTest {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
         DataBrowserService service = finding(driven);
 
-        service.find("views", "order_state", Map.of(), new DataBrowserSort("status", DataBrowserSort.Direction.DESC), 10);
+        service.find("views", "order_state", Map.of(),
+                new DataBrowserSortOrder("status", DataBrowserSortOrder.Direction.DESC), 10);
 
+        // The order the surfaces express in control-ring terms reaches the port as the same order; a
+        // direction dropped in translation would return rows sorted the other way, silently.
         assertThat(driven.get().sort().field()).isEqualTo("status");
         assertThat(driven.get().sort().direction()).isEqualTo(DataBrowserSort.Direction.DESC);
+    }
+
+    @Test
+    void carriesAnAscendingOrderThroughAsAscending() {
+        // The other half of the translation, so a switch that answered DESC to everything cannot pass.
+        AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
+        DataBrowserService service = finding(driven);
+
+        service.find("views", "order_state", Map.of(),
+                new DataBrowserSortOrder("status", DataBrowserSortOrder.Direction.ASC), 10);
+
+        assertThat(driven.get().sort().direction()).isEqualTo(DataBrowserSort.Direction.ASC);
     }
 
     @Test
