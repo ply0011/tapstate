@@ -409,6 +409,27 @@ It does not claim to replace every use of Kafka, Flink, streaming databases, or
 warehouses. Those systems remain appropriate when event distribution, general-purpose
 stream computation, or historical analytics is the primary requirement.
 
+### What does “four products in one” mean? Is tapstate one binary?
+
+“Four products in one” refers to four operational responsibilities:
+
+1. **Capture:** read changes from source database logs.
+2. **Stream:** carry those changes through an integrated streaming data path.
+3. **Transform:** incrementally reshape and consolidate changes into application-ready business state.
+4. **Serve:** maintain that current state and make it available to operational consumers through pull and push surfaces.
+
+tapstate brings these responsibilities under one product boundary, deployment
+experience, configuration model, and operational surface. It is an alternative to
+independently assembling and integrating CDC, Kafka or another event-streaming layer,
+Flink or custom processing jobs, and a serving store.
+
+It does not mean the complete system is one process or one binary. The preview is
+deployed with Docker Compose and includes the tapstate server and MongoDB reference
+backing store. Only the offline CLI is a standalone native binary.
+
+“One deployable” therefore means one integrated product experience—not one executable
+file.
+
 ## Community
 
 - Website: https://tapstate.com
