@@ -171,18 +171,24 @@ commands, and CDC verification loop.
 - Fresh context for AI agents
 - Inventory, order, entitlement, and risk state
 
-## tapstate vs. the assembled stack
+## Where tapstate fits
 
-| Need | Traditional stack | tapstate direction |
-| --- | --- | --- |
-| Capture database changes | Debezium or custom CDC | Built-in log-based CDC |
-| Move events | Kafka / Redpanda | Integrated data path |
-| Transform streams | Flink / jobs / glue code | In-flight transforms |
-| Serve current state | Cache / search / document DB | Maintained state with pull and push surfaces |
-| Operate reliability | Multiple dashboards and failure modes | One operational surface |
+These approaches solve different parts of the path from systems of record to current,
+application-ready state. The useful distinction is not a feature count; it is which
+team or product owns each boundary.
 
-Kafka moves events. Warehouses analyze history. tapstate turns database truth into
-live operational state.
+| Approach | Where it fits well | Source capture ownership | Cross-system consolidation and served current state | Deployment and operating boundary | Available in this preview |
+| --- | --- | --- | --- | --- | --- |
+| Assembled CDC + event stream + processing jobs + serving store | Maximum component choice and independent scaling or replacement | CDC connector or service | Processing jobs combine streams; a separately selected store serves the result | Your team integrates and operates the contracts between components | Not packaged by tapstate; these are the components tapstate aims to bring under one product boundary |
+| Streaming database or materialized-view engine | Stateful stream processing and continuously updated views, especially when sources already arrive as streams | Commonly an upstream CDC or messaging layer | Engine maintains views; serving model depends on the product and chosen sink or query surface | Engine plus upstream capture and any external serving infrastructure | Not part of the tapstate preview |
+| Managed CDC / ELT service | Low-operations movement from supported sources into a destination | Managed service | Usually destination-oriented; consolidation and operational serving remain in the destination or another system | Provider operates capture and delivery; you own downstream modeling and serving choices | Not part of the tapstate preview |
+| Warehouse-centric design | Historical analysis, governance, and reuse of analytical models | Ingestion or ELT layer | Warehouse transformations consolidate data; operational serving usually needs an additional path or accepts warehouse query semantics | Warehouse service plus ingestion, transformation, and any operational-serving layer | Not part of the tapstate preview |
+| tapstate direction | One source-to-serve product boundary for maintained operational state | Built-in log-based CDC | Incremental transforms are intended to consolidate state and expose it through pull and push surfaces | One deployable product experience and one operational surface; not a claim of one binary | The current preview verifies MySQL snapshot + CDC, a map transform, and MongoDB materialization; cross-source consolidation and tapstate query/push surfaces are not yet demonstrated |
+
+Kafka remains useful for durable event distribution and decoupled consumers.
+Warehouses remain the right home for historical analysis. tapstate focuses on the
+operational path that turns database truth into maintained state for applications
+and agents.
 
 ## Project status
 
