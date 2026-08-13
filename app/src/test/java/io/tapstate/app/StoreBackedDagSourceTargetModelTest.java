@@ -15,8 +15,10 @@ import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
 import io.tapstate.core.model.TableRef;
 import io.tapstate.core.model.TransformBody;
+import io.tapstate.core.model.ViewBlock;
 import io.tapstate.spi.sink.SinkWriter;
 import io.tapstate.spi.sink.TargetField;
+import io.tapstate.spi.sink.TargetIndex;
 import io.tapstate.spi.sink.TargetTable;
 import io.tapstate.spi.store.DiscoveredSourceModel;
 import io.tapstate.spi.store.SourceField;
@@ -35,6 +37,28 @@ import org.junit.jupiter.api.Test;
  * sink falls back to a bare table id.
  */
 class StoreBackedDagSourceTargetModelTest {
+
+    @Test
+    void a_view_target_carries_the_key_index_the_collection_is_read_by() {
+        // The index travels with the target model rather than being applied out of band, so whoever
+        // creates the collection creates its index in the same act.
+        InMemoryStorePort store = new InMemoryStorePort();
+        store.artifacts().save(new SourceResource("orders_src", null, "mysql", Map.of("host", "h"),
+                SourceMode.CDC, List.of(TableRef.literal("orders")), null, null, null));
+        store.artifacts().save(new SourceResource(ViewTargetResolver.STATE_STORE_SOURCE_ID, null,
+                "mongodb", Map.of("uri", "u"), null, null, null, null, null));
+        store.artifacts().save(new PipelineResource("p", null, List.of("orders_src"), null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders_src"), "order_id", null, null),
+                null, null, null));
+        List<TargetTable> bound = new ArrayList<>();
+
+        new StoreBackedDagSource(store, capturingBinder(bound)).dagFor("p");
+
+        assertThat(bound).singleElement().satisfies(target -> {
+            assertThat(target.name()).isEqualTo("order_state");
+            assertThat(target.indexes()).containsExactly(new TargetIndex(List.of("order_id"), true));
+        });
+    }
 
     @Test
     void feeds_the_resolved_target_model_to_the_sink_binder() {

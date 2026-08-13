@@ -220,7 +220,7 @@ final class StoreBackedDagSource implements DagSource {
         List<TargetField> fields = targets != null && targets.size() == 1
                 ? targets.values().iterator().next().fields()
                 : List.of();
-        return new TargetTable(target.collection(), fields);
+        return new TargetTable(target.collection(), fields, target.indexes());
     }
 
     /**

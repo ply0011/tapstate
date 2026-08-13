@@ -2,6 +2,7 @@ package io.tapstate.app;
 
 import io.tapstate.core.model.Storage;
 import io.tapstate.core.model.ViewBlock;
+import io.tapstate.spi.sink.TargetIndex;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -33,7 +34,7 @@ final class ViewTargetResolver {
     }
 
     /** The resolved address of one view's materialization. */
-    record ViewTarget(String sourceId, String collection, List<Index> indexes) {
+    record ViewTarget(String sourceId, String collection, List<TargetIndex> indexes) {
 
         ViewTarget {
             Objects.requireNonNull(sourceId, "sourceId");
@@ -42,16 +43,6 @@ final class ViewTargetResolver {
         }
     }
 
-    /**
-     * One index on the materialized collection. The key index is unique; a declared one is not,
-     * because only the key carries an author's claim that it identifies a record.
-     */
-    record Index(List<String> fields, boolean unique) {
-
-        Index {
-            fields = fields == null ? List.of() : List.copyOf(fields);
-        }
-    }
 
     /**
      * The address the given view materializes to.
@@ -67,13 +58,13 @@ final class ViewTargetResolver {
         Storage.Warm warm = view.storage() == null ? null : view.storage().warm();
         String collection = warm != null ? warm.collection() : view.id();
 
-        List<Index> indexes = new ArrayList<>();
+        List<TargetIndex> indexes = new ArrayList<>();
         if (view.primaryKey() != null && !view.primaryKey().isBlank()) {
-            indexes.add(new Index(List.of(view.primaryKey()), true));
+            indexes.add(new TargetIndex(List.of(view.primaryKey()), true));
         }
         if (warm != null && warm.indexes() != null) {
             for (String field : warm.indexes()) {
-                indexes.add(new Index(List.of(field), false));
+                indexes.add(new TargetIndex(List.of(field), false));
             }
         }
         return new ViewTarget(STATE_STORE_SOURCE_ID, collection, indexes);

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.tapstate.core.model.FromRef;
 import io.tapstate.core.model.Storage;
 import io.tapstate.core.model.ViewBlock;
+import io.tapstate.spi.sink.TargetIndex;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -55,7 +56,7 @@ class ViewTargetResolverTest {
                 "order_state", FromRef.literal("orders_src"), "order_id", null, null);
 
         assertThat(ViewTargetResolver.resolve(view).indexes())
-                .containsExactly(new ViewTargetResolver.Index(List.of("order_id"), true));
+                .containsExactly(new TargetIndex(List.of("order_id"), true));
     }
 
     @Test
@@ -65,7 +66,7 @@ class ViewTargetResolverTest {
                 new Storage(null, new Storage.Warm("order_state", List.of("customer_id")), null), null);
 
         assertThat(ViewTargetResolver.resolve(view).indexes()).containsExactly(
-                new ViewTargetResolver.Index(List.of("order_id"), true),
-                new ViewTargetResolver.Index(List.of("customer_id"), false));
+                new TargetIndex(List.of("order_id"), true),
+                new TargetIndex(List.of("customer_id"), false));
     }
 }
