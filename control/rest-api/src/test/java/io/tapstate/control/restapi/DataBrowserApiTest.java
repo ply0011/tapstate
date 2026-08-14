@@ -19,6 +19,7 @@ import io.tapstate.runtime.probe.DataBrowserFindProbe;
 import io.tapstate.runtime.probe.DataBrowserStatsProbe;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserFilter;
 import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserTableInfo;
@@ -122,7 +123,7 @@ class DataBrowserApiTest {
                 List.of(Map.of("order_id", "ord_123")), 512L, true));
 
         Map<String, Object> request = new LinkedHashMap<>();
-        request.put("filter", Map.of("status", "paid"));
+        request.put("filter", Map.of("field", "status", "op", "eq", "value", "paid"));
         request.put("sort", Map.of("field", "total", "dir", "desc"));
         request.put("limit", 25);
 
@@ -136,7 +137,8 @@ class DataBrowserApiTest {
 
         DataBrowserQuery driven = context.getBean(FakeFindProbe.class).lastQuery();
         assertThat(driven.collection()).isEqualTo("order_state");
-        assertThat(driven.filter()).containsEntry("status", "paid");
+        assertThat(driven.filter()).isEqualTo(
+                new DataBrowserFilter.Match("status", DataBrowserFilter.Operator.EQ, "paid"));
         assertThat(driven.limit()).isEqualTo(25);
         assertThat(driven.sort().field()).isEqualTo("total");
         assertThat(driven.sort().direction().name()).isEqualTo("DESC");
@@ -176,6 +178,93 @@ class DataBrowserApiTest {
     }
 
     @Test
+    void carriesACombinationThroughTermForTerm() {
+        context.getBean(FakeCollectionsProbe.class).answer("order_state");
+
+        find(Map.of("filter", Map.of("all", List.of(
+                Map.of("field", "status", "op", "eq", "value", "Paid"),
+                Map.of("field", "total", "op", "gt", "value", 100)))));
+
+        assertThat(context.getBean(FakeFindProbe.class).lastQuery().filter())
+                .isEqualTo(new DataBrowserFilter.All(List.of(
+                        new DataBrowserFilter.Match("status", DataBrowserFilter.Operator.EQ, "Paid"),
+                        new DataBrowserFilter.Match("total", DataBrowserFilter.Operator.GT, 100))));
+    }
+
+    @Test
+    void refusesAFilterWrittenInTheStoresOwnQueryLanguage() {
+        // The one shape that must not work. A face that forwarded a backend query document would forward
+        // everything that language can express, including the operators that run code in the database —
+        // and would hand an agent a value with no shape to it. This is what the vocabulary replaced.
+        //
+        // What refuses it is the strict mapper this surface is configured with, not the vocabulary check
+        // below: none of `{"status": "paid"}`'s keys are ours, so binding fails before any of them is
+        // read. Said plainly because the two are different guards and only one of them is exercised here.
+        assertThat(refusedFilter(Map.of("status", "paid")).code()).isEqualTo("control.malformed-request");
+    }
+
+    @Test
+    void refusesAFilterThatNamesNeitherATermNorACombination() {
+        // The vocabulary check itself, reached by the one body that gets past the mapper without saying
+        // anything: an empty object binds cleanly and every field comes out null. It is neither shape,
+        // and read as either it is a request to match nothing or a request to match everything — the
+        // difference between an empty answer and a whole collection, guessed at.
+        assertThat(refusedFilter(Map.of()).code()).isEqualTo("control.malformed-request");
+    }
+
+    @Test
+    void refusesATermWhoseOperatorIsNotOneOfTheNine() {
+        // Including the backend's own spellings: `$where` is not a word here, and the refusal has to say
+        // so rather than pass it down as a field name nobody will ever match.
+        assertThat(refusedFilter(Map.of("field", "status", "op", "$where", "value", "1"))
+                .params()).containsKey("reason");
+    }
+
+    @Test
+    void refusesACombinationHoldingAnotherCombination() {
+        // The nesting bound, at the one boundary where it is expressible at all: the control-ring type
+        // cannot hold a nested combination, so a request carrying one has to be refused with a reason
+        // rather than crash binding it.
+        assertThat(refusedFilter(Map.of("all", List.of(
+                Map.of("any", List.of(Map.of("field", "a", "op", "eq", "value", 1))))))
+                .code()).isEqualTo("control.malformed-request");
+    }
+
+    @Test
+    void refusesATermThatIsAlsoACombination() {
+        // Two requests in one body, and no reading of it that is not a guess about which was meant.
+        assertThat(refusedFilter(Map.of(
+                "field", "status", "op", "eq", "value", "Paid",
+                "all", List.of(Map.of("field", "total", "op", "gt", "value", 100))))
+                .code()).isEqualTo("control.malformed-request");
+    }
+
+    @Test
+    void refusesAMembershipTermWhoseValueIsNotASet() {
+        // The vocabulary's own rule reaching the wire: over JSON the value's type is whatever was typed,
+        // and this mistake reads back as an empty collection rather than as a mistake.
+        assertThat(refusedFilter(Map.of("field", "status", "op", "in", "value", "Paid"))
+                .code()).isEqualTo("control.malformed-request");
+    }
+
+    /** The coded refusal a malformed {@code filter} produces, asserting it never reached the probe. */
+    private ApiError refusedFilter(Map<String, Object> filter) {
+        context.getBean(FakeCollectionsProbe.class).answer("order_state");
+
+        ApiError body = client().post().uri("/api/sources/views/collections/order_state:find")
+                .header("Authorization", "Bearer " + token(Scope.READ))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("filter", filter))
+                .exchange((request, response) -> {
+                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    return response.bodyTo(ApiError.class);
+                });
+
+        assertThat(context.getBean(FakeFindProbe.class).lastQuery()).isNull();
+        return body;
+    }
+
+    @Test
     void saysHowManyThereAreAndThatMoreRemain() {
         // The whole defence against a preview being read as a complete answer. The read is one-shot, so
         // nothing else in the response distinguishes ten rows from the first ten of a million.
@@ -196,7 +285,7 @@ class DataBrowserApiTest {
         context.getBean(FakeCollectionsProbe.class).answer("order_state");
         context.getBean(FakeFindProbe.class).answer(new DataBrowserPreview(List.of(), null, false));
 
-        DataBrowserPreviewReport body = find(Map.of("filter", Map.of("status", "paid")));
+        DataBrowserPreviewReport body = find(Map.of("filter", Map.of("field", "status", "op", "eq", "value", "paid")));
 
         assertThat(body.approximateTotal()).isNull();
         assertThat(body.moreAvailable()).isFalse();

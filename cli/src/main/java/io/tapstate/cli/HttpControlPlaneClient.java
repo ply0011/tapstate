@@ -142,6 +142,118 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
     }
 
     @Override
+    public DataBrowserOutcome.Collections collections(URI baseUrl, String credential, String sourceId) {
+        ControlResponse response = sharedClient.get(
+                baseUrl, credential, "/api/sources/" + urlSegment(sourceId) + "/collections");
+        return switch (response) {
+            case ControlResponse.Success success -> {
+                List<String> names = names(success.body());
+                yield names == null
+                        ? new DataBrowserOutcome.Collections.Unreachable()
+                        : new DataBrowserOutcome.Collections.Listed(names);
+            }
+            case ControlResponse.Rejected rejected ->
+                    new DataBrowserOutcome.Collections.Rejected(rejected.code(), rejected.message());
+            case ControlResponse.Unreachable ignored -> new DataBrowserOutcome.Collections.Unreachable();
+        };
+    }
+
+    @Override
+    public DataBrowserOutcome.Stats stats(
+            URI baseUrl, String credential, String sourceId, String collection) {
+        ControlResponse response = sharedClient.get(baseUrl, credential,
+                "/api/sources/" + urlSegment(sourceId) + "/collections/" + urlSegment(collection) + "/stats");
+        return switch (response) {
+            case ControlResponse.Success success -> {
+                if (!(success.body() instanceof Map<?, ?> reported)) {
+                    yield new DataBrowserOutcome.Stats.Unreachable();
+                }
+                yield new DataBrowserOutcome.Stats.Reported(
+                        count(reported.get("numOfRows")),
+                        count(reported.get("storageSize")),
+                        count(reported.get("avgObjSize")));
+            }
+            case ControlResponse.Rejected rejected ->
+                    new DataBrowserOutcome.Stats.Rejected(rejected.code(), rejected.message());
+            case ControlResponse.Unreachable ignored -> new DataBrowserOutcome.Stats.Unreachable();
+        };
+    }
+
+    @Override
+    public DataBrowserOutcome.Find find(URI baseUrl, String credential, String sourceId, String collection,
+                                        Object filter, DataBrowserCall.Order sort, Integer limit) {
+        // Only what was asked for. An absent key is the request — no filter reads every row, no order
+        // leaves the order to the database — and sending a null under the key instead says something
+        // different to a face that reads present-and-null apart from absent.
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (filter != null) {
+            body.put("filter", filter);
+        }
+        if (sort != null) {
+            Map<String, Object> order = new LinkedHashMap<>();
+            order.put("field", sort.field());
+            order.put("dir", sort.dir());
+            body.put("sort", order);
+        }
+        if (limit != null) {
+            body.put("limit", limit);
+        }
+        ControlResponse response = sharedClient.post(baseUrl, credential,
+                "/api/sources/" + urlSegment(sourceId) + "/collections/" + urlSegment(collection) + ":find",
+                body, RequestBudget.HEAVY);
+        return switch (response) {
+            case ControlResponse.Success success -> {
+                DataBrowserOutcome.Find.Read read = read(success.body());
+                yield read == null ? new DataBrowserOutcome.Find.Unreachable() : read;
+            }
+            case ControlResponse.Rejected rejected ->
+                    new DataBrowserOutcome.Find.Rejected(rejected.code(), rejected.message());
+            case ControlResponse.Unreachable ignored -> new DataBrowserOutcome.Find.Unreachable();
+        };
+    }
+
+    /** The collection names from a 200 body, or null when the body is not shaped like that answer. */
+    private static List<String> names(Object body) {
+        if (!(body instanceof Map<?, ?> m && m.get("collections") instanceof List<?> listed)) {
+            return null;
+        }
+        List<String> names = new ArrayList<>(listed.size());
+        for (Object name : listed) {
+            if (name instanceof String text) {
+                names.add(text);
+            }
+        }
+        return names;
+    }
+
+    /**
+     * The preview from a 200 body, or null when the body is not shaped like one. {@code moreAvailable}
+     * has no fallback on purpose: read as false when it is missing, a truncated preview would render as
+     * a whole collection, which is the one thing this face carries it to prevent.
+     */
+    private static DataBrowserOutcome.Find.Read read(Object body) {
+        if (!(body instanceof Map<?, ?> m
+                && m.get("rows") instanceof List<?> listed
+                && m.get("moreAvailable") instanceof Boolean more)) {
+            return null;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>(listed.size());
+        for (Object row : listed) {
+            if (row instanceof Map<?, ?> fields) {
+                Map<String, Object> copy = new LinkedHashMap<>();
+                fields.forEach((name, value) -> copy.put(String.valueOf(name), value));
+                rows.add(copy);
+            }
+        }
+        return new DataBrowserOutcome.Find.Read(rows, count(m.get("approximateTotal")), more);
+    }
+
+    /** One reported count, or null when the server reported none — never zero standing in for absent. */
+    private static Long count(Object reported) {
+        return reported instanceof Number number ? number.longValue() : null;
+    }
+
+    @Override
     public TokenCreateOutcome tokenCreate(URI baseUrl, String credential, String scope) {
         ControlResponse response = sharedClient.post(
                 baseUrl, credential, "/api/tokens", Map.of("scope", scope), RequestBudget.LIGHT);

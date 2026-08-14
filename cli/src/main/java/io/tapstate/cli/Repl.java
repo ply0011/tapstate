@@ -259,6 +259,14 @@ final class Repl {
             lastExitCode = Cli.EXIT_OK;
             return true;
         }
+        // The read shell is matched on the whole line rather than on its first word, because what it names
+        // is a place in the data — `views.orders.find({...})` — and a filter written across several words
+        // does not survive being split into them.
+        DataBrowserCall call = DataBrowserCall.parse(trimmed);
+        if (call != null) {
+            lastExitCode = dataBrowser(call, trimmed.startsWith("show ") ? "show" : "find");
+            return true;
+        }
         return dispatchWords(tokenize(trimmed));
     }
 
@@ -297,6 +305,13 @@ final class Repl {
         }
         if (words.get(0).equals("logout")) {
             lastExitCode = logout();
+            return true;
+        }
+        // `data-browser <call>` is the same shell reached as a verb, which is how a one-shot invocation
+        // gets at it: the words arrive already split by the caller's own shell, so they are rejoined and
+        // read as the one line they were typed as.
+        if (words.get(0).equals(Cli.DATA_BROWSER_VERB)) {
+            lastExitCode = dataBrowserVerb(words);
             return true;
         }
         if (session.isConnected() && ONLINE_VERBS.contains(words.get(0))) {
@@ -556,6 +571,205 @@ final class Repl {
      * answer, {@link #withFailover} re-lands and retries once. There is no {@code rewind} verb: a re-dig is
      * the explicit two-step {@code stop} then {@code start}.
      */
+    // ---- the read shell ------------------------------------------------------------------------------
+
+    /**
+     * {@code data-browser <call>} — the read shell reached as a verb, for a one-shot invocation. The words
+     * arrive already split by the caller's own shell, so they are rejoined into the line they were typed
+     * as; inside a session the same calls are typed bare at the prompt.
+     */
+    private int dataBrowserVerb(List<String> words) {
+        String line = String.join(" ", words.subList(1, words.size())).trim();
+        if (line.isEmpty()) {
+            return dataBrowserUsage("missing call");
+        }
+        DataBrowserCall call = DataBrowserCall.parse(line);
+        if (call == null) {
+            return dataBrowserUsage("`" + line + "` is not a read");
+        }
+        return dataBrowser(call, Cli.DATA_BROWSER_VERB);
+    }
+
+    private int dataBrowserUsage(String problem) {
+        PrintWriter err = commandLine.getErr();
+        err.println(Cli.DATA_BROWSER_VERB + ": " + problem + " (usage: " + Cli.DATA_BROWSER_VERB
+                + " \"show collections [<source>]\" | \"<source>.<collection>.find(...)\""
+                + " | \"<source>.<collection>.stats()\")");
+        err.flush();
+        return Cli.EXIT_USAGE;
+    }
+
+    /**
+     * Runs one parsed read. The connection checks come first and in this order because they are different
+     * answers: offline, the shell has nothing to read from; connected but signed out, it has somewhere to
+     * ask and no right to.
+     */
+    private int dataBrowser(DataBrowserCall call, String verb) {
+        PrintWriter err = commandLine.getErr();
+        if (call instanceof DataBrowserCall.Malformed malformed) {
+            err.println(verb + ": " + malformed.reason());
+            err.flush();
+            return Cli.EXIT_USAGE;
+        }
+        if (!session.isConnected()) {
+            Diagnostics.printText(err, CliError.NOT_CONNECTED, Map.of("verb", verb));
+            return Cli.EXIT_VERB_UNAVAILABLE;
+        }
+        if (!session.isAuthenticated()) {
+            Diagnostics.printText(err, CliError.NOT_AUTHENTICATED, Map.of("verb", verb));
+            return Cli.EXIT_VERB_UNAVAILABLE;
+        }
+        return switch (call) {
+            case DataBrowserCall.Collections listing -> browseCollections(listing);
+            case DataBrowserCall.Stats stats -> browseStats(stats);
+            case DataBrowserCall.Find find -> browseFind(find);
+            case DataBrowserCall.Malformed ignored -> Cli.EXIT_USAGE;    // handled above
+        };
+    }
+
+    /**
+     * {@code show collections [<source>]}. With no source it lists every declared one, because that is the
+     * question a reader actually opens with — not "what is in this source" but "what can I read at all",
+     * and the answer is only useful as the full {@code <source>.<collection>} names they will type next.
+     *
+     * <p>A source that cannot be listed is reported in place and the rest are still listed. One
+     * unreachable database is not a reason to answer nothing about the others.
+     */
+    private int browseCollections(DataBrowserCall.Collections listing) {
+        List<String> sources;
+        if (listing.sourceId() != null) {
+            sources = List.of(listing.sourceId());
+        } else {
+            ListOutcome declared = withFailover(() ->
+                    controlPlane.list(session.landingNode(), session.credential(), "source"),
+                    o -> o instanceof ListOutcome.Unreachable);
+            switch (declared) {
+                case ListOutcome.Listed listed ->
+                        sources = listed.artifacts().stream().map(RemoteArtifact::id).toList();
+                case ListOutcome.Rejected rejected -> {
+                    return renderRejection(rejected.code(), rejected.message());
+                }
+                case ListOutcome.Unreachable ignored -> {
+                    return reportRequestFailed();
+                }
+            }
+        }
+        PrintWriter out = commandLine.getOut();
+        if (sources.isEmpty()) {
+            out.println("no sources declared");
+            out.flush();
+            return Cli.EXIT_OK;
+        }
+        int listed = 0;
+        int failed = 0;
+        for (String sourceId : sources) {
+            DataBrowserOutcome.Collections outcome = withFailover(() ->
+                    controlPlane.collections(session.landingNode(), session.credential(), sourceId),
+                    o -> o instanceof DataBrowserOutcome.Collections.Unreachable);
+            switch (outcome) {
+                case DataBrowserOutcome.Collections.Listed found -> {
+                    for (String collection : found.collections()) {
+                        out.println(sourceId + "." + collection);
+                    }
+                    listed += found.collections().size();
+                }
+                case DataBrowserOutcome.Collections.Rejected rejected -> {
+                    failed++;
+                    renderRejection(rejected.code(), rejected.message());
+                }
+                case DataBrowserOutcome.Collections.Unreachable ignored -> {
+                    failed++;
+                    reportRequestFailed();
+                }
+            }
+        }
+        // What the list is, said once. It is the collections the connected database actually holds, not
+        // the ones the workspace declared — those are different sets, and a source referenced purely as a
+        // connection supplier declares none at all.
+        out.println();
+        out.println(listed + (listed == 1 ? " collection" : " collections")
+                + " — what each source's database holds, not what the workspace declares");
+        out.flush();
+        return failed > 0 ? Cli.EXIT_DIAGNOSTIC : Cli.EXIT_OK;
+    }
+
+    /**
+     * {@code <source>.<collection>.stats()} — the row count and average row size the connector reports.
+     * Both are read off the store's own metadata rather than counted, so the count is a point-in-time
+     * estimate that drifts; the rendering says so rather than presenting it as a total.
+     */
+    private int browseStats(DataBrowserCall.Stats stats) {
+        DataBrowserOutcome.Stats outcome = withFailover(() ->
+                controlPlane.stats(session.landingNode(), session.credential(),
+                        stats.sourceId(), stats.collection()),
+                o -> o instanceof DataBrowserOutcome.Stats.Unreachable);
+        PrintWriter out = commandLine.getOut();
+        return switch (outcome) {
+            case DataBrowserOutcome.Stats.Reported reported -> {
+                out.println(stats.sourceId() + "." + stats.collection());
+                out.println("  rows      " + (reported.numOfRows() == null
+                        ? "not reported"
+                        : "~" + reported.numOfRows() + "  (estimated from store metadata, not counted)"));
+                out.println("  avg row   " + (reported.avgObjSize() == null
+                        ? "not reported"
+                        : reported.avgObjSize() + " bytes"));
+                out.flush();
+                yield Cli.EXIT_OK;
+            }
+            case DataBrowserOutcome.Stats.Rejected rejected ->
+                    renderRejection(rejected.code(), rejected.message());
+            case DataBrowserOutcome.Stats.Unreachable ignored -> reportRequestFailed();
+        };
+    }
+
+    /** {@code <source>.<collection>.find(...)} — a preview of the rows, and a footer saying what it is. */
+    private int browseFind(DataBrowserCall.Find find) {
+        DataBrowserOutcome.Find outcome = withFailover(() ->
+                controlPlane.find(session.landingNode(), session.credential(), find.sourceId(),
+                        find.collection(), find.filter(), find.sort(), find.limit()),
+                o -> o instanceof DataBrowserOutcome.Find.Unreachable);
+        PrintWriter out = commandLine.getOut();
+        return switch (outcome) {
+            case DataBrowserOutcome.Find.Read read -> {
+                read.rows().forEach(row -> out.println(JsonOut.compact(row)));
+                if (read.rows().isEmpty()) {
+                    out.println("no rows matched");
+                }
+                out.println(previewFooter(find, read));
+                out.flush();
+                yield Cli.EXIT_OK;
+            }
+            case DataBrowserOutcome.Find.Rejected rejected ->
+                    renderRejection(rejected.code(), rejected.message());
+            case DataBrowserOutcome.Find.Unreachable ignored -> reportRequestFailed();
+        };
+    }
+
+    /**
+     * The line under a preview, and the only thing that keeps it from being read as the whole collection.
+     * A read is one-shot, so the rows carry nothing else that separates a preview of ten from a
+     * collection of ten — no continuation token whose presence would hint at it.
+     *
+     * <p>It states three things the reader cannot see from the rows, each of which is false if left
+     * unsaid: how many the collection holds and that the number is approximate — offered only for an
+     * unfiltered read, since counting a filtered one is a full scan; that an unordered read is in the
+     * database's own order, which is <em>not</em> stable between two identical reads and is not the
+     * newest; and that more rows remain.
+     */
+    private static String previewFooter(DataBrowserCall.Find find, DataBrowserOutcome.Find.Read read) {
+        StringBuilder footer = new StringBuilder("showing ").append(read.rows().size());
+        if (read.approximateTotal() != null) {
+            footer.append(" of ~").append(read.approximateTotal());
+        }
+        footer.append(find.sort() == null
+                ? " · natural order — not stable, and not the newest"
+                : " · ordered by `" + find.sort().field() + "` " + find.sort().dir());
+        if (read.moreAvailable()) {
+            footer.append(" · more rows remain");
+        }
+        return footer.toString();
+    }
+
     private int lifecycleOnline(List<String> words) {
         String verb = words.get(0);
         PrintWriter err = commandLine.getErr();

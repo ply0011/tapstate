@@ -87,7 +87,7 @@ public final class DataBrowserService {
     public DataBrowserPreviewReport find(
             String sourceId,
             String collection,
-            Map<String, Object> filter,
+            DataBrowserCriteria filter,
             DataBrowserSortOrder sort,
             Integer limit) {
         int bound = limit == null ? DEFAULT_LIMIT : limit;
@@ -101,7 +101,10 @@ public final class DataBrowserService {
         }
         ConnectionConfig config = requireCollection(sourceId, collection);
         DataBrowserQuery query = new DataBrowserQuery(
-                collection, filter, sort == null ? null : sort.toPortRequest(), bound);
+                collection,
+                filter == null ? null : filter.toPortRequest(),
+                sort == null ? null : sort.toPortRequest(),
+                bound);
         return DataBrowserPreviewReport.from(findProbe.find(config, query));
     }
 

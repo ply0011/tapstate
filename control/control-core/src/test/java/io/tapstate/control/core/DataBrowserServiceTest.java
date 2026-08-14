@@ -7,9 +7,14 @@ import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.model.PipelineResource;
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceResource;
+import io.tapstate.control.core.DataBrowserCriteria.All;
+import io.tapstate.control.core.DataBrowserCriteria.Any;
+import io.tapstate.control.core.DataBrowserCriteria.Match;
+import io.tapstate.control.core.DataBrowserCriteria.Operator;
 import io.tapstate.runtime.probe.DataBrowserCollectionsProbe;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserFilter;
 import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSort;
@@ -122,7 +127,7 @@ class DataBrowserServiceTest {
                     return NOTHING;
                 });
 
-        assertThatThrownBy(() -> service.find("views", "absent", Map.of(), null, 10))
+        assertThatThrownBy(() -> service.find("views", "absent", null, null, 10))
                 .isInstanceOf(TapstateException.class);
         assertThat(read.get()).isNull();
     }
@@ -178,8 +183,8 @@ class DataBrowserServiceTest {
                     return expected;
                 });
 
-        DataBrowserPreviewReport preview =
-                service.find("views", "order_state", Map.of("status", "paid"), null, 25);
+        DataBrowserPreviewReport preview = service.find(
+                "views", "order_state", new Match("status", Operator.EQ, "paid"), null, 25);
 
         // The report is a projection of what the probe answered, carried whole rather than re-derived:
         // every surface renders this, so a field lost here is lost on all four at once.
@@ -187,8 +192,80 @@ class DataBrowserServiceTest {
         assertThat(preview.approximateTotal()).isEqualTo(512L);
         assertThat(preview.moreAvailable()).isTrue();
         assertThat(driven.get().collection()).isEqualTo("order_state");
-        assertThat(driven.get().filter()).containsEntry("status", "paid");
+        assertThat(driven.get().filter()).isEqualTo(
+                new DataBrowserFilter.Match("status", DataBrowserFilter.Operator.EQ, "paid"));
         assertThat(driven.get().limit()).isEqualTo(25);
+    }
+
+    @Test
+    void carriesACombinationIntoTheQueryTermForTerm() {
+        // A combination is where a translation can lose a term and still look like it worked: the read
+        // comes back with rows, just more of them than were asked for, and nothing says a term was
+        // dropped.
+        AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
+        DataBrowserService service = finding(driven);
+
+        service.find("views", "order_state", new All(List.of(
+                new Match("status", Operator.EQ, "Paid"),
+                new Match("total", Operator.GT, 100))), null, 10);
+
+        assertThat(driven.get().filter()).isEqualTo(new DataBrowserFilter.All(List.of(
+                new DataBrowserFilter.Match("status", DataBrowserFilter.Operator.EQ, "Paid"),
+                new DataBrowserFilter.Match("total", DataBrowserFilter.Operator.GT, 100))));
+    }
+
+    @Test
+    void carriesAnAlternativeThroughAsAnAlternativeRatherThanAConjunction() {
+        // The other connective, so a translation that answered "all" to both cannot pass — and that one
+        // reads as a working filter, only stricter than the caller asked for.
+        AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
+        DataBrowserService service = finding(driven);
+
+        service.find("views", "order_state", new Any(List.of(
+                new Match("status", Operator.EQ, "Paid"))), null, 10);
+
+        assertThat(driven.get().filter()).isEqualTo(new DataBrowserFilter.Any(List.of(
+                new DataBrowserFilter.Match("status", DataBrowserFilter.Operator.EQ, "Paid"))));
+    }
+
+    @Test
+    void asksForEveryRowWhenTheCallerGivesNoCriteria() {
+        // Absent has to reach the port as absent: a filter invented here would narrow a read the caller
+        // asked to be whole, and the total the report carries is offered only for an unfiltered one.
+        AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
+        DataBrowserService service = finding(driven);
+
+        service.find("views", "order_state", null, null, 10);
+
+        assertThat(driven.get().filter()).isNull();
+    }
+
+    @Test
+    void translatesEveryOperatorInTheVocabularyOntoItsPortTwin() {
+        // The two enums are declared apart, so a value added to one and not the other is a compile error
+        // in the translation — but a value mapped to the wrong twin is not, and it reads as a working
+        // read that answers a different question.
+        AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
+        DataBrowserService service = finding(driven);
+
+        for (Operator operator : Operator.values()) {
+            service.find("views", "order_state",
+                    new Match("f", operator, sampleValueFor(operator)), null, 10);
+
+            assertThat(((DataBrowserFilter.Match) driven.get().filter()).operator())
+                    .as("%s must reach the port as its own twin", operator)
+                    .hasToString(operator.name());
+        }
+    }
+
+    /** A value the operator accepts, so the translation is what the loop above is testing. */
+    private static Object sampleValueFor(Operator operator) {
+        return switch (operator) {
+            case IN -> List.of("a");
+            case EXISTS -> true;
+            case CONTAINS -> "a";
+            default -> 1;
+        };
     }
 
     @Test
@@ -196,7 +273,7 @@ class DataBrowserServiceTest {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
         DataBrowserService service = finding(driven);
 
-        service.find("views", "order_state", Map.of(),
+        service.find("views", "order_state", null,
                 new DataBrowserSortOrder("status", DataBrowserSortOrder.Direction.DESC), 10);
 
         // The order the surfaces express in control-ring terms reaches the port as the same order; a
@@ -211,7 +288,7 @@ class DataBrowserServiceTest {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
         DataBrowserService service = finding(driven);
 
-        service.find("views", "order_state", Map.of(),
+        service.find("views", "order_state", null,
                 new DataBrowserSortOrder("status", DataBrowserSortOrder.Direction.ASC), 10);
 
         assertThat(driven.get().sort().direction()).isEqualTo(DataBrowserSort.Direction.ASC);
@@ -225,7 +302,7 @@ class DataBrowserServiceTest {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
         DataBrowserService service = finding(driven);
 
-        service.find("views", "order_state", Map.of(), null, 10);
+        service.find("views", "order_state", null, null, 10);
 
         assertThat(driven.get().sort()).isNull();
     }
@@ -237,7 +314,7 @@ class DataBrowserServiceTest {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
         DataBrowserService service = finding(driven);
 
-        service.find("views", "order_state", Map.of(), null, null);
+        service.find("views", "order_state", null, null, null);
 
         assertThat(driven.get().limit()).isEqualTo(DataBrowserService.DEFAULT_LIMIT);
         assertThat(DataBrowserService.DEFAULT_LIMIT).isEqualTo(10);
@@ -248,7 +325,7 @@ class DataBrowserServiceTest {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
         DataBrowserService service = finding(driven);
 
-        assertThatThrownBy(() -> service.find("views", "order_state", Map.of(), null, 201))
+        assertThatThrownBy(() -> service.find("views", "order_state", null, null, 201))
                 .isInstanceOf(TapstateException.class)
                 .satisfies(failure -> {
                     TapstateException coded = (TapstateException) failure;
@@ -265,7 +342,7 @@ class DataBrowserServiceTest {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
         DataBrowserService service = finding(driven);
 
-        service.find("views", "order_state", Map.of(), null, DataBrowserService.MAX_LIMIT);
+        service.find("views", "order_state", null, null, DataBrowserService.MAX_LIMIT);
 
         assertThat(driven.get().limit()).isEqualTo(200);
     }
@@ -277,7 +354,7 @@ class DataBrowserServiceTest {
         DataBrowserService service = finding(new AtomicReference<>());
 
         for (int unreadable : new int[] {0, -1}) {
-            assertThatThrownBy(() -> service.find("views", "order_state", Map.of(), null, unreadable))
+            assertThatThrownBy(() -> service.find("views", "order_state", null, null, unreadable))
                     .isInstanceOf(TapstateException.class)
                     .extracting(failure -> ((TapstateException) failure).code().code())
                     .isEqualTo("data-browser.invalid-limit");
@@ -298,7 +375,7 @@ class DataBrowserServiceTest {
                 (config, collection) -> null,
                 (config, query) -> NOTHING);
 
-        assertThatThrownBy(() -> service.find("views", "order_state", Map.of(), null, 500))
+        assertThatThrownBy(() -> service.find("views", "order_state", null, null, 500))
                 .isInstanceOf(TapstateException.class);
 
         assertThat(listed.get()).isNull();

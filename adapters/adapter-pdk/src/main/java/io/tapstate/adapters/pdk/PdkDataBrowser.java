@@ -3,6 +3,11 @@ package io.tapstate.adapters.pdk;
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowser;
+import io.tapstate.spi.store.DataBrowserFilter;
+import io.tapstate.spi.store.DataBrowserFilter.All;
+import io.tapstate.spi.store.DataBrowserFilter.Any;
+import io.tapstate.spi.store.DataBrowserFilter.Match;
+import io.tapstate.spi.store.DataBrowserFilter.Operator;
 import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSort;
@@ -23,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 /**
  * The PDK bridge for reading a store: it takes a live connector instance from the pool, refuses the
@@ -190,7 +196,7 @@ public final class PdkDataBrowser implements DataBrowser {
      * would deny a working read over a connector that offers one function fewer.
      */
     private static Long approximateTotal(PdkConnector connector, DataBrowserQuery query) {
-        if (!query.filter().isEmpty()) {
+        if (query.filter() != null) {
             return null;
         }
         GetTableInfoFunction info = connector.functions().getGetTableInfoFunction();
@@ -259,7 +265,7 @@ public final class PdkDataBrowser implements DataBrowser {
         params.put("collection", query.collection());
         // A filter is always present, empty meaning every row: a connector hands its absence straight to
         // the driver as a null filter, which the driver rejects.
-        params.put("filter", new LinkedHashMap<>(query.filter()));
+        params.put("filter", translate(query.filter()));
         // Only when an order was asked for. Absent means the database's own order, and the key has to be
         // left out to say that: a connector reads a present sort and an absent one differently, so an
         // empty map here would be a request for an order rather than the absence of one.
@@ -274,6 +280,72 @@ public final class PdkDataBrowser implements DataBrowser {
         // caller made stays what it was and the extra row never leaves this class.
         params.put("limit", limit);
         return params;
+    }
+
+    /**
+     * One filter in the query language the driven connector speaks. This is the only place that knows
+     * that language: the seam above carries Tapstate's own vocabulary, so nothing a caller sends is ever
+     * a fragment of a backend query, and a second backend shape is a second translation here rather than
+     * a change to any surface.
+     *
+     * <p>A null filter becomes the empty document, which every row matches. The absence has to be spelt
+     * out rather than left out, because a connector hands an absent param straight to its driver as a
+     * null filter and the driver refuses that.
+     */
+    private static Map<String, Object> translate(DataBrowserFilter filter) {
+        return switch (filter) {
+            case null -> new LinkedHashMap<>();
+            case Match match -> term(match);
+            case All all -> combination("$and", all.terms());
+            case Any any -> combination("$or", any.terms());
+        };
+    }
+
+    private static Map<String, Object> combination(String connective, List<Match> terms) {
+        List<Map<String, Object>> translated = new ArrayList<>(terms.size());
+        terms.forEach(term -> translated.add(term(term)));
+        Map<String, Object> document = new LinkedHashMap<>();
+        document.put(connective, translated);
+        return document;
+    }
+
+    /**
+     * One term as an operator-keyed test on its field. Keyed even for equality, where the bare
+     * {@code {field: value}} form would read the same: that form takes on a second meaning when the value
+     * is itself a document, and the value here comes from a caller.
+     */
+    private static Map<String, Object> term(Match match) {
+        Map<String, Object> test = new LinkedHashMap<>();
+        test.put(operator(match.operator()), value(match));
+        Map<String, Object> document = new LinkedHashMap<>();
+        document.put(match.field(), test);
+        return document;
+    }
+
+    private static String operator(Operator operator) {
+        return switch (operator) {
+            case EQ -> "$eq";
+            case NE -> "$ne";
+            case GT -> "$gt";
+            case GTE -> "$gte";
+            case LT -> "$lt";
+            case LTE -> "$lte";
+            case IN -> "$in";
+            case EXISTS -> "$exists";
+            // The vocabulary has no pattern in it, so this is the one operator whose value is not sent as
+            // it arrived: it is a substring to find, and it reaches the backend as a pattern.
+            case CONTAINS -> "$regex";
+        };
+    }
+
+    private static Object value(Match match) {
+        if (match.operator() != Operator.CONTAINS) {
+            return match.value();
+        }
+        // Quoted whole, so every character of the value is a character to find rather than a pattern to
+        // run. Spliced in raw, the one operator that takes free text would be a way to express a pattern
+        // through a vocabulary that deliberately has none — including patterns that never finish.
+        return Pattern.quote((String) match.value());
     }
 
     /** Accumulates one result batch, remembering the first failure a batch reports instead of its rows. */

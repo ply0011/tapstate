@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserFilter;
 import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import java.util.List;
@@ -15,7 +16,8 @@ class DelegatingDataBrowserFindProbeTest {
     @Test
     void drivesTheBrowserWithTheConfigAndQueryAndReturnsItsAnswer() {
         ConnectionConfig config = new ConnectionConfig("views", "mongodb", Map.of("database", "shop"));
-        DataBrowserQuery query = new DataBrowserQuery("order_state", Map.of("status", "paid"), 10);
+        DataBrowserQuery query = new DataBrowserQuery("order_state",
+                new DataBrowserFilter.Match("status", DataBrowserFilter.Operator.EQ, "paid"), 10);
         DataBrowserPreview expected =
                 new DataBrowserPreview(List.of(Map.of("order_id", "ord_123")), 512L, true);
         RecordingDataBrowser browser = RecordingDataBrowser.matching(expected);

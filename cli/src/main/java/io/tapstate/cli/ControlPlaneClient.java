@@ -100,6 +100,33 @@ interface ControlPlaneClient extends AutoCloseable {
      */
     ConnectorListOutcome connectorList(URI baseUrl, String credential);
 
+    /**
+     * Lists the collections a declared source's own database holds, via
+     * {@code GET {baseUrl}/api/sources/{sourceId}/collections}, authenticated by the bearer
+     * {@code credential}: what the connector reported, a coded rejection when the server refuses (an id
+     * that is not a stored source), or unreachable on any I/O failure. Never throws.
+     */
+    DataBrowserOutcome.Collections collections(URI baseUrl, String credential, String sourceId);
+
+    /**
+     * Reads what the connector knows about one collection's size, via
+     * {@code GET {baseUrl}/api/sources/{sourceId}/collections/{collection}/stats}, authenticated by the
+     * bearer {@code credential}: the report on success, a coded rejection when the server refuses (a
+     * collection the source's database does not hold), or unreachable on any I/O failure. Never throws.
+     */
+    DataBrowserOutcome.Stats stats(URI baseUrl, String credential, String sourceId, String collection);
+
+    /**
+     * Reads rows from one collection, via
+     * {@code POST {baseUrl}/api/sources/{sourceId}/collections/{collection}:find}, authenticated by the
+     * bearer {@code credential}. {@code filter} is the request's filter as the shell parsed it, in
+     * Tapstate's own vocabulary; {@code sort} and {@code limit} may be null, which asks for no particular
+     * order and for the control plane's own size. The read is one-shot, so nothing here names a position
+     * to resume from. Never throws.
+     */
+    DataBrowserOutcome.Find find(URI baseUrl, String credential, String sourceId, String collection,
+                                 Object filter, DataBrowserCall.Order sort, Integer limit);
+
     default TokenCreateOutcome tokenCreate(URI baseUrl, String credential, String scope) {
         return new TokenCreateOutcome.Unreachable();
     }

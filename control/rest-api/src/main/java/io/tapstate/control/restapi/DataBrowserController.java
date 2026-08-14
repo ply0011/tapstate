@@ -1,5 +1,6 @@
 package io.tapstate.control.restapi;
 
+import io.tapstate.control.core.DataBrowserCriteria;
 import io.tapstate.control.core.DataBrowserPreviewReport;
 import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.DataBrowserSortOrder;
@@ -10,8 +11,13 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+
+import static java.util.stream.Collectors.joining;
 
 /**
  * The three data-browser verbs projected onto HTTP: list a declared source's collections, read one
@@ -67,7 +73,71 @@ class DataBrowserController {
         // field is optional and an absent one takes the control plane's own answer.
         DataBrowserFindRequest body =
                 request == null ? new DataBrowserFindRequest(null, null, null) : request;
-        return browser.find(sourceId, collection, body.filter(), order(body.sort()), body.limit());
+        return browser.find(
+                sourceId, collection, criteria(body.filter()), order(body.sort()), body.limit());
+    }
+
+    /**
+     * The control-ring criteria for a requested filter, or null when none was asked for — which reads
+     * every row.
+     *
+     * <p>Every refusal here is a coded 400 rather than a decode failure, because every mistake this
+     * catches is one a caller can only make by sending something: an operator outside the vocabulary, a
+     * combination nested inside a combination, or a document in the store's own query language sent as
+     * though this face still forwarded one. The last is the one worth naming — it used to work.
+     */
+    private static DataBrowserCriteria criteria(DataBrowserFindRequest.Filter filter) {
+        if (filter == null) {
+            return null;
+        }
+        boolean isTerm = filter.field() != null || filter.op() != null || filter.value() != null;
+        boolean isCombination = filter.all() != null || filter.any() != null;
+        if (isTerm == isCombination) {
+            // Both, or neither. Neither is the shape a backend query document arrives in, since none of
+            // its keys are ours; both is two requests in one body with no reading that is not a guess.
+            throw MalformedRequest.rejecting("a `filter` is either one term (`field`, `op`, `value`) "
+                    + "or one combination (`all` or `any`) of them", null);
+        }
+        if (isTerm) {
+            return term(filter);
+        }
+        if (filter.all() != null && filter.any() != null) {
+            throw MalformedRequest.rejecting("a `filter` combines with `all` or with `any`, not both", null);
+        }
+        List<DataBrowserFindRequest.Filter> written =
+                filter.all() != null ? filter.all() : filter.any();
+        List<DataBrowserCriteria.Match> terms = new ArrayList<>(written.size());
+        written.forEach(term -> terms.add(term(term)));
+        return filter.all() != null
+                ? new DataBrowserCriteria.All(terms)
+                : new DataBrowserCriteria.Any(terms);
+    }
+
+    /** One term of the vocabulary, refusing anything that is not one. */
+    private static DataBrowserCriteria.Match term(DataBrowserFindRequest.Filter filter) {
+        if (filter.all() != null || filter.any() != null) {
+            // The one-level bound. It holds by shape everywhere above this line; here, where a caller can
+            // still write a deeper one down, it holds by refusal.
+            throw MalformedRequest.rejecting(
+                    "a `filter` combination holds terms, not further combinations", null);
+        }
+        MalformedRequest.requireText(filter.field(), "a filter term needs the `field` to test");
+        MalformedRequest.requireText(filter.op(), "a filter term needs an `op`");
+        MalformedRequest.require(filter.value(), "a filter term needs a `value` to test against");
+        return new DataBrowserCriteria.Match(filter.field(), operator(filter.op()), filter.value());
+    }
+
+    /** The vocabulary's operator for a spelling, or a refusal naming the word and the whole vocabulary. */
+    private static DataBrowserCriteria.Operator operator(String spelling) {
+        for (DataBrowserCriteria.Operator candidate : DataBrowserCriteria.Operator.values()) {
+            if (candidate.name().equalsIgnoreCase(spelling)) {
+                return candidate;
+            }
+        }
+        throw MalformedRequest.rejecting("`" + spelling + "` is not a filter operator; the ones there are: "
+                + Arrays.stream(DataBrowserCriteria.Operator.values())
+                        .map(operator -> operator.name().toLowerCase(Locale.ROOT))
+                        .collect(joining(", ")), null);
     }
 
     /**

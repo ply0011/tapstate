@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserFilter.All;
+import io.tapstate.spi.store.DataBrowserFilter.Any;
+import io.tapstate.spi.store.DataBrowserFilter.Match;
+import io.tapstate.spi.store.DataBrowserFilter.Operator;
 import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSort;
@@ -192,7 +196,7 @@ class PdkDataBrowserTest {
         // spelling that reaches anything but a query.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
         assertThat(echoed(preview, "command")).isEqualTo("executeQuery");
     }
@@ -204,9 +208,9 @@ class PdkDataBrowserTest {
         // downstream as "that is all there is", with nothing reporting otherwise.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
-        assertThat(preview.rows()).hasSize(4);
+        assertThat(preview.rows()).hasSize(5);
     }
 
     @Test
@@ -217,7 +221,7 @@ class PdkDataBrowserTest {
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
         DataBrowserPreview preview = reader.find(config(),
-                new DataBrowserQuery("orders", Map.of(), new DataBrowserSort("status", Direction.DESC), 10));
+                new DataBrowserQuery("orders", null, new DataBrowserSort("status", Direction.DESC), 10));
 
         assertThat(echoed(preview, "sort")).isEqualTo(Map.of("status", -1));
     }
@@ -229,9 +233,95 @@ class PdkDataBrowserTest {
         // thing this face promised not to impose.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
         assertThat(echoed(preview, "sort")).isEqualTo("<none-was-sent>");
+    }
+
+    @Test
+    void findTranslatesAComparisonIntoTheOperatorKeyedFormTheConnectorExpects(@TempDir Path dir) {
+        // The seam carries a neutral term - field, operator, value - and this bridge is the only place
+        // that knows what one connector spells those as. A term handed straight through would be a
+        // request in a dialect the surface above was never allowed to know.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("total", Operator.GTE, 100), 10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of("total", Map.of("$gte", 100)));
+    }
+
+    @Test
+    void findTranslatesAMembershipTermIntoTheSetTheValueNames(@TempDir Path dir) {
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("status", Operator.IN, List.of("Paid", "Shipped")), 10));
+
+        assertThat(echoed(preview, "filter"))
+                .isEqualTo(Map.of("status", Map.of("$in", List.of("Paid", "Shipped"))));
+    }
+
+    @Test
+    void findTranslatesAPresenceTermIntoTheConnectorsOwnPresenceTest(@TempDir Path dir) {
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("note", Operator.EXISTS, false), 10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of("note", Map.of("$exists", false)));
+    }
+
+    @Test
+    void findTranslatesASubstringTermIntoAPatternThatMatchesItLiterally(@TempDir Path dir) {
+        // The vocabulary has no pattern in it, so every character of the value is a character to find. A
+        // value spliced into a pattern raw would let a caller express a pattern through the one word that
+        // takes free text - the whole of what the vocabulary was narrowed to prevent.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("carrier", Operator.CONTAINS, "Fed.x"), 10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of("carrier", Map.of("$regex", "\\QFed.x\\E")));
+    }
+
+    @Test
+    void findTranslatesACombinationIntoTheConnectorsOwnConjunction(@TempDir Path dir) {
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders",
+                new All(List.of(new Match("status", Operator.EQ, "Paid"),
+                        new Match("total", Operator.GT, 100))),
+                10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of("$and", List.of(
+                Map.of("status", Map.of("$eq", "Paid")),
+                Map.of("total", Map.of("$gt", 100)))));
+    }
+
+    @Test
+    void findTranslatesAnAlternativeIntoTheConnectorsOwnDisjunction(@TempDir Path dir) {
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders",
+                new Any(List.of(new Match("status", Operator.EQ, "Paid"),
+                        new Match("status", Operator.EQ, "Shipped"))),
+                10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of("$or", List.of(
+                Map.of("status", Map.of("$eq", "Paid")),
+                Map.of("status", Map.of("$eq", "Shipped")))));
+    }
+
+    @Test
+    void findAsksForEveryRowWhenNoTermWasGiven(@TempDir Path dir) {
+        // A connector hands an absent filter straight to its driver, which refuses a null one, so the
+        // empty document has to be assembled here rather than left out.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of());
     }
 
     @Test
@@ -242,7 +332,7 @@ class PdkDataBrowserTest {
         // none, reports nothing wrong. Three databases share one mongod here, two of them ours.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        DataBrowserPreview preview = reader.find(config("shop"), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config("shop"), new DataBrowserQuery("orders", null, 10));
 
         assertThat(echoed(preview, "database-as-it-arrived")).isEqualTo("shop");
     }
@@ -255,7 +345,7 @@ class PdkDataBrowserTest {
         // which leaves that connection exactly where it was before this face existed.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
         assertThat(echoed(preview, "database-as-it-arrived")).isEqualTo("<none-was-sent>");
     }
@@ -264,7 +354,7 @@ class PdkDataBrowserTest {
     void findCarriesTheCollectionIntoTheParams(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
         assertThat(echoed(preview, "collection")).isEqualTo("orders");
     }
@@ -276,7 +366,7 @@ class PdkDataBrowserTest {
         // only on the paths that omit that param, so it stays green until it does not.
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
-        assertThatCode(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatCode(() -> reader.find(config(), new DataBrowserQuery("orders", null, 10)))
                 .doesNotThrowAnyException();
     }
 
@@ -289,7 +379,7 @@ class PdkDataBrowserTest {
         // there is no continuation token whose presence would hint otherwise either.
         PdkDataBrowser reader = reader(Synthetic.boundedQuerySource(dir, 25), "synthetic.BoundedQuery");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
         assertThat(preview.moreAvailable()).isTrue();
         // The row asked for to learn that is the bridge's business and not part of the answer: a caller
@@ -304,7 +394,7 @@ class PdkDataBrowserTest {
         // comes from asking for one row past the bound and seeing whether it arrives.
         PdkDataBrowser reader = reader(Synthetic.boundedQuerySource(dir, 10), "synthetic.BoundedQuery");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
         assertThat(preview.moreAvailable()).isFalse();
         assertThat(preview.rows()).hasSize(10);
@@ -316,7 +406,7 @@ class PdkDataBrowserTest {
         // affordable to offer at all - and why it is an estimate that drifts rather than a total.
         PdkDataBrowser reader = reader(Synthetic.boundedQuerySource(dir, 25), "synthetic.BoundedQuery");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
         assertThat(preview.approximateTotal()).isEqualTo(25L);
     }
@@ -329,7 +419,7 @@ class PdkDataBrowserTest {
         PdkDataBrowser reader = reader(Synthetic.boundedQuerySource(dir, 25), "synthetic.BoundedQuery");
 
         DataBrowserPreview preview = reader.find(
-                config(), new DataBrowserQuery("orders", Map.of("status", "paid"), 10));
+                config(), new DataBrowserQuery("orders", new Match("status", Operator.EQ, "paid"), 10));
 
         assertThat(preview.approximateTotal()).isNull();
         assertThat(preview.rows()).hasSize(10);
@@ -342,7 +432,7 @@ class PdkDataBrowserTest {
         PdkDataBrowser reader = reader(
                 Synthetic.unreportedSizeQuerySource(dir, 25), "synthetic.UnreportedSizeQuery");
 
-        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10));
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders", null, 10));
 
         assertThat(preview.approximateTotal()).isNull();
         assertThat(preview.rows()).hasSize(10);
@@ -357,7 +447,7 @@ class PdkDataBrowserTest {
         // indistinguishable from a small collection. Asking afterwards is the only way to tell.
         PdkDataBrowser reader = reader(Synthetic.abandoningQuerySource(dir), "synthetic.AbandoningQuery");
 
-        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", null, 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.read-abandoned");
@@ -377,7 +467,7 @@ class PdkDataBrowserTest {
                 connectorId -> "abandoning".equals(connectorId) ? abandoning : healthy,
                 ConnectorInstancePool.DEFAULTS, Clock.systemUTC());
         readers.add(reader);
-        DataBrowserQuery query = new DataBrowserQuery("orders", Map.of(), 10);
+        DataBrowserQuery query = new DataBrowserQuery("orders", null, 10);
 
         assertThatThrownBy(() -> reader.find(new ConnectionConfig("c1", "abandoning", Map.of()), query))
                 .isInstanceOf(TapstateException.class);
@@ -392,7 +482,7 @@ class PdkDataBrowserTest {
         // getResult() returns an empty page for a query that in fact failed.
         PdkDataBrowser reader = reader(Synthetic.erroringQuerySource(dir), "synthetic.ErroringQuery");
 
-        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", null, 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.read-failed");
@@ -402,7 +492,7 @@ class PdkDataBrowserTest {
     void findFailsWithACodeWhenTheConnectorThrows(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.throwingQuerySource(dir), "synthetic.ThrowingQuery");
 
-        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", null, 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.read-failed");
@@ -414,7 +504,7 @@ class PdkDataBrowserTest {
         // naming the connector and the capability - not the bare crash a caller invariant would take.
         PdkDataBrowser reader = reader(Synthetic.emittingSource(dir), "synthetic.EmittingSource");
 
-        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", Map.of(), 10)))
+        assertThatThrownBy(() -> reader.find(config(), new DataBrowserQuery("orders", null, 10)))
                 .isInstanceOf(TapstateException.class)
                 .extracting(e -> ((TapstateException) e).code().code())
                 .isEqualTo("connector.capability-missing");

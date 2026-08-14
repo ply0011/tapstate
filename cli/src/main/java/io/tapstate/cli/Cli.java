@@ -106,7 +106,18 @@ public final class Cli implements Runnable {
      * <p>Operation ids are plain strings: the CLI reaches a server over HTTP and must not link the
      * control ring to read them (rule R6).
      */
+    /**
+     * The one verb the three data-browser reads project onto. They are one verb rather than three because
+     * what a reader names is a place in the data — {@code <source>.<collection>} — and a verb table has no
+     * way to spell that; the calls are a small language typed after it, or bare at the prompt. Named here
+     * so the projection below, the online routing, and the help all read the same word.
+     */
+    static final String DATA_BROWSER_VERB = "data-browser";
+
     public static final Map<String, String> VERB_BY_OPERATION = Map.ofEntries(
+            Map.entry("data-browser.collections", DATA_BROWSER_VERB),
+            Map.entry("data-browser.find", DATA_BROWSER_VERB),
+            Map.entry("data-browser.stats", DATA_BROWSER_VERB),
             Map.entry("artifact.apply", "apply"),
             Map.entry("artifact.validate", "validate"),
             Map.entry("artifact.get", "get"),
@@ -209,6 +220,11 @@ public final class Cli implements Runnable {
                     "Show a pipeline's per-table snapshot progress.")),
             Map.entry("logs", new VerbHelp("<pipeline-id> [--follow]",
                     "Tail a pipeline's log on its node; --follow streams until Ctrl-C.")),
+            // The summary is one line because picocli wraps a longer one, and a wrapped line is a line the
+            // help guard cannot pin. The call grammar lives where it is needed instead: in the usage this
+            // verb prints when it cannot read a call.
+            Map.entry(DATA_BROWSER_VERB, new VerbHelp("\"<call>\"",
+                    "Read a source's data: list collections, preview rows, report size.")),
             // The reserved verbs. Each says what it is reserved for: "not implemented yet" answers the
             // question only once the reader knows what was going to be there.
             Map.entry("run", new VerbHelp("[<path>]",

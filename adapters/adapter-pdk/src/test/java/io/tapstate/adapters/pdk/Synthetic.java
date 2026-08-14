@@ -769,6 +769,12 @@ final class Synthetic {
                 + "  fourth.put(\"echoed\", \"sort\"); fourth.put(\"value\", arrivedSort);"
                 + "  List<Map<String,Object>> batch4 = new ArrayList<>(); batch4.add(fourth);"
                 + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch4));"
+                // The filter arrives already in this connector's own dialect: the seam above carries a
+                // neutral vocabulary, and what a test needs to see is what the translation produced.
+                + "  Map<String,Object> fifth = new LinkedHashMap<>();"
+                + "  fifth.put(\"echoed\", \"filter\"); fifth.put(\"value\", params.get(\"filter\"));"
+                + "  List<Map<String,Object>> batch5 = new ArrayList<>(); batch5.add(fifth);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch5));"
                 + "});";
         return SyntheticJar.compileToJar(dir, "synthetic.ReadFace", readFace("ReadFace", register));
     }

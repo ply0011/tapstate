@@ -134,6 +134,15 @@ class ReplTest {
         final List<String> watchCalls = new ArrayList<>();
         final List<String> followCalls = new ArrayList<>();
 
+        /** The canned read-shell outcomes, the calls made, and the request the last read carried. */
+        DataBrowserOutcome.Collections collectionsOutcome = new DataBrowserOutcome.Collections.Unreachable();
+        DataBrowserOutcome.Stats statsOutcome = new DataBrowserOutcome.Stats.Unreachable();
+        DataBrowserOutcome.Find findOutcome = new DataBrowserOutcome.Find.Unreachable();
+        final List<String> dataBrowserCalls = new ArrayList<>();
+        Object lastFindFilter;
+        DataBrowserCall.Order lastFindSort;
+        Integer lastFindLimit;
+
         FakeControlPlane(URI... healthy) {
             this.healthy = new LinkedHashSet<>(List.of(healthy));
         }
@@ -154,6 +163,32 @@ class ReplTest {
         public LoginOutcome login(URI baseUrl, String username, String password) {
             loginCalls.add(username + ":" + password + "@" + baseUrl);
             return loginOutcome;
+        }
+
+        @Override
+        public DataBrowserOutcome.Collections collections(URI baseUrl, String credential, String sourceId) {
+            dataBrowserCalls.add("collections " + sourceId);
+            return healthy.contains(baseUrl)
+                    ? collectionsOutcome : new DataBrowserOutcome.Collections.Unreachable();
+        }
+
+        @Override
+        public DataBrowserOutcome.Stats stats(
+                URI baseUrl, String credential, String sourceId, String collection) {
+            dataBrowserCalls.add("stats " + sourceId + "." + collection);
+            return healthy.contains(baseUrl) ? statsOutcome : new DataBrowserOutcome.Stats.Unreachable();
+        }
+
+        @Override
+        public DataBrowserOutcome.Find find(URI baseUrl, String credential, String sourceId,
+                                            String collection, Object filter,
+                                            DataBrowserCall.Order sort, Integer limit) {
+            dataBrowserCalls.add("find " + sourceId + "." + collection
+                    + " filter=" + filter + " sort=" + sort + " limit=" + limit);
+            lastFindFilter = filter;
+            lastFindSort = sort;
+            lastFindLimit = limit;
+            return healthy.contains(baseUrl) ? findOutcome : new DataBrowserOutcome.Find.Unreachable();
         }
 
         @Override
@@ -880,6 +915,190 @@ class ReplTest {
         h.repl().dispatch("connect node1:7900");
         h.repl().dispatch("login alice");
         return h;
+    }
+
+    // ---- the read shell ----
+
+    @Test
+    void showCollectionsNamesEveryDeclaredSourcesCollectionsAsSomethingYouCanType() {
+        // The answer to "what can I read" is only useful as the full <source>.<collection> names, because
+        // those are exactly what the next line has to say.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.listOutcome = new ListOutcome.Listed(List.of(new RemoteArtifact("views", "source", "")));
+        client.collectionsOutcome =
+                new DataBrowserOutcome.Collections.Listed(List.of("order_state", "customers"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("show collections")).isTrue();
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("views.order_state").contains("views.customers");
+        assertThat(client.dataBrowserCalls).containsExactly("collections views");
+        assertThat(h.repl().lastExitCode()).isZero();
+    }
+
+    @Test
+    void showCollectionsSaysTheListIsWhatTheDatabaseHoldsRatherThanWhatWasDeclared() {
+        // The two are different sets and the declared one is the wrong answer, so the list says which it
+        // is. A source referenced purely as a connection supplier declares no tables at all.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.collectionsOutcome = new DataBrowserOutcome.Collections.Listed(List.of("order_state"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("show collections views");
+
+        assertThat(h.sink().toString().substring(mark))
+                .contains("what each source's database holds, not what the workspace declares");
+        assertThat(client.dataBrowserCalls).containsExactly("collections views");
+    }
+
+    @Test
+    void findCarriesTheParsedVocabularyOrderAndSizeToTheServer() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(), null, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch(
+                "views.order_state.find({field:'status', op:'eq', value:'Paid'}).sort({field:'total', dir:'desc'}).limit(5)");
+
+        assertThat(client.lastFindFilter)
+                .isEqualTo(Map.of("field", "status", "op", "eq", "value", "Paid"));
+        assertThat(client.lastFindSort).isEqualTo(new DataBrowserCall.Order("total", "desc"));
+        assertThat(client.lastFindLimit).isEqualTo(5);
+    }
+
+    @Test
+    void findSaysHowManyThereAreAndThatMoreRemain() {
+        // The read is one-shot, so nothing in the rows separates a preview of ten from a collection of
+        // ten. This line is the whole of what does.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(
+                List.of(Map.of("order_id", "ord_123")), 512L, true);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("\"order_id\": \"ord_123\"");
+        assertThat(output).contains("showing 1 of ~512").contains("more rows remain");
+    }
+
+    @Test
+    void findSaysAnUnorderedReadIsNotInAStableOrder() {
+        // Asking for no order leaves it to the database, which does not promise the same one twice. A
+        // reader who is not told reads the first row as "the first row".
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        assertThat(h.sink().toString().substring(mark))
+                .contains("natural order — not stable, and not the newest");
+    }
+
+    @Test
+    void findNamesTheOrderInsteadWhenOneWasAskedFor() {
+        // The other half, so a footer that printed the natural-order caveat unconditionally cannot pass:
+        // said over an ordered read it is simply false.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find().sort({field:'total', dir:'desc'})");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("ordered by `total` desc");
+        assertThat(output).doesNotContain("natural order");
+    }
+
+    @Test
+    void findGivesNoCountForAFilteredReadRatherThanOneItDidNotPayFor() {
+        // Counting a filtered collection is a full scan, so the server withholds it. A footer that
+        // rendered the absent count as 0 would state as fact the one thing the read declined to work out.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), null, true);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find({field:'status', op:'eq', value:'Paid'})");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("showing 1 ").doesNotContain(" of ~").doesNotContain("of ~0");
+        assertThat(output).contains("more rows remain");
+    }
+
+    @Test
+    void statsReportsTheRowCountAndAverageRowSizeAndSaysTheCountIsAnEstimate() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.statsOutcome = new DataBrowserOutcome.Stats.Reported(512L, 40960L, 80L);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.stats()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("~512").contains("80 bytes").contains("not counted");
+        assertThat(client.dataBrowserCalls).containsExactly("stats views.order_state");
+    }
+
+    @Test
+    void statsReportsASizeTheConnectorWithheldAsUnreportedRatherThanZero() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.statsOutcome = new DataBrowserOutcome.Stats.Reported(null, null, null);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.stats()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("not reported").doesNotContain("~0").doesNotContain("0 bytes");
+    }
+
+    @Test
+    void aReadShellLineOffLineReportsThereIsNoConnectionRatherThanAnUnknownVerb() {
+        // It falls to the verb table otherwise, which answers a correctly typed read with a spelling
+        // suggestion for a word that was spelt right.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = harness(Path.of("tap-work"), client, new ScriptedPrompter());
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("views.order_state.find()")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).contains("cli.not-connected");
+        assertThat(client.dataBrowserCalls).isEmpty();
+    }
+
+    @Test
+    void aReadShellLineItCannotParseSaysWhyAndAsksTheServerNothing() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("views.order_state.drop()")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).contains("is not a read");
+        assertThat(client.dataBrowserCalls).isEmpty();
+        assertThat(h.repl().lastExitCode()).isEqualTo(Cli.EXIT_USAGE);
+    }
+
+    @Test
+    void theSameReadIsReachableAsAVerbForAOneShotInvocation() {
+        // A session takes the bare line, but a script gets one command; without the verb the shell would
+        // be unreachable from anything that is not a person at a prompt.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(), null, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch(List.of("data-browser", "views.order_state.find()"));
+
+        assertThat(client.dataBrowserCalls).containsExactly(
+                "find views.order_state filter=null sort=null limit=null");
     }
 
     @Test
