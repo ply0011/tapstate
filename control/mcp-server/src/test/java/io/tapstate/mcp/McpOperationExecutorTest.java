@@ -107,6 +107,63 @@ class McpOperationExecutorTest {
     }
 
     @Test
+    void aReadThatAsksForNothingSendsNothingRatherThanThisFacesOwnDefaults() throws Exception {
+        // The plan's claim is that the four surfaces share one request shape, which holds only while none
+        // of them answers a question of its own. A face that filled in its own limit here would agree with
+        // the control plane today and drift the day the control plane's answer changed — and the drift
+        // would be invisible, because both sides would still be sending a number that works.
+        AtomicReference<Map<?, ?>> posted = new AtomicReference<>();
+        HttpServer server = server(exchange -> {
+            posted.set((Map<?, ?>) JsonReader.parse(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
+            answer(exchange, 200, "{}");
+        });
+        try (HttpControlClient client = new HttpControlClient(Duration.ofSeconds(1), Duration.ofSeconds(2))) {
+            McpOperationExecutor executor = new McpOperationExecutor(
+                    baseOf(server), "token", Map.of(), client);
+
+            executor.execute(ControlOperations.DATA_BROWSER_FIND,
+                    Map.of("sourceId", "views", "collection", "order_state"));
+
+            // Not "limit is 10" — an absent key, so the control plane's own answer is the only one there is.
+            assertThat(posted.get()).isEmpty();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void carriesOnlyWhatAReadActuallyAskedForAndLeavesTheTwoNamesInThePath() throws Exception {
+        AtomicReference<Map<?, ?>> posted = new AtomicReference<>();
+        AtomicReference<String> path = new AtomicReference<>();
+        HttpServer server = server(exchange -> {
+            path.set(exchange.getRequestURI().toString());
+            posted.set((Map<?, ?>) JsonReader.parse(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
+            answer(exchange, 200, "{}");
+        });
+        try (HttpControlClient client = new HttpControlClient(Duration.ofSeconds(1), Duration.ofSeconds(2))) {
+            McpOperationExecutor executor = new McpOperationExecutor(
+                    baseOf(server), "token", Map.of(), client);
+            Map<String, Object> arguments = new LinkedHashMap<>();
+            arguments.put("sourceId", "views");
+            arguments.put("collection", "order_state");
+            arguments.put("filter", Map.of("field", "status", "op", "eq", "value", "paid"));
+            arguments.put("limit", 25);
+
+            executor.execute(ControlOperations.DATA_BROWSER_FIND, arguments);
+
+            assertThat(path.get()).isEqualTo("/api/sources/views/collections/order_state:find");
+            List<String> keys = new ArrayList<>();
+            posted.get().keySet().forEach(key -> keys.add(String.valueOf(key)));
+            assertThat(keys).containsExactlyInAnyOrder("filter", "limit");
+            assertThat(posted.get().get("limit")).isEqualTo(25L);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void sourceDraftRoutesOnePostWithoutAConnectorLookup() throws Exception {
         AtomicReference<Map<?, ?>> posted = new AtomicReference<>();
         AtomicReference<String> path = new AtomicReference<>();
