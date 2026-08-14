@@ -148,14 +148,18 @@ class DataBrowserApiTest {
     @Test
     void leavesOutTheKeyForEverythingNobodyAnswered() {
         // The whole point of the shape, asserted on the wire rather than on the record: a caller reading
-        // `fields: []` is told the collection has no fields, and reading `description: ""` is told
-        // somebody described it as nothing. Neither is true, and only an absent key says so.
+        // `fields: []` is told the collection has no fields, reading `description: ""` is told somebody
+        // described it as nothing, and reading `kind: "view"` on a collection made by hand is told a
+        // pipeline materializes it. None is true, and only an absent key says so.
         context.getBean(FakeCollectionsProbe.class).answer("customers");
 
         Map<String, Object> listed = firstListedCollection();
 
-        assertThat(listed).containsEntry("name", "customers").containsEntry("kind", "view");
-        assertThat(listed).doesNotContainKey("fields").doesNotContainKey("description");
+        assertThat(listed).containsEntry("name", "customers");
+        assertThat(listed)
+                .doesNotContainKey("kind")
+                .doesNotContainKey("fields")
+                .doesNotContainKey("description");
     }
 
     /** The first entry of the listing body, read as raw JSON so an absent key stays distinguishable. */

@@ -26,11 +26,16 @@ import org.junit.jupiter.api.Test;
  * What the listing says about each collection beyond its name: which class of collection it is, the
  * fields something discovered on it, and the text whoever declared it wrote.
  *
- * <p>The two derived answers have a source that may simply not exist — nothing has been discovered on
- * this connection, nobody declared this collection — and the cases here are mostly about that: an
- * answer nobody can give is left out, never rendered as an empty one. The difference matters to the
- * caller these are for. An empty field list reads as "this collection has no fields", which is a
+ * <p>All three have a source that may simply not exist — nothing has been discovered on this
+ * connection, nobody declared this collection — and the cases here are mostly about that: an answer
+ * nobody can give is left out, never rendered as an empty or a made-up one. The difference matters to
+ * the caller these are for. An empty field list reads as "this collection has no fields", which is a
  * different statement from "nobody has looked", and only one of them is true.
+ *
+ * <p>The listing covers every collection the database holds, and a database holds more than a
+ * workspace authored — so "this is a view" is an answer about some of them and about none of the
+ * rest. Saying it of all of them would be this layer deciding, on a caller's behalf, that a
+ * collection somebody made by hand is a thing a pipeline materialized.
  */
 class DataBrowserCollectionsTest {
 
@@ -42,15 +47,57 @@ class DataBrowserCollectionsTest {
     private static final DataBrowserPreview NOTHING = new DataBrowserPreview(List.of(), null, false);
 
     @Test
-    void namesEachCollectionTheDatabaseHoldsAndTheClassItIs() {
+    void namesEveryCollectionTheDatabaseHolds() {
         DataBrowserService service = service(
                 store(VIEWS), config -> List.of("order_state", "customers"), schemas());
+
+        assertThat(service.collections("views"))
+                .extracting(DataBrowserCollection::name)
+                .containsExactly("order_state", "customers");
+    }
+
+    @Test
+    void callsACollectionAViewWhenSomeViewDeclaresIt() {
+        DataBrowserService service = service(
+                store(VIEWS, view("v_order_state", "order_state", "One row per order")),
+                config -> List.of("order_state"),
+                schemas());
+
+        assertThat(service.collections("views")).singleElement()
+                .extracting(DataBrowserCollection::kind)
+                .isEqualTo("view");
+    }
+
+    @Test
+    void leavesTheKindAbsentForACollectionNoViewDeclares() {
+        // The collection somebody made by hand, in the same database. Calling it a view would tell a
+        // caller a pipeline materializes it — which is a statement about this product, made up here,
+        // about a collection this product has never touched.
+        DataBrowserService service = service(
+                store(VIEWS, view("v_order_state", "order_state", "One row per order")),
+                config -> List.of("order_state", "audit_log"),
+                schemas());
 
         assertThat(service.collections("views"))
                 .extracting(DataBrowserCollection::name, DataBrowserCollection::kind)
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple("order_state", "view"),
-                        org.assertj.core.groups.Tuple.tuple("customers", "view"));
+                        org.assertj.core.groups.Tuple.tuple("audit_log", null));
+    }
+
+    @Test
+    void callsItAViewEvenWhenTheDeclarationSaidNothingAboutIt() {
+        // What separates the two answers: `kind` is about whether it was declared at all, `description`
+        // about whether the declaration bothered to say anything. Deriving one from the other would
+        // make an undescribed view indistinguishable from a collection nobody declared.
+        DataBrowserService service = service(
+                store(VIEWS, view("v_order_state", "order_state", null)),
+                config -> List.of("order_state"),
+                schemas());
+
+        assertThat(service.collections("views")).singleElement()
+                .extracting(DataBrowserCollection::kind, DataBrowserCollection::description)
+                .containsExactly("view", null);
     }
 
     @Test

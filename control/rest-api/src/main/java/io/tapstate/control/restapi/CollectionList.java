@@ -21,16 +21,18 @@ record CollectionList(List<Entry> collections) {
     }
 
     /**
-     * One collection: its name, the class of collection it is, and — when anything answered them — the
-     * fields discovery found and the text whoever declared it wrote.
+     * One collection: its name, and — when anything answered them — the class of collection it is, the
+     * fields discovery found, and the text whoever declared it wrote.
      *
-     * <p>An unanswered one is left out of the body entirely rather than sent as an empty value, which
-     * is what {@code NON_NULL} is doing here and the one thing about this record that is load-bearing.
-     * A caller reading {@code "fields": []} has been told the collection has no fields, and one reading
-     * {@code "description": ""} has been told somebody described it as nothing; neither is what "nobody
-     * has looked" and "nobody declared it" mean, and an absent key is the only form that says so. The
-     * caller's own way forward differs by which it is — with no fields it reads the first page to see
-     * the shape, which it would have no reason to do if told the collection had none.
+     * <p>An unanswered one is left out of the body entirely rather than sent as an empty or invented
+     * value, which is what {@code NON_NULL} is doing here and the one thing about this record that is
+     * load-bearing. A caller reading {@code "fields": []} has been told the collection has no fields,
+     * one reading {@code "description": ""} has been told somebody described it as nothing, and one
+     * reading {@code "kind": "view"} on a hand-made collection has been told a pipeline materializes
+     * it; none is what "nobody looked" and "nobody declared it" mean, and an absent key is the only
+     * form that says so. The caller's own way forward differs by which it is — with no fields it reads
+     * the first page to see the shape, which it would have no reason to do if told the collection had
+     * none.
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record Entry(String name, String kind, List<String> fields, String description) {

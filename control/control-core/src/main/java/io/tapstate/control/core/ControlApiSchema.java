@@ -183,10 +183,10 @@ public final class ControlApiSchema {
     }
 
     /**
-     * One collection of a listing. Two of the four are answered only when something answered them, and
-     * the schema is where a caller with no person behind it is told what their absence means — read as
-     * an empty answer, an absent field list becomes "this collection has no fields", which is a claim
-     * nobody made and which stops the caller from looking any further.
+     * One collection of a listing. Three of the four are answered only when something answered them,
+     * and the schema is where a caller with no person behind it is told what their absence means —
+     * read as an empty answer, an absent field list becomes "this collection has no fields", which is
+     * a claim nobody made and which stops the caller from looking any further.
      */
     private static Map<String, Object> collectionEntry() {
         Map<String, Object> properties = new LinkedHashMap<>();
@@ -194,8 +194,12 @@ public final class ControlApiSchema {
         properties.put("kind", Map.of(
                 "type", "string",
                 "enum", List.of("view"),
-                "description", "What this collection is. Today every one a workspace materializes is a "
-                        + "view; other kinds join this list as they arrive."));
+                "description", "What this collection is, for the collections this workspace declares. "
+                        + "Absent for a collection no declaration covers — the listing shows "
+                        + "everything the database holds, and a database holds more than a workspace "
+                        + "authored, so an absent kind means this one was not made here rather than "
+                        + "that it is of some unknown class. Other kinds join this list as they "
+                        + "arrive."));
         properties.put("fields", Map.of(
                 "type", "array",
                 "items", Map.of("type", "string"),
@@ -208,7 +212,7 @@ public final class ControlApiSchema {
                 "What whoever declared this collection wrote about it. Absent for a collection no view "
                         + "declares, which is most of them — a database holds far more than a workspace "
                         + "authored."));
-        return object(List.of("name", "kind"), properties, false);
+        return object(List.of("name"), properties, false);
     }
 
     /**

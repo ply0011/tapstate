@@ -61,6 +61,26 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void onlyTheNameIsPromisedForEveryCollection() {
+        // `kind` is required of nothing, and the schema says why: the listing covers a whole database,
+        // and answering "view" for a collection nobody declared would tell the caller a pipeline
+        // materializes something made by hand. A required `kind` is exactly that claim, in the contract.
+        Map<String, Object> result = ControlApiSchema.resolve(
+                ControlOperations.DATA_BROWSER_COLLECTIONS.schema().result());
+        Map<?, ?> entry = (Map<?, ?>) ((Map<?, ?>) ((Map<?, ?>) result.get("properties"))
+                .get("collections")).get("items");
+
+        assertThat(((List<?>) entry.get("required")).stream().map(String::valueOf).toList())
+                .containsExactly("name");
+        Map<?, ?> kind = (Map<?, ?>) ((Map<?, ?>) entry.get("properties")).get("kind");
+        assertThat(((List<?>) kind.get("enum")).stream().map(String::valueOf).toList())
+                .containsExactly("view");
+        assertThat((String) kind.get("description"))
+                .contains("Absent")
+                .contains("not made here");
+    }
+
+    @Test
     void allowWriteAddsExactlyTheFiveWriteTools() {
         assertThat(McpToolCatalog.operations(true).stream().map(McpToolCatalog::toolName))
                 .containsExactlyInAnyOrderElementsOf(concat(READ_TOOLS, WRITE_TOOLS));

@@ -85,22 +85,28 @@ public final class DataBrowserService {
      * Lists the collections the source's own database holds, in the order the connector reports them,
      * each with what is known about it beyond its name.
      *
-     * <p>The two derived answers are read from what already exists rather than produced here. The
+     * <p>The three derived answers are read from what already exists rather than produced here. The
      * fields come from the latest discovery stored for this source's connection, so listing never
-     * triggers one — that would turn a read into a write, and an audited one. The description comes
-     * from the view that declares the collection as where it materializes. Neither has a source for
-     * every collection, and where there is none the answer is left out rather than emptied: an empty
-     * field list says the collection has no fields, which is not what "nobody looked" means.
+     * triggers one — that would turn a read into a write, and an audited one. The kind and the
+     * description both come from the view that declares the collection as where it materializes.
+     * None of the three has a source for every collection, and where there is none the answer is
+     * left out rather than emptied or invented: an empty field list says the collection has no
+     * fields, which is not what "nobody looked" means, and a kind of "view" on a collection somebody
+     * made by hand says a pipeline materializes it, which is not what "nobody declared it" means.
      */
     public List<DataBrowserCollection> collections(String sourceId) {
         ConnectionConfig config = connection(sourceId);
         List<String> names = collectionsProbe.collections(config);
         Map<String, List<String>> discovered = discoveredFields(config.id());
-        Map<String, String> declared = declaredDescriptions();
+        Map<String, ViewResource> declared = declaringViews();
         List<DataBrowserCollection> listed = new ArrayList<>(names.size());
         for (String name : names) {
+            ViewResource declaring = declared.get(name);
             listed.add(new DataBrowserCollection(
-                    name, DataBrowserCollection.VIEW, discovered.get(name), declared.get(name)));
+                    name,
+                    declaring == null ? null : DataBrowserCollection.VIEW,
+                    discovered.get(name),
+                    authoredDescription(declaring)));
         }
         return List.copyOf(listed);
     }
@@ -123,24 +129,32 @@ public final class DataBrowserService {
     }
 
     /**
-     * The authored description of each collection some stored view declares as its warm destination.
-     * A view that declares no warm collection names none, and one that wrote no description
-     * contributes no entry — being declared is not itself a description.
+     * The view declaring each collection as its warm destination, by collection name. A view that
+     * declares no warm collection names none, so it contributes no entry; a collection absent from
+     * this map is one no view declares, which is what leaves it without a kind.
+     *
+     * <p>Whether the declaration says anything about the collection is a separate question, answered
+     * by {@link #authoredDescription} — a view is a view whether or not its author wrote a sentence.
      */
-    private Map<String, String> declaredDescriptions() {
-        Map<String, String> byCollection = new LinkedHashMap<>();
+    private Map<String, ViewResource> declaringViews() {
+        Map<String, ViewResource> byCollection = new LinkedHashMap<>();
         for (Resource stored : store.list()) {
-            if (!(stored instanceof ViewResource view)
-                    || view.storage() == null
-                    || view.storage().warm() == null
-                    || view.metadata() == null
-                    || view.metadata().description() == null
-                    || view.metadata().description().isBlank()) {
-                continue;
+            if (stored instanceof ViewResource view
+                    && view.storage() != null
+                    && view.storage().warm() != null) {
+                byCollection.putIfAbsent(view.storage().warm().collection(), view);
             }
-            byCollection.putIfAbsent(view.storage().warm().collection(), view.metadata().description());
         }
         return byCollection;
+    }
+
+    /** What the declaring view's author wrote, or null for no view or nothing written. */
+    private static String authoredDescription(ViewResource declaring) {
+        if (declaring == null || declaring.metadata() == null) {
+            return null;
+        }
+        String written = declaring.metadata().description();
+        return written == null || written.isBlank() ? null : written;
     }
 
     /** Reports what the connector knows about one of the source's collections. */
