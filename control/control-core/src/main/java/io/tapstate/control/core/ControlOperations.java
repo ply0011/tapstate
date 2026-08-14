@@ -8,9 +8,9 @@ import java.util.Map;
  * scanning). This is the single source of truth from which every face derives its surface, and the
  * seed an {@link OperationRegistry} is built over.
  *
- * <p>Each face reads its exposed operations from this registry. The first MCP surface is the online
- * pipeline closure at {@code BETA}; protocol adapters must derive tool names and schemas from these
- * entries rather than maintaining an independent catalog.
+ * <p>Each face reads its exposed operations from this registry. The MCP surface is the online pipeline
+ * closure plus the data-browser read face; protocol adapters must derive tool names and schemas from
+ * these entries rather than maintaining an independent catalog.
  *
  * <p>The audit flag marks the operations that mutate persisted control-plane state (an artifact, a
  * connection's persisted probe or discovery result, a user, a token) and therefore leave a record;
@@ -18,9 +18,12 @@ import java.util.Map;
  */
 public final class ControlOperations {
 
-    private static final Map<Frontend, Maturity> CLI_POC = Map.of(Frontend.CLI, Maturity.POC);
-    private static final Map<Frontend, Maturity> CLI_POC_MCP_BETA =
-            Map.of(Frontend.CLI, Maturity.POC, Frontend.MCP, Maturity.BETA);
+    // Every operation is staged at the one stage this build ships at, on every face it is open on. The
+    // stage is not part of these names on purpose: a name that spelled it would go stale the moment the
+    // build moved on, and a per-face stage is what lets one face open a surface the rest do not.
+    private static final Map<Frontend, Maturity> CLI_ONLY = Map.of(Frontend.CLI, Maturity.CURRENT);
+    private static final Map<Frontend, Maturity> CLI_AND_MCP =
+            Map.of(Frontend.CLI, Maturity.CURRENT, Frontend.MCP, Maturity.CURRENT);
 
     // artifact domain
     public static final Operation ARTIFACT_APPLY = mcp(
@@ -29,8 +32,8 @@ public final class ControlOperations {
     public static final Operation ARTIFACT_VALIDATE = mcp(
             "artifact.validate", Scope.READ, false,
             "Validate a complete tapstate/v1 workspace without writing artifacts or audit records.");
-    public static final Operation ARTIFACT_GET = new Operation("artifact.get", Scope.READ, false, null, CLI_POC);
-    public static final Operation ARTIFACT_LIST = new Operation("artifact.list", Scope.READ, false, null, CLI_POC);
+    public static final Operation ARTIFACT_GET = new Operation("artifact.get", Scope.READ, false, null, CLI_ONLY);
+    public static final Operation ARTIFACT_LIST = new Operation("artifact.list", Scope.READ, false, null, CLI_ONLY);
 
     // connection domain: each probing verb runs an external probe and persists its result for later query
     // and display, so it mutates persisted state (a write) and is audited; its read-back peer returns the
@@ -41,7 +44,7 @@ public final class ControlOperations {
     // source domain
     public static final Operation SOURCE_CREATE = new Operation(
             "source.create", Scope.WRITE, true, ControlApiSchema.ref("source.create"),
-            "Create and persist one Source through the Server control API.", CLI_POC);
+            "Create and persist one Source through the Server control API.", CLI_ONLY);
     public static final Operation SOURCE_DRAFT = mcp(
             "source.draft", Scope.READ, false,
             "Render canonical YAML for a Source with a known connector through the Server's live connector "
@@ -52,8 +55,8 @@ public final class ControlOperations {
     public static final Operation SOURCE_GET = mcp(
             "source.get", Scope.READ, false,
             "Get one Source with secret-redacted config and configured-secret field names.");
-    public static final Operation SOURCE_UPDATE = new Operation("source.update", Scope.WRITE, true, null, CLI_POC);
-    public static final Operation SOURCE_DELETE = new Operation("source.delete", Scope.WRITE, true, null, CLI_POC);
+    public static final Operation SOURCE_UPDATE = new Operation("source.update", Scope.WRITE, true, null, CLI_ONLY);
+    public static final Operation SOURCE_DELETE = new Operation("source.delete", Scope.WRITE, true, null, CLI_ONLY);
 
     public static final Operation CONNECTION_TEST = mcp(
             "connection.test", Scope.WRITE, true,
@@ -73,7 +76,7 @@ public final class ControlOperations {
     // over the artifact bytes; the operation classloads and stores in the control process rather than
     // dispatching to the runtime, so it adds no member to the synchronous control-to-runtime whitelist.
     public static final Operation CONNECTOR_REGISTER =
-            new Operation("connector.register", Scope.WRITE, true, null, CLI_POC);
+            new Operation("connector.register", Scope.WRITE, true, null, CLI_ONLY);
     // connector.list reads the online catalog view — the bundled snapshot union the rows derived for
     // registered connectors — so a registered connector becomes visible without a restart. It reads
     // derived catalog state, mutates nothing, and needs no member on the synchronous control-to-runtime
@@ -119,7 +122,7 @@ public final class ControlOperations {
     // cluster domain: topology is sensitive, so listing members is a registry operation (authenticated
     // like every other verb) rather than an anonymous endpoint — only the process-liveness probe stays
     // outside the registry. Reading topology mutates nothing, so it is read-scoped and unaudited.
-    public static final Operation CLUSTER_MEMBERS = new Operation("cluster.members", Scope.READ, false, null, CLI_POC);
+    public static final Operation CLUSTER_MEMBERS = new Operation("cluster.members", Scope.READ, false, null, CLI_ONLY);
 
     // pipeline domain: the four lifecycle verbs. Each writes the pipeline's desired state (an intent the
     // runtime later converges), so all four are write-scoped and audited. There is no rewind verb — a
@@ -130,8 +133,8 @@ public final class ControlOperations {
     public static final Operation PIPELINE_STOP = mcp(
             "pipeline.stop", Scope.WRITE, true,
             "Set a Pipeline's desired state to stopped.");
-    public static final Operation PIPELINE_PAUSE = new Operation("pipeline.pause", Scope.WRITE, true, null, CLI_POC);
-    public static final Operation PIPELINE_RESUME = new Operation("pipeline.resume", Scope.WRITE, true, null, CLI_POC);
+    public static final Operation PIPELINE_PAUSE = new Operation("pipeline.pause", Scope.WRITE, true, null, CLI_ONLY);
+    public static final Operation PIPELINE_RESUME = new Operation("pipeline.resume", Scope.WRITE, true, null, CLI_ONLY);
 
     // pipeline observation reads: the four read faces. status/metrics/snapshot are store-backed over the
     // per-pipeline observation doc (status = lifecycle state, metrics = open stat map, snapshot = per-table
@@ -151,12 +154,12 @@ public final class ControlOperations {
             "Read the bounded, secret-redacted log tail for a Pipeline.");
 
     // security domain: all admin-scoped. The mutating ones are audited; the list queries are not.
-    public static final Operation USER_CREATE = new Operation("user.create", Scope.ADMIN, true, null, CLI_POC);
-    public static final Operation USER_PASSWD = new Operation("user.passwd", Scope.ADMIN, true, null, CLI_POC);
-    public static final Operation USER_LIST = new Operation("user.list", Scope.ADMIN, false, null, CLI_POC);
-    public static final Operation TOKEN_CREATE = new Operation("token.create", Scope.ADMIN, true, null, CLI_POC);
-    public static final Operation TOKEN_REVOKE = new Operation("token.revoke", Scope.ADMIN, true, null, CLI_POC);
-    public static final Operation TOKEN_LIST = new Operation("token.list", Scope.ADMIN, false, null, CLI_POC);
+    public static final Operation USER_CREATE = new Operation("user.create", Scope.ADMIN, true, null, CLI_ONLY);
+    public static final Operation USER_PASSWD = new Operation("user.passwd", Scope.ADMIN, true, null, CLI_ONLY);
+    public static final Operation USER_LIST = new Operation("user.list", Scope.ADMIN, false, null, CLI_ONLY);
+    public static final Operation TOKEN_CREATE = new Operation("token.create", Scope.ADMIN, true, null, CLI_ONLY);
+    public static final Operation TOKEN_REVOKE = new Operation("token.revoke", Scope.ADMIN, true, null, CLI_ONLY);
+    public static final Operation TOKEN_LIST = new Operation("token.list", Scope.ADMIN, false, null, CLI_ONLY);
 
     private static final List<Operation> ALL = List.of(
             ARTIFACT_APPLY,
@@ -199,7 +202,7 @@ public final class ControlOperations {
     }
 
     private static Operation mcp(String id, Scope scope, boolean audited, String description) {
-        return new Operation(id, scope, audited, ControlApiSchema.ref(id), description, CLI_POC_MCP_BETA);
+        return new Operation(id, scope, audited, ControlApiSchema.ref(id), description, CLI_AND_MCP);
     }
 
     /** All canonical operations, in a stable declaration order. */

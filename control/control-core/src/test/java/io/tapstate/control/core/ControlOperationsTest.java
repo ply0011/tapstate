@@ -148,20 +148,29 @@ class ControlOperationsTest {
     }
 
     @Test
-    void theRegistryOpensEveryL1OperationOnTheCliFaceAtPoc() {
+    void theRegistryOpensEveryL1OperationOnTheCliFace() {
         // A scope statement about the registry alone: the CLI face opens every registered operation and
-        // clips none of them below POC. Whether each one has a verb behind it is not knowable from here
+        // clips none of them. Whether each one has a verb behind it is not knowable from here
         // — control-core cannot see the CLI — and is gated where both are visible, in arch-tests.
-        assertThat(registry.exposedOn(Frontend.CLI, Maturity.POC)).hasSize(35);
+        assertThat(registry.exposedOn(Frontend.CLI)).hasSize(35);
         assertThat(registry.all()).allSatisfy(op ->
-                assertThat(op.exposure()).as(op.id()).containsEntry(Frontend.CLI, Maturity.POC));
+                assertThat(op.exposure()).as(op.id()).containsEntry(Frontend.CLI, Maturity.CURRENT));
     }
 
     @Test
-    void betaMcpFaceIsTheOnlinePipelineClosurePlusTheReadFaceAndRestExposureRemainsEmpty() {
+    void everyOperationIsStagedAtTheOneShippedStageOnEveryFaceItIsOpenOn() {
+        // One stage across the whole registry, not one per face. A second stage in here is what makes a
+        // face's surface depend on which ceiling it happened to name, which is the thing the ceilingless
+        // exposedOn(Frontend) exists to remove — an entry left at another stage would put it back.
+        assertThat(registry.all()).allSatisfy(op ->
+                assertThat(op.exposure().values()).as(op.id()).containsOnly(Maturity.CURRENT));
+    }
+
+    @Test
+    void mcpFaceIsTheOnlinePipelineClosurePlusTheReadFaceAndRestExposureRemainsEmpty() {
         // The read face joins on the same terms as everything else here — a mark on the registry entry.
         // The three are read-scoped, so a caller holding no write capability still gets all three.
-        assertThat(registry.exposedOn(Frontend.MCP, Maturity.BETA))
+        assertThat(registry.exposedOn(Frontend.MCP))
                 .extracting(Operation::id)
                 .containsExactlyInAnyOrder(
                         "connector.list", "connector.get",
@@ -172,6 +181,8 @@ class ControlOperationsTest {
                         "pipeline.start", "pipeline.stop", "pipeline.status",
                         "pipeline.metrics", "pipeline.snapshot", "pipeline.logs",
                         "data-browser.collections", "data-browser.find", "data-browser.stats");
+        // Deliberately the widest ceiling, not the shipped one: REST carries no operation at any stage,
+        // which is a stronger statement than "none has reached the stage we ship".
         assertThat(registry.exposedOn(Frontend.REST, Maturity.GA)).isEmpty();
     }
 }

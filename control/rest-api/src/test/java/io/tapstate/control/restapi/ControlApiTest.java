@@ -12,7 +12,6 @@ import io.tapstate.control.core.ConnectionTestResultQueryService;
 import io.tapstate.control.core.ConnectionTestService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.Frontend;
-import io.tapstate.control.core.Maturity;
 import io.tapstate.control.core.Operation;
 import io.tapstate.control.core.SchemaDiscoveryService;
 import io.tapstate.control.core.SchemaQueryService;
@@ -344,7 +343,7 @@ class ControlApiTest {
     @Test
     void everyApiEndpointProjectsARegisteredCliExposedVerb() {
         Set<String> cliExposed = ControlOperations.registry()
-                .exposedOn(Frontend.CLI, Maturity.POC).stream()
+                .exposedOn(Frontend.CLI).stream()
                 .map(Operation::id).collect(Collectors.toSet());
 
         RequestMappingHandlerMapping mapping =

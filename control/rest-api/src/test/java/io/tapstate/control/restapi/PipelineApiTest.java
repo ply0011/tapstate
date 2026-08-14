@@ -284,7 +284,7 @@ class PipelineApiTest {
     @Test
     void everyPipelineVerbProjectsARegisteredCliExposedVerb() {
         Set<String> cliExposed = ControlOperations.registry()
-                .exposedOn(io.tapstate.control.core.Frontend.CLI, io.tapstate.control.core.Maturity.POC).stream()
+                .exposedOn(io.tapstate.control.core.Frontend.CLI).stream()
                 .map(io.tapstate.control.core.Operation::id).collect(Collectors.toSet());
 
         RequestMappingHandlerMapping mapping =
