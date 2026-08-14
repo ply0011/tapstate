@@ -3227,4 +3227,57 @@ class ReplTest {
         Cli.runSession(launch, client, () -> new ScriptedPrompter("asked"));
         assertThat(client.loginCalls).containsExactly("admin:from-env@http://node1:7900");
     }
+
+    // ---- the in-place view ----
+
+    @Test
+    void watchRefusesWhereItsOutputIsNotATerminalAndNamesBothAlternatives() {
+        // The refusal is the whole point: down a pipe, an in-place redraw is not a worse view, it is
+        // cursor-control bytes in the middle of whatever the reader piped it into. And a reader who
+        // reached for this verb wants one of the two things it names, so a refusal that named neither
+        // would leave them with nothing to type next.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("cli.watch-needs-a-terminal");
+        assertThat(output).contains("tail").contains("find");
+        assertThat(client.dataBrowserCalls)
+                .as("it refuses before asking, so a piped watch never opens a read it cannot render")
+                .isEmpty();
+    }
+
+    @Test
+    void watchSaysWhatANamespaceLooksLikeRatherThanReportingAnUnknownVerb() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> true);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output)
+                .as("the verb was matched, so a line it cannot read is that verb written wrongly; "
+                        + "falling through would answer it by complaining about an unknown command")
+                .contains("<source>.<collection>")
+                .doesNotContain("Unknown");
+    }
+
+    @Test
+    void watchNeedsASessionBeforeItNeedsATerminal() {
+        // Offline the view has nothing to watch at all, and saying "this needs a terminal" to somebody
+        // who has not connected sends them to fix the wrong thing.
+        Harness h = harness();
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views.order_state");
+
+        assertThat(h.sink().toString().substring(mark)).contains("cli.not-connected");
+    }
 }

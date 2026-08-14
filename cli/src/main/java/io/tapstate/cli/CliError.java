@@ -47,7 +47,15 @@ enum CliError implements TapstateErrorCode {
     REPL_BUILTIN_ONLY("cli.repl-builtin-only", Set.of("verb")),
 
     /** The installed MCP sidecar or its required Java runtime cannot be launched. */
-    MCP_UNAVAILABLE("cli.mcp-unavailable", Set.of("reason"));
+    MCP_UNAVAILABLE("cli.mcp-unavailable", Set.of("reason")),
+
+    /**
+     * The in-place view was asked for where its output does not go to a terminal. Refused rather than
+     * degraded: redrawing in place is cursor movement, and cursor movement down a pipe is not a
+     * degraded view but a file of control characters. Decided entirely on the client — the server is
+     * never asked, and would have no way to know.
+     */
+    WATCH_NEEDS_A_TERMINAL("cli.watch-needs-a-terminal", Set.of());
 
     private final String code;
     private final Set<String> placeholders;

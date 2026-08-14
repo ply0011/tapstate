@@ -55,8 +55,45 @@ sealed interface DataBrowserCall {
     record Order(String field, String dir) {
     }
 
+    /**
+     * The operands of one of the two live views: {@code watch <ns> [filter]} / {@code tail <ns> [filter]}.
+     * They are read here rather than by each command because they name the same place in the data and
+     * take the same filter as {@code find} does — a second reader for them is a second grammar, and the
+     * two would drift a literal at a time.
+     */
+    record Live(String verb, String sourceId, String collection, Object filter) implements DataBrowserCall {
+    }
+
     /** A line this shell claims and cannot read, with the reason to print. */
     record Malformed(String reason) implements DataBrowserCall {
+    }
+
+    /**
+     * Reads one live view's operands — a namespace and an optional filter. Never answers null: the verb
+     * has already been matched by the caller, so a line it cannot read is that verb written wrongly, and
+     * falling through would answer it with a complaint about an unknown verb.
+     */
+    static DataBrowserCall parseLive(String verb, String operands) {
+        String trimmed = operands == null ? "" : operands.trim();
+        if (trimmed.isEmpty()) {
+            return new Malformed(verb + " takes a namespace, as in `" + verb + " views.orders`");
+        }
+        int space = trimmed.indexOf(' ');
+        String namespace = space < 0 ? trimmed : trimmed.substring(0, space);
+        int dot = namespace.indexOf('.');
+        if (dot <= 0 || dot == namespace.length() - 1) {
+            return new Malformed("`" + namespace + "` is not a `<source>.<collection>`; "
+                    + verb + " watches one collection, as in `" + verb + " views.orders`");
+        }
+        try {
+            // The filter is the shell's own syntax, rebuilt as the vocabulary here, exactly as a read
+            // does it — so what leaves this process says only what the vocabulary can say.
+            Object filter = space < 0 ? null
+                    : MongoShellFilter.translate(new Reader(trimmed, space).value());
+            return new Live(verb, namespace.substring(0, dot), namespace.substring(dot + 1), filter);
+        } catch (Unreadable unreadable) {
+            return new Malformed(unreadable.getMessage());
+        }
     }
 
     /** Parses one typed line, or answers null when it is not a read-shell line at all. */

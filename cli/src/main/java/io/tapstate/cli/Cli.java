@@ -149,6 +149,15 @@ public final class Cli implements Runnable {
     static final List<String> UNIMPLEMENTED_COMPOSITE_VERBS = List.of("run", "export", "diff", "edit");
 
     /**
+     * The live views over a collection. They project no registered operation and never will: each is a
+     * client-side loop over reads that are already registered, in the same category as the streaming
+     * flags on the two pipeline read verbs. The verb itself carries the choice a reader is making —
+     * one row, refreshed where it stands, or every change to the whole table — which is why there is no
+     * flag anywhere that turns one into the other.
+     */
+    static final List<String> LIVE_VIEW_VERBS = List.of("watch");
+
+    /**
      * Verbs that need a live server connection — every projected verb that does not also run offline
      * ({@code ls} browses the local workspace when there is no session). Derived from the projection
      * above so the two can never disagree. Registered so they are listed and explained rather than
@@ -225,6 +234,10 @@ public final class Cli implements Runnable {
             // verb prints when it cannot read a call.
             Map.entry(DATA_BROWSER_VERB, new VerbHelp("\"<call>\"",
                     "Read a source's data: list collections, preview rows, report size.")),
+            // One line, for the same reason the read shell's summary is one: picocli wraps a longer one
+            // and the help guard cannot pin a wrapped line.
+            Map.entry("watch", new VerbHelp("<source>.<collection> [<filter>]",
+                    "Watch one row in place until Ctrl-C; needs a terminal.")),
             // The reserved verbs. Each says what it is reserved for: "not implemented yet" answers the
             // question only once the reader knows what was going to be there.
             Map.entry("run", new VerbHelp("[<path>]",
@@ -287,6 +300,9 @@ public final class Cli implements Runnable {
         // answered with a spelling suggestion for a word that was spelt right.
         commandLine.addSubcommand(new CommandLine.HelpCommand());
         for (String verb : CONNECTED_VERBS) {
+            commandLine.addSubcommand(verb, new ConnectedVerb());
+        }
+        for (String verb : LIVE_VIEW_VERBS) {
             commandLine.addSubcommand(verb, new ConnectedVerb());
         }
         for (String verb : UNIMPLEMENTED_COMPOSITE_VERBS) {

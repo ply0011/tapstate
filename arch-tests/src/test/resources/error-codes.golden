@@ -27,6 +27,7 @@ cli.request-timed-out
 cli.resource-not-found
 cli.unknown-connector
 cli.verb-not-implemented
+cli.watch-needs-a-terminal
 connector.ambiguous-connector-class
 connector.ambiguous-registration
 connector.api-level-incompatible

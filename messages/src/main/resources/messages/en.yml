@@ -80,6 +80,9 @@ cli.repl-builtin-only:
 cli.mcp-unavailable:
   message: "The MCP sidecar is unavailable: {reason}."
   solution: "Install the complete Tapstate CLI bundle, including libexec/tapstate-mcp, and retry."
+cli.watch-needs-a-terminal:
+  message: "`watch` redraws one row in place, which needs a terminal; here its output is a pipe or a file."
+  solution: "Use `tail <source>.<collection>` for a stream you can pipe, or `<source>.<collection>.find(...)` for a one-shot look."
 dsl.unknown-field:
   message: "Unknown field '{field}' at {path}."
   solution: "Remove it, or run `tapstate explain` to see the fields allowed here."

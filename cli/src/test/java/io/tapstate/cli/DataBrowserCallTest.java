@@ -134,4 +134,60 @@ class DataBrowserCallTest {
     void refusesASizeThatIsNotAWholeNumber() {
         assertThat(DataBrowserCall.parse("views.orders.find().limit(all)")).isInstanceOf(Malformed.class);
     }
+
+    @Test
+    void readsALiveViewsNamespaceAndItsOptionalFilter() {
+        DataBrowserCall bare = DataBrowserCall.parseLive("watch", "views.orders");
+
+        assertThat(bare).isInstanceOf(DataBrowserCall.Live.class);
+        assertThat(((DataBrowserCall.Live) bare).sourceId()).isEqualTo("views");
+        assertThat(((DataBrowserCall.Live) bare).collection()).isEqualTo("orders");
+        assertThat(((DataBrowserCall.Live) bare).filter())
+                .as("no filter is not an empty filter — the view is being asked for whatever comes first")
+                .isNull();
+    }
+
+    @Test
+    void readsALiveViewsFilterAsTheVocabularyRatherThanAsItWasTyped() {
+        DataBrowserCall parsed = DataBrowserCall.parseLive("tail", "views.orders {status: \"Paid\"}");
+
+        assertThat(parsed).isInstanceOf(DataBrowserCall.Live.class);
+        assertThat(((DataBrowserCall.Live) parsed).filter())
+                .as("the shell's syntax is read here and rebuilt as the vocabulary, so what leaves this "
+                        + "process says only what the vocabulary can say — the same rule a read follows")
+                .isEqualTo(Map.of("field", "status", "op", "eq", "value", "Paid"));
+    }
+
+    @Test
+    void splitsALiveViewsNamespaceAtItsFirstDot() {
+        DataBrowserCall parsed = DataBrowserCall.parseLive("watch", "views.a.b");
+
+        assertThat(((DataBrowserCall.Live) parsed).sourceId()).isEqualTo("views");
+        assertThat(((DataBrowserCall.Live) parsed).collection())
+                .as("a source id is one artifact id while a collection name may hold dots; splitting the "
+                        + "other way looks up a source that does not exist and blames the half that was right")
+                .isEqualTo("a.b");
+    }
+
+    @Test
+    void refusesALiveViewWithNoNamespaceAndSaysWhatOneLooksLike() {
+        assertThat(DataBrowserCall.parseLive("watch", "")).isInstanceOf(Malformed.class);
+
+        DataBrowserCall noCollection = DataBrowserCall.parseLive("watch", "views");
+        assertThat(noCollection).isInstanceOf(Malformed.class);
+        assertThat(((Malformed) noCollection).reason())
+                .as("a refusal that does not show the shape leaves the reader guessing at it")
+                .contains("<source>.<collection>");
+    }
+
+    @Test
+    void refusesALiveViewFilterTheVocabularyCannotSay() {
+        DataBrowserCall parsed = DataBrowserCall.parseLive("tail", "views.orders {status: {$regex: \"^P\"}}");
+
+        assertThat(parsed)
+                .as("a live view takes the same filter a read does, so it refuses the same things — and "
+                        + "a filter silently dropped would leave the view showing the whole table")
+                .isInstanceOf(Malformed.class);
+        assertThat(((Malformed) parsed).reason()).contains("$contains");
+    }
 }

@@ -22,13 +22,16 @@ import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -73,6 +76,20 @@ final class Repl {
      * coded {@code cli.not-connected} and {@code ls} browses the local workspace. {@code validate} is not here — it
      * runs the full local stack in either state until a server validate endpoint exists.
      */
+    /** How often the in-place view asks again. Stated in its own header, because it is a poll. */
+    private static final Duration WATCH_INTERVAL = Duration.ofSeconds(1);
+
+    /** How often a wait wakes to notice the user interrupted it. */
+    private static final Duration CANCEL_POLL = Duration.ofMillis(200);
+
+    /**
+     * The refusals a repeating background read rides out rather than dying on. Both mean the connector
+     * was busy serving somebody else this second, which is the arrangement working: the interactive
+     * reads that took its turn are the ones a person is waiting on.
+     */
+    private static final Set<String> BUSY_CODES =
+            Set.of("connector.instances-busy", "connector.instance-limit-reached");
+
     private static final List<String> ONLINE_VERBS = List.of(
             "apply", "get", "ls", "start", "stop", "pause", "resume", "status", "metrics", "snapshot",
             "logs", "test", "test-result", "discover-schema", "schema", "register", "connectors", "token");
@@ -84,6 +101,13 @@ final class Repl {
 
     /** Reads the login password masked; a scripted fake is injected in tests, a JLine one bound in {@link #run}. */
     private Prompter prompter;
+
+    /**
+     * Whether this process's output goes to a terminal, which is what the in-place view needs and the
+     * only thing it refuses for. A seam rather than a direct call so both answers can be exercised: a
+     * test process has no terminal, so the refusal would be the only branch ever reached.
+     */
+    private BooleanSupplier terminal = () -> System.console() != null;
 
     /** The connection state, carried across read-loop iterations (offline until {@code connect}). */
     private final Session session = new Session();
@@ -133,6 +157,21 @@ final class Repl {
         this.controlPlane = controlPlane;
         this.prompter = prompter;
         this.env = env;
+    }
+
+    /** The live-view verb this line opens with, or null when it opens with something else. */
+    private static String liveVerbOf(String line) {
+        for (String verb : Cli.LIVE_VIEW_VERBS) {
+            if (line.equals(verb) || line.startsWith(verb + " ")) {
+                return verb;
+            }
+        }
+        return null;
+    }
+
+    /** Answers whether this process has a terminal; overridden so both branches can be exercised. */
+    void terminalCheck(BooleanSupplier check) {
+        this.terminal = check;
     }
 
     /** The current session workspace. */
@@ -267,6 +306,14 @@ final class Repl {
             lastExitCode = dataBrowser(call, trimmed.startsWith("show ") ? "show" : "find");
             return true;
         }
+        // A live view is matched on the whole line for the same reason the read shell is: its filter is
+        // written the way a read's is, and splitting it into words takes it apart.
+        String live = liveVerbOf(trimmed);
+        if (live != null) {
+            lastExitCode = dataBrowser(
+                    DataBrowserCall.parseLive(live, trimmed.substring(live.length())), live);
+            return true;
+        }
         return dispatchWords(tokenize(trimmed));
     }
 
@@ -312,6 +359,14 @@ final class Repl {
         // read as the one line they were typed as.
         if (words.get(0).equals(Cli.DATA_BROWSER_VERB)) {
             lastExitCode = dataBrowserVerb(words);
+            return true;
+        }
+        // A live view reached as a one-shot: the words arrive already split by the caller's own shell,
+        // so they are rejoined into the line they were typed as, exactly as the read shell does it.
+        if (Cli.LIVE_VIEW_VERBS.contains(words.get(0))) {
+            String verb = words.get(0);
+            lastExitCode = dataBrowser(
+                    DataBrowserCall.parseLive(verb, String.join(" ", words.subList(1, words.size()))), verb);
             return true;
         }
         if (session.isConnected() && ONLINE_VERBS.contains(words.get(0))) {
@@ -623,8 +678,94 @@ final class Repl {
             case DataBrowserCall.Collections listing -> browseCollections(listing);
             case DataBrowserCall.Stats stats -> browseStats(stats);
             case DataBrowserCall.Find find -> browseFind(find);
+            case DataBrowserCall.Live live -> watchLive(live);
             case DataBrowserCall.Malformed ignored -> Cli.EXIT_USAGE;    // handled above
         };
+    }
+
+    /**
+     * {@code watch <source>.<collection> [<filter>]} — one row, redrawn where it stands, until Ctrl-C.
+     *
+     * <p>It refuses outright when its output is not a terminal, rather than degrading. Redrawing in
+     * place is cursor movement, and cursor movement down a pipe is not a worse view — it is control
+     * bytes in the middle of what the reader piped it into. The refusal names both alternatives,
+     * because a reader who reached for this verb wants one of them: a stream that pipes, or a look that
+     * ends.
+     */
+    private int watchLive(DataBrowserCall.Live live) {
+        PrintWriter out = commandLine.getOut();
+        if (!terminal.getAsBoolean()) {
+            Diagnostics.printText(commandLine.getErr(), CliError.WATCH_NEEDS_A_TERMINAL, Map.of());
+            return Cli.EXIT_VERB_UNAVAILABLE;
+        }
+        String namespace = live.sourceId() + "." + live.collection();
+        WatchView view = new WatchView(namespace);
+        streamCancelled = false;
+        int drawn = 0;
+        while (!isStreamCancelled()) {
+            WatchPoll poll = pollOnce(live);
+            if (poll == null) {
+                return Cli.EXIT_VERB_UNAVAILABLE;   // a refusal that will not change; already reported
+            }
+            List<String> lines = view.onPoll(poll, Instant.now());
+            if (!lines.isEmpty()) {
+                out.print(WatchRenderer.redrawOver(drawn));
+                lines.forEach(out::println);
+                out.flush();
+                drawn = lines.size();
+            }
+            if (!sleepUnlessCancelled(WATCH_INTERVAL)) {
+                break;
+            }
+        }
+        return Cli.EXIT_OK;
+    }
+
+    /**
+     * One poll of the watched row: the first row a bounded read of one returns. Null when the read was
+     * refused in a way repeating cannot fix — that has already been rendered and the view stops.
+     *
+     * <p>A busy connector is not such a refusal. This is a background read that runs again in a second,
+     * and its turn was taken by an interactive one somebody is waiting on; skipping the frame costs
+     * nothing, while dying because a frame was missed costs the whole view.
+     */
+    private WatchPoll pollOnce(DataBrowserCall.Live live) {
+        DataBrowserOutcome.Find outcome = withFailover(() ->
+                controlPlane.find(session.landingNode(), session.credential(), live.sourceId(),
+                        live.collection(), live.filter(), null, 1),
+                o -> o instanceof DataBrowserOutcome.Find.Unreachable);
+        return switch (outcome) {
+            case DataBrowserOutcome.Find.Read read -> read.rows().isEmpty()
+                    ? new WatchPoll.NoRow()
+                    : new WatchPoll.Row(read.rows().get(0), read.approximateTotal());
+            case DataBrowserOutcome.Find.Rejected rejected -> {
+                if (BUSY_CODES.contains(rejected.code())) {
+                    yield new WatchPoll.Skipped("busy");
+                }
+                renderRejection(rejected.code(), rejected.message());
+                yield null;
+            }
+            case DataBrowserOutcome.Find.Unreachable ignored -> new WatchPoll.Skipped("unreachable");
+        };
+    }
+
+    /** Sleeps the poll interval in short steps; false the moment the user interrupts. */
+    private boolean sleepUnlessCancelled(Duration interval) {
+        long remaining = interval.toMillis();
+        try {
+            while (remaining > 0) {
+                if (isStreamCancelled()) {
+                    return false;
+                }
+                long step = Math.min(remaining, CANCEL_POLL.toMillis());
+                Thread.sleep(step);
+                remaining -= step;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return !isStreamCancelled();
     }
 
     /**
