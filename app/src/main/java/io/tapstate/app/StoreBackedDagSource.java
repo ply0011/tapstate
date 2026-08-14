@@ -370,26 +370,28 @@ final class StoreBackedDagSource implements DagSource {
         // tables into a single object - has to answer to each of their names. Keyed by the view's own
         // name instead, every lookup misses and the rows land under the source table: the right rows,
         // silently in the wrong collection, which no topology assertion can see.
-        TargetTable viewTable = viewTargetTable(target, targets);
         Map<String, TargetTable> bySourceTable = new LinkedHashMap<>();
         for (String sourceTable : servedTables) {
-            bySourceTable.put(sourceTable, viewTable);
+            bySourceTable.put(sourceTable,
+                    viewTargetTable(target, targets == null ? null : targets.get(sourceTable)));
         }
         return sinkWriterBinder.bind(
                 store.connector(), store.config(), WriteMode.UPSERT, DdlPolicy.FAIL, bySourceTable);
     }
 
     /**
-     * The target model a view materializes under: the resolved collection name, carrying the discovered
-     * fields when exactly one source table feeds it. Several tables reaching one view is an assembly, and
-     * its shape is not any single source table's - so the fields are left to the connector rather than
-     * guessed from whichever table happened to be first.
+     * The target model one stream materializes under: the view's resolved collection and indexes, carrying
+     * that stream's own fields. Answered per stream rather than once for the view, because the fields are
+     * where the key lives and the key is what an upsert converges on - and the streams reaching one view
+     * do not share one. A nest's assembled documents are keyed on the root's key, which is a different
+     * column list from any single source table's, so one descriptor shared across every stream can carry
+     * at most one of them right. Collapsing them instead costs the key entirely: the documents land in the
+     * right collection with nothing to match on, and every re-sent root accumulates beside the one it
+     * should have replaced. This is the shape the serve path already resolves per stream.
      */
     private static TargetTable viewTargetTable(
-            ViewTargetResolver.ViewTarget target, Map<String, TargetTable> targets) {
-        List<TargetField> fields = targets != null && targets.size() == 1
-                ? targets.values().iterator().next().fields()
-                : List.of();
+            ViewTargetResolver.ViewTarget target, TargetTable stream) {
+        List<TargetField> fields = stream == null ? List.of() : stream.fields();
         return new TargetTable(target.collection(), fields, target.indexes());
     }
 
