@@ -20,8 +20,8 @@ class ControlApiSchemaTest {
             "data-browser.collections", "data-browser.find", "data-browser.stats");
 
     @Test
-    void betaMcpSurfaceIsTheOnlinePipelineClosureAndTheReadFace() {
-        Set<String> actual = ControlOperations.registry().exposedOn(Frontend.MCP, Maturity.BETA).stream()
+    void mcpSurfaceIsTheOnlinePipelineClosureAndTheReadFace() {
+        Set<String> actual = ControlOperations.registry().exposedOn(Frontend.MCP).stream()
                 .map(Operation::id)
                 .collect(Collectors.toSet());
 
@@ -35,7 +35,7 @@ class ControlApiSchemaTest {
         assertThat(document.get("$defs")).isInstanceOf(Map.class);
         Map<?, ?> definitions = (Map<?, ?>) document.get("$defs");
 
-        for (Operation operation : ControlOperations.registry().exposedOn(Frontend.MCP, Maturity.BETA)) {
+        for (Operation operation : ControlOperations.registry().exposedOn(Frontend.MCP)) {
             assertThat(operation.description()).as(operation.id() + " description").isNotBlank();
             assertThat(operation.schema()).as(operation.id()).isNotNull();
             assertThat(operation.schema().params()).as(operation.id() + " params").startsWith("#/$defs/");

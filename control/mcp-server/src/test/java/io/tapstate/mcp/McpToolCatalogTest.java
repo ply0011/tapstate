@@ -6,7 +6,6 @@ import io.tapstate.control.client.HttpControlClient;
 import io.tapstate.control.core.ControlApiSchema;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.Frontend;
-import io.tapstate.control.core.Maturity;
 import io.tapstate.control.core.Operation;
 import org.junit.jupiter.api.Test;
 
@@ -95,7 +94,7 @@ class McpToolCatalogTest {
 
             for (SyncToolSpecification specification : specifications) {
                 Operation operation = ControlOperations.registry()
-                        .exposedOn(Frontend.MCP, Maturity.BETA).stream()
+                        .exposedOn(Frontend.MCP).stream()
                         .filter(candidate -> McpToolCatalog.toolName(candidate).equals(specification.tool().name()))
                         .findFirst()
                         .orElseThrow();
