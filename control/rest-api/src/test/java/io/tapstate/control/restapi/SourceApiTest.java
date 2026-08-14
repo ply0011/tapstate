@@ -382,7 +382,8 @@ class SourceApiTest {
         @Bean Clock clock() { return Clock.fixed(Instant.parse("2026-07-13T00:00:00Z"), ZoneOffset.UTC); }
         @Bean SourceService sourceService(InMemoryArtifactStore store) {
             TapstateCatalog catalog = TapstateCatalog.load();
-            return new SourceService(catalog, store, new SourceRepresentation(catalog));
+            return new SourceService(catalog, store, new SourceRepresentation(catalog),
+                    io.tapstate.control.core.DataBrowserFollows.NONE);
         }
         @Bean AuditedSourceService auditedSourceService(SourceService source, AuditStore audits, Clock clock) {
             return new AuditedSourceService(source, new AuditGate(audits, clock));

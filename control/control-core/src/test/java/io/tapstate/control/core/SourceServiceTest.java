@@ -29,7 +29,8 @@ class SourceServiceTest {
     private final TapstateCatalog catalog = TapstateCatalog.load();
     private final InMemoryArtifactStore store = new InMemoryArtifactStore();
     private final SourceService service =
-            new SourceService(catalog, store, new SourceRepresentation(catalog));
+            new SourceService(catalog, store, new SourceRepresentation(catalog),
+                    io.tapstate.control.core.DataBrowserFollows.NONE);
 
     @Test
     void createIsCreateOnlyAndReturnsTheCanonicalContentHash() {
@@ -179,7 +180,8 @@ class SourceServiceTest {
                     return catalog;
                 },
                 isolatedStore,
-                new SourceRepresentation(catalog));
+                new SourceRepresentation(catalog),
+                DataBrowserFollows.NONE);
 
         dynamicService.create(draft("orders", "snapshot", "before"));
 
@@ -384,5 +386,40 @@ class SourceServiceTest {
         public synchronized List<Resource> list() {
             return new ArrayList<>(artifacts.values());
         }
+    }
+
+    @Test
+    void deletingASourceStopsTheFollowsRunningAgainstIt() {
+        // The two refusals that guard a delete read the artifact graph, and a watcher is not in it --
+        // so for a source that exists only to be read, both pass and the stream survives the artifact.
+        List<String> stopped = new ArrayList<>();
+        SourceService following = new SourceService(
+                catalog, store, new SourceRepresentation(catalog), stopped::add);
+        store.save(source("orders", "before"));
+
+        following.delete("orders", hash(store.get("orders").orElseThrow()));
+
+        assertThat(stopped)
+                .as("the artifact is gone, and a stream still delivering rows from it is showing the "
+                        + "user data from a source they have been told no longer exists")
+                .containsExactly("orders");
+    }
+
+    @Test
+    void aRefusedDeleteLeavesItsFollowsAlone() {
+        List<String> stopped = new ArrayList<>();
+        SourceService following = new SourceService(
+                catalog, store, new SourceRepresentation(catalog), stopped::add);
+        store.save(source("orders", "before"));
+        store.save(pipeline("alpha", "orders"));
+
+        assertThatThrownBy(() -> following.delete(
+                "orders", hash(store.get("orders").orElseThrow())))
+                .isInstanceOf(TapstateException.class);
+
+        assertThat(stopped)
+                .as("a delete that did not happen must not take a live stream with it; the refusals "
+                        + "are what decide, so the stop belongs after them")
+                .isEmpty();
     }
 }

@@ -32,6 +32,8 @@ import io.tapstate.control.core.PipelineLogQueryService;
 import io.tapstate.control.core.PipelineObservationQueryService;
 import io.tapstate.control.core.SchemaDiscoveryService;
 import io.tapstate.control.core.SchemaQueryService;
+import io.tapstate.control.core.DataBrowserFollows;
+import org.springframework.beans.factory.ObjectProvider;
 import io.tapstate.control.core.SourceRepresentation;
 import io.tapstate.control.core.SourceService;
 import io.tapstate.control.core.TokenSecrets;
@@ -430,8 +432,13 @@ class ControlPlaneConfiguration {
     @Bean
     SourceService sourceService(
             ConnectorCatalogView connectorCatalogView, ArtifactStore artifactStore,
-            SourceRepresentation representation) {
-        return new SourceService(connectorCatalogView::merged, artifactStore, representation);
+            SourceRepresentation representation, ObjectProvider<DataBrowserFollows> follows) {
+        // Resolved through a provider rather than injected directly: the streaming face is
+        // servlet-only, and a control plane assembled without one still deletes sources -- it
+        // simply has no follows to stop. Asked for at call time so it cannot depend on which
+        // configuration Spring happens to process first.
+        return new SourceService(connectorCatalogView::merged, artifactStore, representation,
+                follows.getIfAvailable(() -> DataBrowserFollows.NONE));
     }
 
     @Bean

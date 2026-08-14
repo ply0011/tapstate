@@ -610,7 +610,8 @@ class PipelineApiTest {
         @Bean
         SourceService sourceService(ArtifactStore store) {
             TapstateCatalog catalog = TapstateCatalog.load();
-            return new SourceService(catalog, store, new SourceRepresentation(catalog));
+            return new SourceService(catalog, store, new SourceRepresentation(catalog),
+                    io.tapstate.control.core.DataBrowserFollows.NONE);
         }
 
         @Bean

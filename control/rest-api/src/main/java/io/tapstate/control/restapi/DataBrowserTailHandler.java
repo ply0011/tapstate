@@ -6,6 +6,7 @@ import io.tapstate.core.common.JsonWriter;
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.control.core.DataBrowserChangeEvent;
 import io.tapstate.control.core.DataBrowserFollow;
+import io.tapstate.control.core.DataBrowserFollows;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -41,7 +42,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * would stop the capture feeding it. Buffered, a reader that cannot keep up is disconnected instead,
  * and only its own follow is affected.
  */
-final class DataBrowserTailHandler extends TextWebSocketHandler {
+final class DataBrowserTailHandler extends TextWebSocketHandler implements DataBrowserFollows {
 
     /** How much unsent text one slow reader may accumulate before its own stream is cut. */
     private static final int SEND_BUFFER_BYTES = 512 * 1024;
@@ -57,6 +58,14 @@ final class DataBrowserTailHandler extends TextWebSocketHandler {
     /** The live follow per open session, so the close callback releases exactly that session's. */
     private final Map<String, DataBrowserFollow> follows = new ConcurrentHashMap<>();
 
+    /**
+     * Which source each open session is following, so a deleted source can be found among them. Kept
+     * beside the follows rather than derived from the path on demand: by the time a delete asks, the
+     * question is which sessions to stop, and walking every open session's URI to answer it would be
+     * the same map built worse.
+     */
+    private final Map<String, String> sources = new ConcurrentHashMap<>();
+
     DataBrowserTailHandler(DataBrowserService browser) {
         this.browser = Objects.requireNonNull(browser, "browser");
     }
@@ -67,12 +76,15 @@ final class DataBrowserTailHandler extends TextWebSocketHandler {
                 session, SEND_TIME_LIMIT_MILLIS, SEND_BUFFER_BYTES);
         String path = session.getUri().getPath();
         try {
+            String source = segmentBefore(path, "data-browser", 1);
             DataBrowserFollow follow = browser.tail(
-                    segmentBefore(path, "data-browser", 1),
+                    source,
                     segmentBefore(path, "data-browser", 2),
                     filterOf(session),
                     change -> send(buffered, frame(change)));
             follows.put(session.getId(), follow);
+            sources.put(session.getId(), source);
+            sessions.put(session.getId(), session);
         } catch (TapstateException refused) {
             // A refusal here can never be served: the source or the collection does not exist, or the
             // host is holding every connector instance it will hold. Reconnecting would be refused
@@ -83,9 +95,50 @@ final class DataBrowserTailHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        sources.remove(session.getId());
+        sessions.remove(session.getId());
         DataBrowserFollow follow = follows.remove(session.getId());
         if (follow != null) {
             follow.close();
+        }
+    }
+
+    /**
+     * Stops every follow of a source that has just been deleted, and closes the sessions watching it.
+     *
+     * <p>Stopping the stream alone would leave the reader on a connection that has simply gone quiet,
+     * which is indistinguishable from a collection nothing is happening to. The close is what tells
+     * them, so both happen here.
+     */
+    @Override
+    public void closeFollowsOf(String sourceId) {
+        sources.entrySet().stream()
+                .filter(watching -> watching.getValue().equals(sourceId))
+                .map(Map.Entry::getKey)
+                .toList()
+                .forEach(session -> {
+                    sources.remove(session);
+                    DataBrowserFollow follow = follows.remove(session);
+                    if (follow != null) {
+                        follow.close();
+                    }
+                    WebSocketSession open = open(session);
+                    if (open != null) {
+                        closeQuietly(open);
+                    }
+                });
+    }
+
+    /** The open session behind an id, or null once it has gone. */
+    private WebSocketSession open(String sessionId) {
+        return sessions.get(sessionId);
+    }
+
+    private static void closeQuietly(WebSocketSession session) {
+        try {
+            session.close(new CloseStatus(POLICY_VIOLATION, "data-browser.source-deleted"));
+        } catch (IOException alreadyGone) {
+            // The peer is already away; there is nothing left to tell.
         }
     }
 
@@ -93,7 +146,12 @@ final class DataBrowserTailHandler extends TextWebSocketHandler {
     void closeAll() {
         follows.values().forEach(DataBrowserFollow::close);
         follows.clear();
+        sources.clear();
+        sessions.clear();
     }
+
+    /** The open sessions, so a deleted source's watchers can be told rather than left in silence. */
+    private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
 
     /**
      * One change, as the same compact JSON the read faces answer with, so a client decodes a streamed
