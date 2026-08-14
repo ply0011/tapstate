@@ -130,6 +130,28 @@ public sealed interface DataBrowserCriteria {
         }
     }
 
+    /**
+     * Whether {@code row} satisfies these criteria, evaluated here rather than by the store.
+     *
+     * <p>A followed stream needs this and a bounded read does not: a change capture is asked for a
+     * table, not for a query, so a follower's filter cannot travel with it. What it narrows is what
+     * the reader is shown; everything the table changes is still captured, and still costs what it
+     * costs.
+     *
+     * <p>This is therefore the vocabulary's second implementation, beside the one that translates it
+     * into a store's own dialect, and the two agreeing is what makes one filter mean one thing. Two
+     * rules are the ones that could most easily part: a term against a list holds when any entry
+     * satisfies it (which is the store's own rule, not a convenience), and the one operator taking
+     * free text takes it literally, because the translation escapes that text whole.
+     */
+    default boolean matches(Map<String, Object> row) {
+        return switch (this) {
+            case Match match -> CriteriaMatcher.matches(match, row);
+            case Any any -> any.terms().stream().anyMatch(term -> term.matches(row));
+            case All all -> all.terms().stream().allMatch(term -> term.matches(row));
+        };
+    }
+
     /** The storage-port filter for these criteria. */
     default DataBrowserFilter toPortRequest() {
         return switch (this) {
