@@ -5,11 +5,22 @@
 # MongoDB), so they need a Docker daemon for the databases and the connectors' runtime jars. The default
 # CI build skips them (no jars); this lane is where they are meant to run.
 #
-# The selector is a pattern rather than a list of names. It used to name two witnesses, which is how five
-# nest witnesses came to be written, committed, documented with their own run instructions - and never run
-# by anything. A list has to be edited by whoever adds a witness, and nothing fails when they do not: the
-# new witness simply never runs, and its absence looks exactly like a lane that had nothing to do. Three
-# product faults sat behind those five, each one enough on its own to stop a nest reaching a real sink.
+# The witnesses come in two shapes and this lane runs both, because neither shape can stand in for the
+# other. Most are declarative examples, swept by PublishedExamplesIT; the rest are bespoke classes, for
+# the claims the specification vocabulary cannot yet spell. A lane that ran only one shape would report
+# green over the other having never run.
+#
+# Each shape gets the gate that fits it, and the two catch different absences:
+#   - the manifest gate reads the swept examples name by name, so a skipped or never-discovered example
+#     fails rather than being summed away;
+#   - the count check covers the bespoke classes, which no manifest lists.
+#
+# The bespoke selector is a pattern rather than a list of names. It used to name two witnesses, which is
+# how five nest witnesses came to be written, committed, documented with their own run instructions - and
+# never run by anything. A list has to be edited by whoever adds a witness, and nothing fails when they do
+# not: the new witness simply never runs, and its absence looks exactly like a lane that had nothing to
+# do. Three product faults sat behind those five, each one enough on its own to stop a nest reaching a
+# real sink.
 #
 # The jars are built here from the connectors' own source. They used to be named as a directory somebody
 # had staged on the runner by hand, which is what kept this lane unscheduled: a nightly cannot depend on
@@ -51,23 +62,35 @@ jobs:
         run: e2e/build-real-connectors.sh "${{ runner.temp }}/connectors"
       - name: Real-connector witnesses on both tiers
         # Docker 29 rejects the API version testcontainers negotiates by default, so pin it. The surefire
-        # selector matches nothing, so only the failsafe witnesses run.
+        # selector matches nothing, so only the failsafe witnesses run: the example sweep, and the bespoke
+        # classes the pattern names. With the connectors directory named, the sweep's gate turns the
+        # real-connector examples from skipped to mandatory.
         run: >
           mvn -B -pl e2e -am verify
           -Dapi.version=1.44
           -Dtapstate.e2e.connectors-dir="${{ runner.temp }}/connectors"
           -Dtest=ZzzNoSuchSurefireSelector -Dsurefire.failIfNoSpecifiedTests=false
-          -Dit.test=RealMysqlToMongo*IT,Nest*IT
+          -Dit.test=PublishedExamplesIT,RealMysqlToMongo*IT,Nest*IT
           -Dfailsafe.failIfNoSpecifiedTests=false
+      - name: Witness gate
+        # Aggregate counts cannot see a witness that never ran; this reads the manifest name by name
+        # against the ledger the sweep wrote, and fails on absence. It covers the swept examples only -
+        # the bespoke classes are in no manifest, which is what the next step is for.
+        run: .github/scripts/witness-gate.sh
       - name: Every witness the pattern names actually ran
         # The run above tolerates a selector matching nothing, because the reactor builds modules holding
         # no integration tests at all. That tolerance is also the one way this lane can report green having
         # run nothing, which is the outcome it exists to prevent - so the count is checked rather than
         # trusted. The expectation is derived from the same pattern the selector uses, so adding a witness
         # needs no edit here, while narrowing the selector past a witness that still exists fails.
+        #
+        # The sweep's own class is counted on both sides rather than left out: it writes a report like any
+        # other, so excluding it from the expectation would hand the count a spare report to cover a
+        # bespoke witness that did not run.
         if: always()
         run: |
-          expected=$(ls e2e/src/test/java/io/tapstate/e2e/RealMysqlToMongo*IT.java \
+          expected=$(ls e2e/src/test/java/io/tapstate/e2e/PublishedExamplesIT.java \
+                        e2e/src/test/java/io/tapstate/e2e/RealMysqlToMongo*IT.java \
                         e2e/src/test/java/io/tapstate/e2e/Nest*IT.java 2>/dev/null | wc -l | tr -d ' ')
           ran=$(ls e2e/target/failsafe-reports/*.txt 2>/dev/null | wc -l | tr -d ' ')
           echo "witness classes present: $expected, ran: $ran"

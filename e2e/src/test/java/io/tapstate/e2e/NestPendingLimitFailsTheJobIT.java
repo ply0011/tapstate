@@ -121,7 +121,7 @@ class NestPendingLimitFailsTheJobIT {
                 assertThat(control.state(pipelineId))
                         .as("%d changes held for root %d, which is not in the table, against a limit of "
                                 + "%d.%n  documents: %s%n  metrics: %s", ORPHANS, ABSENT_ROOT, PENDING_LIMIT,
-                                mongo.documents(targetUri, PARENT_TABLE).size(), control.metrics(pipelineId))
+                                mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE).size(), control.metrics(pipelineId))
                         .contains(PipelineState.FAILED);
                 assertThat(control.errorCount(pipelineId))
                         .as("the failure is counted, not only entered")

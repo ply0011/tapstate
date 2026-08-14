@@ -166,7 +166,7 @@ class NestThrottleCoalescesHotRootIT {
 
                 // Folding sends is only allowed to cost sends. The document has to be what it would have
                 // been had every change been sent on its own.
-                List<Document> hotDocuments = mongo.documents(targetUri, PARENT_TABLE);
+                List<Document> hotDocuments = mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE);
                 assertThat(elementIds(hotDocuments, HOT_ROOT))
                         .as("the hot document after coalescing has to hold every change that was made to "
                                 + "it - what is folded is the sending, never the content")
@@ -238,11 +238,11 @@ class NestThrottleCoalescesHotRootIT {
     }
 
     private void awaitDocuments(MongoEndpoints mongo, String targetUri, int count) {
-        await(() -> mongo.documents(targetUri, PARENT_TABLE).size() >= count);
+        await(() -> mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE).size() >= count);
     }
 
     private void awaitElements(MongoEndpoints mongo, String targetUri, long rootId, int count) {
-        await(() -> elementIds(mongo.documents(targetUri, PARENT_TABLE), rootId).size() >= count);
+        await(() -> elementIds(mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE), rootId).size() >= count);
     }
 
     private static void await(BooleanSupplier reached) {

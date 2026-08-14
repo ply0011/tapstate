@@ -109,7 +109,7 @@ class NestSaysWhenItIsServedFromTheColdLayerIT {
 
                 control.lifecycle(pipelineId, LifecycleVerb.START);
 
-                await(() -> mongo.documents(targetUri, PARENT_TABLE).size() == ROOTS);
+                await(() -> mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE).size() == ROOTS);
                 await(() -> control.logs(pipelineId).contains(EXPECTED_CODE));
 
                 assertThat(control.logs(pipelineId))

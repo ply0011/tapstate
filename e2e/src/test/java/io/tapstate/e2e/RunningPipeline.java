@@ -67,12 +67,12 @@ final class RunningPipeline {
 
     /** Lays down further changes at the source, for a case that needs to see the run still moving. */
     void insertAtSource(long rows) {
-        new FileEndpoints().cdc(sourceDirectory.toString(), TABLE, CdcOp.INSERT, rows);
+        new FileEndpoints().cdc(EndpointAddress.uri(sourceDirectory.toString()), TABLE, CdcOp.INSERT, rows);
     }
 
     /** The rows that have arrived at the target so far. */
     long rowsAtTarget() {
-        return new FileEndpoints().count(targetDirectory.toString(), TABLE);
+        return new FileEndpoints().count(EndpointAddress.uri(targetDirectory.toString()), TABLE);
     }
 
     /** Drives a stop and waits for the runtime to report it has reached rest. */
@@ -99,7 +99,7 @@ final class RunningPipeline {
         // Seeded before the discovery: a model is read out of what the source holds, and this is what puts
         // the table there. Discovering an absent table answers an empty model, which leaves the sink with
         // no key to upsert on and does so quietly.
-        new FileEndpoints().seed(sourceDirectory.toString(), TABLE, SEEDED_ROWS);
+        new FileEndpoints().seed(EndpointAddress.uri(sourceDirectory.toString()), TABLE, SeedRows.generated(SEEDED_ROWS));
 
         Map<String, String> resources = new LinkedHashMap<>();
         resources.put(sourceId + ".tap.yml", Workspaces.cdcSourceYaml(sourceId, sourceDirectory));

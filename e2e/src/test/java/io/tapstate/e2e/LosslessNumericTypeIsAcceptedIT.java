@@ -121,7 +121,7 @@ class LosslessNumericTypeIsAcceptedIT {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         List<Document> last = List.of();
         while (System.nanoTime() - deadline < 0) {
-            last = mongo.documents(targetUri, NumericSource.TABLE);
+            last = mongo.documents(EndpointAddress.uri(targetUri), NumericSource.TABLE);
             if (last.size() == NumericSource.ROWS) {
                 return last;
             }

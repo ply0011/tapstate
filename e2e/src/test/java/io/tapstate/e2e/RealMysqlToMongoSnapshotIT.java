@@ -40,7 +40,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Snapshot only on purpose: this is the smallest real crossing, batch-read to sink with no change
  * stream, so it needs no binlog and no replication grant and rests on nothing but the connector reading
- * a table and the sink writing one. The change-stream half is {@link RealMysqlToMongoCdcIT}.
+ * a table and the sink writing one. The change-stream half is the declarative example
+ * a-real-change-stream-carries-rows-written-after-start.
+ *
+ * <p>The crossing itself is also witnessed declaratively, by the example
+ * real-mysql-rows-cross-to-a-real-mongo-target. What keeps this class is the timestamp claim below: a
+ * seed spells its rows as strings and integers only, so a TIMESTAMP(3) column, the session time zone it
+ * is read in, and an instant compared as an instant are all unsayable there. When the specification
+ * grows those words this class has nothing left the example cannot say, and goes.
  *
  * <p>Run on both fidelity tiers. Embedded in this JVM, and - the one that matters here - against the
  * shipped boot jar in its own process: that is the connector loaded by the fat-jar the product actually
@@ -109,8 +116,11 @@ class RealMysqlToMongoSnapshotIT {
 
                 control.lifecycle(PIPELINE_ID, LifecycleVerb.START);
 
-                awaitCount(mongo, targetUri, TARGET_COLLECTION, SEEDED_ROWS);
-                assertThat(mongo.documents(targetUri, TARGET_COLLECTION))
+                // Dialled as the uri this test already holds: the target is a store it created itself,
+                // not a resource it applied and can be handed the settings of.
+                EndpointAddress target = EndpointAddress.uri(targetUri);
+                awaitCount(mongo, target, TARGET_COLLECTION, SEEDED_ROWS);
+                assertThat(mongo.documents(target, TARGET_COLLECTION))
                         .as("the MySQL TIMESTAMP values read back from Mongo")
                         .allSatisfy(document -> assertThat(document.get(TIMESTAMP_COLUMN))
                                 .isInstanceOf(Date.class)
@@ -120,11 +130,12 @@ class RealMysqlToMongoSnapshotIT {
     }
 
     /** Reads the target the way a user would, from outside the product, until the rows are all there. */
-    private static void awaitCount(MongoEndpoints mongo, String targetUri, String collection, long expected) {
+    private static void awaitCount(
+            MongoEndpoints mongo, EndpointAddress target, String collection, long expected) {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         long last = -1;
         while (System.nanoTime() - deadline < 0) {
-            last = mongo.count(targetUri, collection);
+            last = mongo.count(target, collection);
             if (last == expected) {
                 return;
             }

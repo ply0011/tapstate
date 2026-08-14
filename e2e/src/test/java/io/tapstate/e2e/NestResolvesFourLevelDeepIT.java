@@ -169,7 +169,7 @@ class NestResolvesFourLevelDeepIT {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         List<Document> last = List.of();
         while (System.nanoTime() - deadline < 0) {
-            last = mongo.documents(targetUri, ROOT_TABLE);
+            last = mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE);
             if (settled(last)) {
                 return last;
             }

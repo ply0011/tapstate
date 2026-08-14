@@ -155,7 +155,7 @@ class NestFrontierDoesNotOutrunDeferredEventsIT {
                     // documents yet would leave "held for a missing parent" indistinguishable from "not
                     // assembled yet".
                     awaitDocuments(mongo, targetUri, SETTLED_PARENTS.size());
-                    assertThat(rootIds(mongo.documents(targetUri, PARENT_TABLE)))
+                    assertThat(rootIds(mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE)))
                             .as("the documents that exist before anything is deferred.%n  metrics: %s",
                                     control.metrics(pipelineId))
                             .containsExactlyInAnyOrderElementsOf(SETTLED_PARENTS);
@@ -173,7 +173,7 @@ class NestFrontierDoesNotOutrunDeferredEventsIT {
                     // three minutes of waiting for a reading that was never going to appear.
                     List<Long> firstRound = insertTraffic(mysql, FIRST_ROUND_FIRST_ID, TRAFFIC_ROWS);
                     awaitTraffic(mongo, targetUri, firstRound);
-                    assertThat(placedTraffic(mongo.documents(targetUri, PARENT_TABLE), firstRound))
+                    assertThat(placedTraffic(mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE), firstRound))
                             .as("the first round of ordinary traffic has to be through before a frontier "
                                     + "reading means anything.%n  metrics: %s", control.metrics(pipelineId))
                             .containsExactlyInAnyOrderElementsOf(firstRound);
@@ -193,7 +193,7 @@ class NestFrontierDoesNotOutrunDeferredEventsIT {
                                     + "offset on a row that may never come.%n  metrics: %s",
                                     CHILD_TABLE, control.metrics(pipelineId))
                             .isNotEqualTo(heldAt);
-                    assertThat(elementIds(mongo.documents(targetUri, PARENT_TABLE), LATE_PARENT))
+                    assertThat(elementIds(mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE), LATE_PARENT))
                             .as("the deferred child must not be in any document yet - its parent row does "
                                     + "not exist, so there is nothing for it to hang from")
                             .isEmpty();
@@ -222,7 +222,7 @@ class NestFrontierDoesNotOutrunDeferredEventsIT {
                     // document, and the failure message would have to guess which.
                     insertChild(mysql, LIVENESS_CHILD, SETTLED_PARENTS.get(0), LIVENESS_SKU);
                     awaitTraffic(mongo, targetUri, List.of(LIVENESS_CHILD));
-                    assertThat(placedTraffic(mongo.documents(targetUri, PARENT_TABLE), List.of(LIVENESS_CHILD)))
+                    assertThat(placedTraffic(mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE), List.of(LIVENESS_CHILD)))
                             .as("a row sent after the restart has to arrive, or the restarted run is not "
                                     + "reading its source at all and nothing after this means anything.%n"
                                     + "  state: %s%n  metrics: %s%n  logs: %s",
@@ -235,7 +235,7 @@ class NestFrontierDoesNotOutrunDeferredEventsIT {
                     insertParent(mysql, LATE_PARENT);
 
                     awaitElement(mongo, targetUri, LATE_PARENT, DEFERRED_CHILD);
-                    List<Document> documents = mongo.documents(targetUri, PARENT_TABLE);
+                    List<Document> documents = mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE);
                     assertThat(elementIds(documents, LATE_PARENT))
                             .as("the document for the late parent, built after a restart. Its child was held "
                                     + "before the restart and the frontier moved past it (%s -> %s), so the "
@@ -261,11 +261,11 @@ class NestFrontierDoesNotOutrunDeferredEventsIT {
     }
 
     private void awaitDocuments(MongoEndpoints mongo, String targetUri, int count) {
-        await(() -> mongo.documents(targetUri, PARENT_TABLE).size() >= count);
+        await(() -> mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE).size() >= count);
     }
 
     private void awaitElement(MongoEndpoints mongo, String targetUri, long rootId, long elementId) {
-        await(() -> elementIds(mongo.documents(targetUri, PARENT_TABLE), rootId).contains(elementId));
+        await(() -> elementIds(mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE), rootId).contains(elementId));
     }
 
     /** Sends one round of ordinary traffic, spread over the parents that exist, and answers what it sent. */
@@ -281,7 +281,7 @@ class NestFrontierDoesNotOutrunDeferredEventsIT {
 
     /** Waits until every one of these element ids is somewhere among the documents. */
     private void awaitTraffic(MongoEndpoints mongo, String targetUri, List<Long> ids) {
-        await(() -> placedTraffic(mongo.documents(targetUri, PARENT_TABLE), ids).size() == ids.size());
+        await(() -> placedTraffic(mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE), ids).size() == ids.size());
     }
 
     /** Which of these element ids are present anywhere, whichever document they landed under. */

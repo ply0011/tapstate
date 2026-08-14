@@ -118,7 +118,7 @@ class NestRootFanoutLimitFailsTheJobIT {
                 assertThat(control.state(pipelineId))
                         .as("a document of %d elements under a limit of %d has to stop the run.%n"
                                 + "  documents: %s%n  metrics: %s", CHILDREN, ELEMENT_LIMIT,
-                                mongo.documents(targetUri, PARENT_TABLE), control.metrics(pipelineId))
+                                mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE), control.metrics(pipelineId))
                         .contains(PipelineState.FAILED);
                 assertThat(control.errorCount(pipelineId))
                         .as("the failure is counted, not only entered")

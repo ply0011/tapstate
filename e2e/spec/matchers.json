@@ -11,6 +11,10 @@
       "description": "How many changes the pipeline's nests could never place in a document, added up over its namespaces and read from the metrics face. Nothing else says it: these rows were never going to appear in any document, so a pipeline discarding all of them and one discarding none have the same counts, state and code."
     },
     {
+      "word": "doc",
+      "description": "One document at an endpoint, located by equality settings and held to scalar values by path and list lengths by path - what makes 'the right rows crossed' assertable rather than only 'rows crossed'."
+    },
+    {
       "word": "error_count",
       "description": "The pipeline's published error count, read from the metrics face: one while it is FAILED, zero otherwise."
     },
@@ -83,8 +87,19 @@
     "steps"
   ],
   "setupKeys": [
+    "databases",
     "connectors",
     "apply",
     "discover"
+  ],
+  "databaseKinds": [
+    {
+      "word": "mongo",
+      "description": "Provides a mongo store."
+    },
+    {
+      "word": "mysql",
+      "description": "Provides a mysql store."
+    }
   ]
 }

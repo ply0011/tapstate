@@ -216,7 +216,7 @@ class NestChildCdcMutatesTheArrayIT {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         Document last = null;
         while (System.nanoTime() - deadline < 0) {
-            List<Document> documents = mongo.documents(targetUri, PARENT_TABLE);
+            List<Document> documents = mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE);
             for (Document document : documents) {
                 if (numberOf(identityOf(document)) == ROOT_ID) {
                     last = document;
