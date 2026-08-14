@@ -174,7 +174,7 @@ class NestHoldsMoreThanItsMemoryBudgetIT {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         List<Document> last = List.of();
         while (System.nanoTime() - deadline < 0) {
-            last = mongo.documents(targetUri, PARENT_TABLE);
+            last = mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE);
             if (settled.test(last)) {
                 return last;
             }

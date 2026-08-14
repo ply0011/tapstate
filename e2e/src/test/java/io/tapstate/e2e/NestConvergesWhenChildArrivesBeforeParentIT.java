@@ -164,7 +164,7 @@ class NestConvergesWhenChildArrivesBeforeParentIT {
             ControlPlane control, MongoEndpoints mongo, String targetUri) {
         long deadline = System.nanoTime() + NOTHING_YET.toNanos();
         while (System.nanoTime() - deadline < 0) {
-            List<Document> documents = mongo.documents(targetUri, PARENT_TABLE);
+            List<Document> documents = mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE);
             assertThat(documents)
                     .as("a document was published for a parent that has not been read yet - "
                             + "children alone are not a root")
@@ -184,7 +184,7 @@ class NestConvergesWhenChildArrivesBeforeParentIT {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         List<Document> last = List.of();
         while (System.nanoTime() - deadline < 0) {
-            last = mongo.documents(targetUri, PARENT_TABLE);
+            last = mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE);
             if (last.size() == 1 && elementsOf(last.get(0)).size() == ORPHANS.size()) {
                 return last.get(0);
             }

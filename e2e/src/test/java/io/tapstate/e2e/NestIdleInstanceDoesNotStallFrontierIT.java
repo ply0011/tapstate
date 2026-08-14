@@ -127,7 +127,7 @@ class NestIdleInstanceDoesNotStallFrontierIT {
 
                 control.lifecycle(pipelineId, LifecycleVerb.START);
 
-                await(() -> mongo.documents(targetUri, PARENT_TABLE).size() == ROOTS);
+                await(() -> mongo.documents(EndpointAddress.uri(targetUri), PARENT_TABLE).size() == ROOTS);
 
                 // Ordinary traffic across many roots, so a consumer exists and has acked - without which
                 // there is nothing to clamp a durable offset to and none is written at all.
@@ -136,7 +136,7 @@ class NestIdleInstanceDoesNotStallFrontierIT {
                 List<String> before = offsets(mongo, storeUri);
                 if (before.isEmpty()) {
                     throw new AssertionError("no chain record carried an offset after " + WARMUP_CHANGES
-                            + " changes across the roots: " + mongo.documents(storeUri, CHAIN_RECORDS)
+                            + " changes across the roots: " + mongo.documents(EndpointAddress.uri(storeUri), CHAIN_RECORDS)
                             + System.lineSeparator() + "  pipeline state: " + control.state(pipelineId)
                             + System.lineSeparator() + "  metrics: " + control.metrics(pipelineId));
                 }
@@ -181,7 +181,7 @@ class NestIdleInstanceDoesNotStallFrontierIT {
     /** Every chain record's offset, in a stable order, read out of the store the product writes. */
     private static List<String> offsets(MongoEndpoints mongo, String storeUri) {
         List<String> offsets = new ArrayList<>();
-        for (Document record : mongo.documents(storeUri, CHAIN_RECORDS)) {
+        for (Document record : mongo.documents(EndpointAddress.uri(storeUri), CHAIN_RECORDS)) {
             Object offset = record.get(OFFSET_FIELD);
             if (offset != null) {
                 offsets.add(record.get("_id") + "=" + offset);

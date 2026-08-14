@@ -92,7 +92,7 @@ class ArtifactDeleteLeavesNestStateStandingIT {
             ControlPlane control = connected(server, directory);
             Path sourceDirectory = Files.createDirectories(directory.resolve(SOURCE_ID));
             FileEndpoints files = new FileEndpoints();
-            files.seed(sourceDirectory.toString(), TABLE, SEEDED_ROWS);
+            files.seed(EndpointAddress.uri(sourceDirectory.toString()), TABLE, SeedRows.generated(SEEDED_ROWS));
 
             control.discoverSchema(
                     SOURCE_ID, E2eConnectorJar.CONNECTOR_ID, Map.of("uri", sourceDirectory.toString()));
@@ -151,13 +151,13 @@ class ArtifactDeleteLeavesNestStateStandingIT {
 
             // Everything above is still satisfied by a removal that emptied the state layer and left these
             // rows readable. What separates that from a working arrangement is the survivor still moving.
-            long rowsBefore = files.count(directory.resolve(SURVIVING_TARGET).toString(), TABLE);
-            files.cdc(sourceDirectory.toString(), TABLE, CdcOp.INSERT, 3);
+            long rowsBefore = files.count(EndpointAddress.uri(directory.resolve(SURVIVING_TARGET).toString()), TABLE);
+            files.cdc(EndpointAddress.uri(sourceDirectory.toString()), TABLE, CdcOp.INSERT, 3);
             Await.until(
                     "the surviving pipeline to carry further changes after its neighbour was removed",
-                    () -> files.count(directory.resolve(SURVIVING_TARGET).toString(), TABLE) > rowsBefore,
+                    () -> files.count(EndpointAddress.uri(directory.resolve(SURVIVING_TARGET).toString()), TABLE) > rowsBefore,
                     () -> "rows at target = "
-                            + files.count(directory.resolve(SURVIVING_TARGET).toString(), TABLE)
+                            + files.count(EndpointAddress.uri(directory.resolve(SURVIVING_TARGET).toString()), TABLE)
                             + ", was " + rowsBefore);
         }
     }

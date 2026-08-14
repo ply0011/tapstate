@@ -99,9 +99,10 @@ class RealMysqlToMongoViewIndexIT {
                 control.discoverSchema("src_mysql", "mysql", mysqlConfig);
                 control.lifecycle(PIPELINE_ID, LifecycleVerb.START);
 
-                awaitCount(mongo, targetUri, VIEW_ID, SEEDED_ROWS);
+                EndpointAddress target = EndpointAddress.uri(targetUri);
+                awaitCount(mongo, target, VIEW_ID, SEEDED_ROWS);
 
-                List<Document> indexes = mongo.indexes(targetUri, VIEW_ID);
+                List<Document> indexes = mongo.indexes(target, VIEW_ID);
                 assertThat(indexes)
                         .as("indexes Mongo itself reports on the materialized view %s", VIEW_ID)
                         .anySatisfy(index -> {
@@ -115,11 +116,11 @@ class RealMysqlToMongoViewIndexIT {
     }
 
     /** Reads the target the way a user would, from outside the product, until the rows are all there. */
-    private static void awaitCount(MongoEndpoints mongo, String targetUri, String collection, long expected) {
+    private static void awaitCount(MongoEndpoints mongo, EndpointAddress target, String collection, long expected) {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         long last = -1;
         while (System.nanoTime() - deadline < 0) {
-            last = mongo.count(targetUri, collection);
+            last = mongo.count(target, collection);
             if (last == expected) {
                 return;
             }

@@ -122,16 +122,16 @@ class NestMiddleRowDeleteDoesNotDropWaitingIT {
 
                 // Both middle rows have to be in the document before one of them is deleted, or the
                 // deletion would be witnessing a row that had never arrived.
-                await(() -> middleIds(mongo.documents(targetUri, ROOT_TABLE))
+                await(() -> middleIds(mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE))
                         .equals(List.of(DELETED_MIDDLE, SURVIVING_MIDDLE)));
-                if (!middleIds(mongo.documents(targetUri, ROOT_TABLE))
+                if (!middleIds(mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE))
                         .equals(List.of(DELETED_MIDDLE, SURVIVING_MIDDLE))) {
                     throw new AssertionError(diagnose(control, mongo, targetUri,
                             "the middle rows never assembled under their root"));
                 }
 
                 deleteMiddleRow(mysql);
-                await(() -> middleIds(mongo.documents(targetUri, ROOT_TABLE))
+                await(() -> middleIds(mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE))
                         .equals(List.of(SURVIVING_MIDDLE)));
 
                 // The row that can never be placed, arriving after its parent is gone.
@@ -143,7 +143,7 @@ class NestMiddleRowDeleteDoesNotDropWaitingIT {
                                 + "is gone. A level that removed the mapping instead of recording the "
                                 + "deletion holds this row forever and reports zero.%n  documents: %s%n"
                                 + "  metrics: %s", DELETED_MIDDLE,
-                                mongo.documents(targetUri, ROOT_TABLE), control.metrics(pipelineId))
+                                mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE), control.metrics(pipelineId))
                         .isGreaterThanOrEqualTo(1L);
 
                 assertThat(control.state(pipelineId))
@@ -152,10 +152,10 @@ class NestMiddleRowDeleteDoesNotDropWaitingIT {
                 assertThat(control.errorCount(pipelineId))
                         .as("nor a reason to count an error")
                         .contains(0L);
-                assertThat(middleIds(mongo.documents(targetUri, ROOT_TABLE)))
+                assertThat(middleIds(mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE)))
                         .as("the deletion took the row it named out of the document, and nothing else")
                         .containsExactly(SURVIVING_MIDDLE);
-                assertThat(leafIds(mongo.documents(targetUri, ROOT_TABLE), SURVIVING_MIDDLE))
+                assertThat(leafIds(mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE), SURVIVING_MIDDLE))
                         .as("the leaf that arrived late names the deleted row, so it belongs nowhere - "
                                 + "least of all under the row that survived")
                         .isEmpty();
@@ -203,7 +203,7 @@ class NestMiddleRowDeleteDoesNotDropWaitingIT {
     }
 
     private String diagnose(ControlPlane control, MongoEndpoints mongo, String targetUri, String what) {
-        return what + ": '" + ROOT_TABLE + "' holds " + mongo.documents(targetUri, ROOT_TABLE)
+        return what + ": '" + ROOT_TABLE + "' holds " + mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE)
                 + System.lineSeparator() + "  pipeline state: " + control.state(pipelineId)
                 + ", error count: " + control.errorCount(pipelineId)
                 + System.lineSeparator() + "  metrics: " + control.metrics(pipelineId)

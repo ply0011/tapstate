@@ -83,7 +83,7 @@ class ArtifactDeleteSharedSrsChainIT {
             ControlPlane control = connected(server, directory);
             Path sourceDirectory = Files.createDirectories(directory.resolve(SOURCE_ID));
             FileEndpoints files = new FileEndpoints();
-            files.seed(sourceDirectory.toString(), TABLE, SEEDED_ROWS);
+            files.seed(EndpointAddress.uri(sourceDirectory.toString()), TABLE, SeedRows.generated(SEEDED_ROWS));
 
             control.discoverSchema(
                     SOURCE_ID, E2eConnectorJar.CONNECTOR_ID, Map.of("uri", sourceDirectory.toString()));
@@ -109,9 +109,9 @@ class ArtifactDeleteSharedSrsChainIT {
             Await.until(
                     DEPARTING_ID + " to land the seeded rows, so what outlives its removal is data that "
                             + "was demonstrably there",
-                    () -> files.count(directory.resolve(DEPARTING_TARGET).toString(), TABLE) == SEEDED_ROWS,
+                    () -> files.count(EndpointAddress.uri(directory.resolve(DEPARTING_TARGET).toString()), TABLE) == SEEDED_ROWS,
                     () -> "rows at " + DEPARTING_TARGET + " = "
-                            + files.count(directory.resolve(DEPARTING_TARGET).toString(), TABLE));
+                            + files.count(EndpointAddress.uri(directory.resolve(DEPARTING_TARGET).toString()), TABLE));
 
             // The departing pipeline comes to rest first; the surviving one is left running throughout,
             // because what this case measures is whether it keeps going.
@@ -121,7 +121,7 @@ class ArtifactDeleteSharedSrsChainIT {
                     () -> control.state(DEPARTING_ID).filter(PipelineState.STOPPED::equals).isPresent(),
                     () -> String.valueOf(control.state(DEPARTING_ID)));
 
-            long departingTargetRows = files.count(directory.resolve(DEPARTING_TARGET).toString(), TABLE);
+            long departingTargetRows = files.count(EndpointAddress.uri(directory.resolve(DEPARTING_TARGET).toString()), TABLE);
 
             control.deleteArtifact(DEPARTING_ID, control.contentHash(DEPARTING_ID));
 
@@ -136,7 +136,7 @@ class ArtifactDeleteSharedSrsChainIT {
                     .as("exactly who holds a cursor now - the departed one gone, the survivor's kept; a "
                             + "detach that cleared both would break the chain for everyone left on it")
                     .containsExactly(SURVIVING_ID);
-            assertThat(files.count(directory.resolve(DEPARTING_TARGET).toString(), TABLE))
+            assertThat(files.count(EndpointAddress.uri(directory.resolve(DEPARTING_TARGET).toString()), TABLE))
                     .as("the rows the departed pipeline had already landed, which are the user's data and "
                             + "not bookkeeping the removal is entitled to reclaim; a removal that tidied "
                             + "away 'its' target would destroy delivered data and report success")
@@ -147,14 +147,14 @@ class ArtifactDeleteSharedSrsChainIT {
             // chain document too, and by one that detached correctly. What follows is what separates a
             // working chain from one that is quietly pinned forever.
             long readSeqAfterRemoval = documents.consumerReadSeq(chainId, SURVIVING_ID, TABLE);
-            long rowsAfterRemoval = files.count(directory.resolve(SURVIVING_TARGET).toString(), TABLE);
-            files.cdc(sourceDirectory.toString(), TABLE, CdcOp.INSERT, 3);
+            long rowsAfterRemoval = files.count(EndpointAddress.uri(directory.resolve(SURVIVING_TARGET).toString()), TABLE);
+            files.cdc(EndpointAddress.uri(sourceDirectory.toString()), TABLE, CdcOp.INSERT, 3);
 
             Await.until(
                     "the surviving pipeline to carry further changes after its neighbour was removed",
-                    () -> files.count(directory.resolve(SURVIVING_TARGET).toString(), TABLE) > rowsAfterRemoval,
+                    () -> files.count(EndpointAddress.uri(directory.resolve(SURVIVING_TARGET).toString()), TABLE) > rowsAfterRemoval,
                     () -> "rows at target = "
-                            + files.count(directory.resolve(SURVIVING_TARGET).toString(), TABLE)
+                            + files.count(EndpointAddress.uri(directory.resolve(SURVIVING_TARGET).toString()), TABLE)
                             + ", was " + rowsAfterRemoval);
             // The cursor the cdc write gate takes its headroom from. A departed consumer left attached
             // freezes the minimum this is folded into, the gate closes, and the survivor stops advancing
