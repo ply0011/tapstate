@@ -76,9 +76,21 @@ public final class OperationRegistry {
     }
 
     /**
-     * The operation surface of a face: every operation whose stage on {@code frontend} is at or below
-     * {@code ceiling}. Operations not exposed on the face are omitted. This is how a face's verb / tool
-     * set is derived and asserted, rather than being listed by hand.
+     * The operation surface of a face: every operation whose stage on {@code frontend} is at or below the
+     * stage this build ships at ({@link Maturity#CURRENT}). Operations not exposed on the face are omitted.
+     * This is how a face's verb / tool set is derived and asserted, rather than being listed by hand.
+     *
+     * <p>This is the only form a face may use. The ceiling is deliberately absent from the signature: a
+     * caller that could name one could open a surface wider than the build ships, and that mistake would
+     * read as ordinary code at the call site rather than as the release decision it actually is.
+     */
+    public List<Operation> exposedOn(Frontend frontend) {
+        return exposedOn(frontend, Maturity.CURRENT);
+    }
+
+    /**
+     * The face surface at an arbitrary ceiling. Exists so the clipping rule itself can be exercised across
+     * stages; production derives its surfaces through {@link #exposedOn(Frontend)}.
      */
     public List<Operation> exposedOn(Frontend frontend, Maturity ceiling) {
         Objects.requireNonNull(frontend, "frontend");
