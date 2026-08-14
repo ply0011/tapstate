@@ -186,6 +186,7 @@ final class SpecGenerator {
             forms.add(
                     switch (word) {
                         case COUNT -> keyed(word.word(), countBody());
+                        case DEAD_LETTERED -> keyed(word.word(), deadLetteredBody());
                         case DOC -> keyed(word.word(), docBody());
                         case ERROR_COUNT -> keyed(word.word(), errorCountBody());
                         case FAILURE_CODE -> keyed(word.word(), failureCodeBody());
@@ -288,6 +289,15 @@ final class SpecGenerator {
         return count;
     }
 
+    private static Map<String, Object> deadLetteredBody() {
+        Map<String, Object> discarded = scalar("integer",
+                "How many changes this pipeline's nests are expected to have been unable to place in a "
+                        + "document, added up over its namespaces. Zero is a real assertion here rather than "
+                        + "a default: a pipeline that discarded rows publishes a number instead.");
+        discarded.put("minimum", 0);
+        return discarded;
+    }
+
     private static Map<String, Object> failureCodeBody() {
         Map<String, Object> code = scalar("string",
                 "The canonical code of the failure the pipeline this specification names is expected to "
@@ -366,6 +376,10 @@ final class SpecGenerator {
         return switch (MatcherWord.valueOf(word.toUpperCase(java.util.Locale.ROOT))) {
             case COUNT -> "Rows present at an endpoint, read from the endpoint itself rather than from "
                     + "the product's record of what it wrote.";
+            case DEAD_LETTERED -> "How many changes the pipeline's nests could never place in a document, "
+                    + "added up over its namespaces and read from the metrics face. Nothing else says it: "
+                    + "these rows were never going to appear in any document, so a pipeline discarding all "
+                    + "of them and one discarding none have the same counts, state and code.";
             case DOC -> "One document at an endpoint, located by equality settings and held to scalar "
                     + "values by path and list lengths by path - what makes 'the right rows crossed' "
                     + "assertable rather than only 'rows crossed'.";

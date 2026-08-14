@@ -9,12 +9,15 @@ import io.tapstate.core.lifecycle.PipelineState;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,6 +37,14 @@ import java.util.Optional;
 final class ControlPlane {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
+
+    /**
+     * What every per-namespace count of unassemblable changes is named with, before the namespace itself.
+     * Written here rather than shared with the runtime that publishes it: this side is a reader of the
+     * product's metrics face, and a name it imported from the publisher would agree with the publisher by
+     * construction rather than by contract - so a rename would move both ends at once and assert nothing.
+     */
+    private static final String DEAD_LETTERED_PREFIX = "nestDeadLettered.";
 
     private final URI baseUrl;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
@@ -61,6 +72,16 @@ final class ControlPlane {
     void bootstrapAndLogin(String username, String password) {
         String body = JsonWriter.write(Map.of("username", username, "password", password));
         expect(send(post("/auth/bootstrap", body)), 204, "bootstrap the first admin");
+        login(username, password);
+    }
+
+    /**
+     * Logs an existing admin in and holds its token for every later call. Separate from the bootstrap
+     * above because an admin outlives the server that created it: a witness that restarts the server
+     * against the same store meets an account that already exists, and bootstrapping again is refused.
+     */
+    void login(String username, String password) {
+        String body = JsonWriter.write(Map.of("username", username, "password", password));
         HttpResponse<String> login = send(post("/auth/login", body));
         expect(login, 200, "log in");
         if (!(JsonReader.parse(login.body()) instanceof Map<?, ?> map)
@@ -99,6 +120,46 @@ final class ControlPlane {
         return interpretRefusal(response.statusCode(), response.body(), "applying " + contentBySource.keySet());
     }
 
+    /**
+     * One document submitted for apply, optionally carrying the version it was written against. A null
+     * {@code expectedContentHash} submits no precondition, which is the unconditional apply every caller
+     * above sends.
+     */
+    record Draft(String source, String content, String expectedContentHash) {}
+
+    /** Applies one document written against the version {@code expectedContentHash} names. */
+    void applyExpecting(String source, String content, String expectedContentHash) {
+        expect(send(authed("/api/artifacts:apply", applyBody(List.of(
+                        new Draft(source, content, expectedContentHash))))),
+                200, "apply " + source + " against version " + expectedContentHash);
+    }
+
+    /**
+     * Attempts an apply carrying a precondition the product is expected to refuse, and returns the refusal.
+     * The peer of {@link #applyExpecting}, kept apart from it for the reason every other refusal verb here
+     * is kept apart from its success: one return value cannot mean both.
+     */
+    Refusal applyExpectingRefusal(String source, String content, String expectedContentHash) {
+        HttpResponse<String> response = send(authed("/api/artifacts:apply",
+                applyBody(List.of(new Draft(source, content, expectedContentHash)))));
+        return interpretRefusal(response.statusCode(), response.body(), "applying " + source);
+    }
+
+    /**
+     * The apply request body. A draft carrying no precondition omits the field entirely rather than sending
+     * an explicit null: the field is defined as optional, and a caller that never asked for the check has to
+     * travel the wire indistinguishably from one written before the field existed.
+     */
+    private static String applyBody(List<Draft> drafts) {
+        List<Map<String, String>> encoded = drafts.stream()
+                .map(draft -> draft.expectedContentHash() == null
+                        ? Map.of("source", draft.source(), "content", draft.content())
+                        : Map.of("source", draft.source(), "content", draft.content(),
+                                "expectedContentHash", draft.expectedContentHash()))
+                .toList();
+        return JsonWriter.write(Map.of("drafts", encoded));
+    }
+
     /** The ids the server holds - read back from the server, which is the truth, not from the files sent. */
     List<String> artifactIds() {
         HttpResponse<String> response = send(authedGet("/api/artifacts"));
@@ -113,14 +174,91 @@ final class ControlPlane {
                 .toList();
     }
 
+    /**
+     * One stored artifact as the server hands it back, hash included. The hash is the precondition an edit
+     * or a removal has to supply, so reading it here is what makes read-then-remove a closed loop over the
+     * wire rather than something the caller computes locally off bytes it hopes are the same.
+     */
+    record StoredArtifact(String id, String kind, String canonicalForm, String contentHash) {}
+
+    /**
+     * The artifact stored under {@code id}, or empty when the server holds none.
+     *
+     * <p>Empty is a reading, not a failure: "it is gone" is the assertion a removal witness makes, and a
+     * caller that could not distinguish an absent artifact from a broken read could not make it. Every
+     * other non-200 stays loud.
+     */
+    Optional<StoredArtifact> artifact(String id) {
+        HttpResponse<String> response = send(authedGet("/api/artifacts/" + urlSegment(id)));
+        if (response.statusCode() == 404) {
+            return Optional.empty();
+        }
+        expect(response, 200, "read the artifact " + id);
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> map)) {
+            throw new AssertionError("the artifact read was not an object: " + response.body());
+        }
+        return Optional.of(new StoredArtifact(
+                string(map, "id", response.body()),
+                string(map, "kind", response.body()),
+                string(map, "canonicalForm", response.body()),
+                string(map, "contentHash", response.body())));
+    }
+
+    /**
+     * The content hash of the stored artifact {@code id}, failing when the server holds none.
+     *
+     * <p>Separate from {@link #artifact} because a caller reading a hash in order to spend it on a removal
+     * has already assumed the artifact is there; getting an empty back would fail it one call later, on a
+     * line that says nothing about what actually went wrong.
+     */
+    String contentHash(String id) {
+        return artifact(id)
+                .orElseThrow(() -> new AssertionError(
+                        "no artifact " + id + " to read a content hash from"))
+                .contentHash();
+    }
+
+    /** Removes the artifact {@code id}, offering {@code expectedContentHash} as the version the caller read. */
+    void deleteArtifact(String id, String expectedContentHash) {
+        expect(send(authedDelete(id, expectedContentHash)), 204, "delete " + id);
+    }
+
+    /**
+     * Attempts a removal the product is expected to refuse, and returns the refusal it answered with. A
+     * null {@code expectedContentHash} sends no {@code If-Match} at all, which is the unconditional
+     * removal the product answers with its own missing-precondition code.
+     *
+     * <p>A separate verb rather than a flag on {@link #deleteArtifact}, for the reason the apply and
+     * register pairs are separate: a caller that meant to remove and was refused has failed, and a caller
+     * that meant to witness a refusal and got a removal has failed too - and the second is the regression
+     * these callers exist to catch, so it can never be allowed to read as success.
+     */
+    Refusal deleteArtifactExpectingRefusal(String id, String expectedContentHash) {
+        HttpResponse<String> response = send(authedDelete(id, expectedContentHash));
+        return interpretRefusal(response.statusCode(), response.body(), "deleting " + id);
+    }
+
     /** Registers a connector's runtime jar; the product makes this idempotent by content hash. */
     void registerConnector(String connectorId, byte[] jar) {
         String body = JsonWriter.write(Map.of("artifact", Base64.getEncoder().encodeToString(jar)));
         expect(send(authed("/api/connectors:register", body)), 200, "register the " + connectorId + " connector");
     }
 
-    /** The refusal a rejected verb answered with: the HTTP status, and the code the product named. */
-    record Refusal(int status, String code) {}
+    /**
+     * The refusal a rejected verb answered with: the HTTP status, the code the product named, and the
+     * named arguments it sent with it.
+     *
+     * <p>The arguments are here because several refusals are only actionable through them - who is still
+     * referencing the resource, what state the pipeline is actually in - and a caller that could read the
+     * code but not the arguments would have to assert that a refusal happened without ever checking it
+     * named the right thing. They are empty, never null, for a body that carried none.
+     */
+    record Refusal(int status, String code, Map<String, Object> params) {
+
+        Refusal(int status, String code) {
+            this(status, code, Map.of());
+        }
+    }
 
     /**
      * Posts an artifact the product is expected to refuse, and returns the refusal it answered with.
@@ -158,7 +296,7 @@ final class ControlPlane {
                     "expected " + what + " to be refused, but the server failed instead: HTTP " + status
                             + " - " + body);
         }
-        return new Refusal(status, codeOf(body));
+        return new Refusal(status, codeOf(body), paramsOf(body));
     }
 
     /** Every connector id the online catalog answers with, registered rows and bundled ones alike. */
@@ -210,6 +348,20 @@ final class ControlPlane {
     }
 
     /**
+     * Attempts a status read the product is expected to refuse, and returns the refusal it answered with.
+     *
+     * <p>Kept apart from {@link #state} because the two emptinesses are not the same thing. That reader
+     * treats "no observation published yet" as a reading and keeps every other refusal loud, which is what
+     * lets a caller wait for a pipeline to come up. A pipeline that no longer exists is a different answer
+     * with a different code, and a caller witnessing that has to see the code rather than an absence it
+     * cannot tell from "not converged yet".
+     */
+    Refusal stateExpectingRefusal(String pipelineId) {
+        HttpResponse<String> response = send(authedGet("/api/pipelines/" + urlSegment(pipelineId) + "/status"));
+        return interpretRefusal(response.statusCode(), response.body(), "reading the status of " + pipelineId);
+    }
+
+    /**
      * The published error count, or empty when the pipeline has published no observation yet.
      *
      * <p>Empty is a reading and not a failure, on the same terms {@link #state} is: the metrics face answers
@@ -219,6 +371,24 @@ final class ControlPlane {
     Optional<Long> errorCount(String pipelineId) {
         HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
         return interpretErrorCount(response.statusCode(), response.body(), pipelineId);
+    }
+
+    /**
+     * The pipeline's node-local log as the product serves it, or the refusal body when there is none.
+     *
+     * <p>A diagnostic read, never an assertion: it is what a pipeline that reports itself healthy while
+     * moving nothing has left to say. Every answer is handed back verbatim, refusals included, because a
+     * diagnosis that throws while diagnosing tells the reader less than the refusal would have.
+     */
+    String logs(String pipelineId) {
+        HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/logs"));
+        return response.statusCode() + " " + response.body();
+    }
+
+    /** The published metrics body verbatim, for the same diagnostic use and on the same terms as {@link #logs}. */
+    String metrics(String pipelineId) {
+        HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
+        return response.statusCode() + " " + response.body();
     }
 
     /**
@@ -310,6 +480,132 @@ final class ControlPlane {
     }
 
     /**
+     * How many changes this pipeline's nests could never place in a document, added up over every namespace
+     * that reported any, or empty when the pipeline has published no observation yet.
+     *
+     * <p>Summed rather than keyed by namespace on purpose. A namespace name is derived from the pipeline and
+     * the embed path inside it, so asking a specification to name one would be asking an author to copy an
+     * internal name by hand - and to rewrite their assertion whenever a step is renamed. What a specification
+     * is asking is whether this pipeline threw anything away, which is one number.
+     *
+     * <p>Absent namespaces read as nothing discarded rather than as nothing measured, which is the opposite
+     * of how the readings around it are treated and is right here: this metric is published only where rows
+     * were lost, so no entry is the healthy answer rather than an unwired one.
+     */
+    Optional<Long> deadLettered(String pipelineId) {
+        HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
+        return interpretDeadLettered(response.statusCode(), response.body(), pipelineId);
+    }
+
+    /** What a metrics answer says about discarded changes, read exactly the way the error count is. */
+    static Optional<Long> interpretDeadLettered(int status, String body, String pipelineId) {
+        return interpretMetricTotal(status, body, pipelineId, DEAD_LETTERED_PREFIX);
+    }
+
+    /**
+     * Every metric this pipeline publishes under {@code prefix}, added up, on the same terms as the reading
+     * above: summed rather than keyed by namespace, because a namespace name is derived from the pipeline
+     * and the embed path inside it and no specification should be copying one by hand.
+     *
+     * <p>Absent names read as zero rather than as unmeasured, which is right for a metric published only
+     * where there is something to say. It leaves the caller with the discriminating half to do: a witness
+     * resting on "zero" alone would pass on a pipeline that published nothing at all.
+     */
+    Optional<Long> metricTotal(String pipelineId, String prefix) {
+        HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
+        return interpretMetricTotal(response.statusCode(), response.body(), pipelineId, prefix);
+    }
+
+    static Optional<Long> interpretMetricTotal(int status, String body, String pipelineId, String prefix) {
+        if (status == 404 && MonitorError.NO_OBSERVATION.code().equals(codeOf(body))) {
+            return Optional.empty();
+        }
+        if (status != 200) {
+            throw new AssertionError(
+                    "could not read the metrics of " + pipelineId + ": expected HTTP 200, got " + status
+                            + " - " + body);
+        }
+        if (!(JsonReader.parse(body) instanceof Map<?, ?> map) || !(map.get("metrics") instanceof Map<?, ?> metrics)) {
+            throw new AssertionError("metrics answer carried no metrics: " + body);
+        }
+        long total = 0L;
+        for (Map.Entry<?, ?> entry : metrics.entrySet()) {
+            if (entry.getKey() instanceof String name && name.startsWith(prefix)
+                    && entry.getValue() instanceof Number count) {
+                total += count.longValue();
+            }
+        }
+        return Optional.of(total);
+    }
+
+    /**
+     * How many records this pipeline's live job has driven to its sinks, or empty when it has no live job
+     * or has published no observation yet.
+     *
+     * <p>This is a count of writes, not of source changes, which is what makes it the reading a witness
+     * of coalescing rests on: a node that folds several changes into one send costs several changes here
+     * and one record. Cumulative over a run, so what a witness compares is two readings of it.
+     */
+    Optional<Long> recordCount(String pipelineId) {
+        HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
+        return interpretRecordCount(response.statusCode(), response.body(), pipelineId);
+    }
+
+    static Optional<Long> interpretRecordCount(int status, String body, String pipelineId) {
+        if (status == 404 && MonitorError.NO_OBSERVATION.code().equals(codeOf(body))) {
+            return Optional.empty();
+        }
+        if (status != 200) {
+            throw new AssertionError(
+                    "could not read the metrics of " + pipelineId + ": expected HTTP 200, got " + status
+                            + " - " + body);
+        }
+        if (!(JsonReader.parse(body) instanceof Map<?, ?> map)
+                || !(map.get("metrics") instanceof Map<?, ?> metrics)) {
+            throw new AssertionError("metrics answer carried no metrics: " + body);
+        }
+        // Absent while no job is live, which is a real reading and not a broken face: the count comes from
+        // the run itself, so a pipeline between runs has none rather than zero.
+        return metrics.get("recordCount") instanceof Number count
+                ? Optional.of(count.longValue())
+                : Optional.empty();
+    }
+
+    /**
+     * The durable source position this pipeline has acked for one table, or empty when it has acked none
+     * there yet. This is the frontier as a reader sees it: below it, every change is either at a sink or
+     * held somewhere it survives a restart from.
+     *
+     * <p>Returned as the opaque string the product publishes, never parsed. A position's shape belongs to
+     * the connector that issued it, so a witness may ask whether this reading differs from an earlier one -
+     * that is what "the frontier moved" means here - but never whether one is greater than another.
+     */
+    Optional<String> durablePosition(String pipelineId, String table) {
+        HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
+        return interpretDurablePosition(response.statusCode(), response.body(), pipelineId, table);
+    }
+
+    static Optional<String> interpretDurablePosition(
+            int status, String body, String pipelineId, String table) {
+        if (status == 404 && MonitorError.NO_OBSERVATION.code().equals(codeOf(body))) {
+            return Optional.empty();
+        }
+        if (status != 200) {
+            throw new AssertionError(
+                    "could not read the metrics of " + pipelineId + ": expected HTTP 200, got " + status
+                            + " - " + body);
+        }
+        if (!(JsonReader.parse(body) instanceof Map<?, ?> map)) {
+            throw new AssertionError("metrics answer did not parse: " + body);
+        }
+        // Absent until a position is acked, and absent is a real reading here rather than a broken face.
+        if (!(map.get("perTableOffset") instanceof Map<?, ?> offsets)) {
+            return Optional.empty();
+        }
+        return offsets.get(table) instanceof String position ? Optional.of(position) : Optional.empty();
+    }
+
+    /**
      * The code a structured error body carries, or null for a body that is not one - a body that does not
      * parse included. A refusal can come from something that is not the product at all (an empty body, a
      * proxy's HTML), and the caller's job is to report that loudly with the pipeline and status named; it
@@ -325,8 +621,67 @@ final class ControlPlane {
         }
     }
 
+    /**
+     * The named arguments a structured error body carries, or none for a body that is not one. Read on the
+     * same terms as {@link #codeOf}: a refusal that came from something other than the product must still be
+     * reportable, so an unparseable body answers empty rather than throwing over the top of the report.
+     */
+    private static Map<String, Object> paramsOf(String body) {
+        try {
+            if (!(JsonReader.parse(body) instanceof Map<?, ?> map)
+                    || !(map.get("params") instanceof Map<?, ?> params)) {
+                return Map.of();
+            }
+            // Copied through a map that tolerates a null value rather than Map.copyOf, which rejects one. A
+            // single null argument would otherwise throw here and lose the whole refusal - code, message and
+            // all - which is the failure this harness exists to report, not to suffer.
+            Map<String, Object> copy = new LinkedHashMap<>();
+            params.forEach((key, value) -> copy.put(String.valueOf(key), value));
+            return Collections.unmodifiableMap(copy);
+        } catch (RuntimeException e) {
+            return Map.of();
+        }
+    }
+
+    /** A required string field of a structured answer, named in the failure when the answer omits it. */
+    private static String string(Map<?, ?> map, String field, String body) {
+        if (!(map.get(field) instanceof String value)) {
+            throw new AssertionError("the artifact read carried no " + field + ": " + body);
+        }
+        return value;
+    }
+
+    /**
+     * One path segment, encoded the way the product's own clients encode it - form encoding with the plus
+     * put back as {@code %20}, because a literal plus in a path is a plus and not a space.
+     *
+     * <p>Written out here rather than borrowed: the harness travels the public wire, so what it needs is an
+     * id that survives the trip, not the product's private helper. Ids that need any of this are pinned
+     * where the client builds the request; over this wire it keeps a specification honest about the address
+     * it asked for.
+     */
+    private static String urlSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
     private HttpRequest get(String path) {
         return HttpRequest.newBuilder(baseUrl.resolve(path)).timeout(TIMEOUT).GET().build();
+    }
+
+    /**
+     * A conditional removal. A null hash sends no {@code If-Match} header at all rather than an empty one:
+     * an empty header is a malformed precondition, and the caller that passes null is witnessing the
+     * refusal of a removal that carried no precondition in the first place.
+     */
+    private HttpRequest authedDelete(String id, String expectedContentHash) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(baseUrl.resolve("/api/artifacts/" + urlSegment(id)))
+                .timeout(TIMEOUT)
+                .header("Authorization", "Bearer " + requireCredential())
+                .DELETE();
+        if (expectedContentHash != null) {
+            builder.header("If-Match", "\"" + expectedContentHash + "\"");
+        }
+        return builder.build();
     }
 
     private HttpRequest authedGet(String path) {
@@ -352,6 +707,15 @@ final class ControlPlane {
                 .header("Authorization", "Bearer " + requireCredential())
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                 .build();
+    }
+
+    /**
+     * The bearer credential this harness logged in with, for handing to a second client that has to reach
+     * the same server as the same principal - the shipped MCP sidecar, which is configured with a token
+     * rather than a login.
+     */
+    String credential() {
+        return requireCredential();
     }
 
     private String requireCredential() {

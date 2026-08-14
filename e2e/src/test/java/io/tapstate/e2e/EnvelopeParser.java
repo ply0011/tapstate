@@ -334,6 +334,7 @@ public final class EnvelopeParser {
         Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
         return switch (matcherWord(only.getKey())) {
             case COUNT -> count(only.getValue());
+            case DEAD_LETTERED -> new Matcher.DeadLettered(rowCount(only.getValue(), "dead_lettered"));
             case DOC -> doc(only.getValue());
             case ERROR_COUNT -> new Matcher.ErrorCount(rowCount(only.getValue(), "error_count"));
             case FAILURE_CODE -> new Matcher.FailureCode(failureCode(only.getValue()));

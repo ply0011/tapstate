@@ -14,22 +14,29 @@ import java.util.TreeMap;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static java.util.Map.entry;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Counts the sleeps in this module's own sources and holds the count to an exact, named allowlist.
  *
  * <p>A fixed-duration sleep is the wrong tool everywhere in an end-to-end harness: long enough to be
- * reliable, it wastes that long on every green run, and it is never quite reliable anyway. The harness
- * has four sanctioned uses of {@code Thread.sleep}, and each is a poll interval inside a condition
- * loop - the executor's bounded await, the server launcher's bounded readiness wait, the synthetic
- * connector's change-stream tail, and the numeric-fidelity witness's bounded read of its target -
- * where the loop's condition, not the sleep, decides what happens next. Everything else is a settle: a guess about how long some unobservable thing takes, checked by
+ * reliable, it wastes that long on every green run, and it is never quite reliable anyway. Nearly every
+ * sanctioned use is a poll interval inside a condition loop - the executor's bounded await, the server
+ * launcher's bounded readiness wait, the synthetic connector's change-stream tail, and one bounded read
+ * of its own target per witness class - where the loop's condition, not the sleep, decides what happens
+ * next. Everything else is a settle: a guess about how long some unobservable thing takes, checked by
  * nothing. One such guess already shipped here and papered over a real product gap for weeks.
  *
  * <p>The allowlist names each sanctioned call site exactly. A new sleep anywhere in this module -
  * including one more in an allowlisted file - fails this gate and must either become a bounded wait
  * on an observable condition, or argue its way onto the allowlist in review, visibly.
+ *
+ * <p>One entry is admitted knowingly and is not a poll interval: the throttle witness spaces its quiet
+ * phase's changes apart by a fixed gap, to produce the input the case is about rather than to wait for
+ * an outcome. The gate counts per file and that file's three call sites share one helper, so admitting
+ * the two polls admits the gap with them. It is named here rather than left to look like a poll: a
+ * stimulus whose duration has to exceed a collection window is still a duration nothing checks.
  *
  * <p>This scan found a sleep the day it was written that a plain text search over the same tree had
  * just missed, so the two are not interchangeable: the gate reads every source line itself.
@@ -42,11 +49,34 @@ class FixedSleepGateTest {
      * {@code other/E2eExecutor.java} would satisfy the entry the moment the sanctioned one stopped
      * needing it, and the gate would be green over a sleep nobody allowed.
      */
-    private static final Map<String, Long> POLL_PRIMITIVES = Map.of(
-            "test/java/io/tapstate/e2e/E2eExecutor.java", 1L,
-            "test/java/io/tapstate/e2e/LosslessNumericTypeIsAcceptedIT.java", 1L,
-            "test/java/io/tapstate/e2e/RealProcessServer.java", 1L,
-            "test/java/io/tapstate/e2e/connector/CsvConnector.java", 1L);
+    private static final Map<String, Long> POLL_PRIMITIVES = Map.ofEntries(
+            // The harness's own four: the specification runner's bounded await, the direct-drive await
+            // every bespoke witness shares, the launcher's readiness wait, the synthetic connector's tail.
+            entry("test/java/io/tapstate/e2e/Await.java", 1L),
+            entry("test/java/io/tapstate/e2e/E2eExecutor.java", 1L),
+            entry("test/java/io/tapstate/e2e/RealProcessServer.java", 1L),
+            entry("test/java/io/tapstate/e2e/connector/CsvConnector.java", 1L),
+            // One bounded read of its own target per witness class, each a poll inside a deadline loop.
+            entry("test/java/io/tapstate/e2e/LosslessNumericTypeIsAcceptedIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/RealMysqlToMongoSnapshotIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestAssemblesParentAndChildrenIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestChildCdcMutatesTheArrayIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestColdRootWakesCorrectlyIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestConvergesWhenChildArrivesBeforeParentIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestFrontierDoesNotOutrunDeferredEventsIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestHoldsMoreThanItsMemoryBudgetIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestIdleInstanceDoesNotStallFrontierIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestIsolatesSameLevelEmbedKeyspacesIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestMiddleRowDeleteDoesNotDropWaitingIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestMigratesSubtreeOnAncestorReparentIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestPendingLimitFailsTheJobIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestReparentMovesTheChildIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestResolvesFourLevelDeepIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestRootFanoutLimitFailsTheJobIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestSaysWhenItIsServedFromTheColdLayerIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/NestTrackingRefusesASourceWithoutBeforeImagesIT.java", 1L),
+            // Two polls and one fixed gap that is not one - see the class comment.
+            entry("test/java/io/tapstate/e2e/NestThrottleCoalescesHotRootIT.java", 1L));
 
     private static final Pattern SLEEP = Pattern.compile(
             "Thread\\.sleep\\(|TimeUnit\\.[A-Z_]+\\.sleep\\(");
