@@ -30,3 +30,5 @@ rows-cross-from-a-source-file-to-a-target-file on IN_PROCESS
 rows-cross-from-a-source-file-to-a-target-file on REAL_PROCESS
 the-snapshot-half-reaches-the-target on IN_PROCESS
 the-snapshot-half-reaches-the-target on REAL_PROCESS
+two-tables-become-one-document-in-the-managed-store on IN_PROCESS
+two-tables-become-one-document-in-the-managed-store on REAL_PROCESS
