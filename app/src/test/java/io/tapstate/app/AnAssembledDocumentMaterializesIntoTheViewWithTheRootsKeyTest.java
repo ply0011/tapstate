@@ -78,6 +78,36 @@ class AnAssembledDocumentMaterializesIntoTheViewWithTheRootsKeyTest {
                 .containsExactly("id");
     }
 
+    /**
+     * The same claim over a nest whose root table was never discovered. A view names its own key, so
+     * nothing about where its documents land or what they are matched on depends on a discovery having
+     * run - and the write path may reach here before one has.
+     *
+     * <p>Undiscovered, the assembled stream used to reach the sink as a name and nothing else: no entry
+     * in the map at all, so the sink fell back to a descriptor built from the bare stream name. That put
+     * the documents in a collection named after the transform step, with no key and none of the view's
+     * indexes, and said nothing while doing it. Both halves are read here - a fix that restored the
+     * collection while still dropping the key would leave the upsert exactly as unable to converge.
+     */
+    @Test
+    void theViewSinkIsToldTheSameWhenTheRootTableWasNeverDiscovered() {
+        AtomicReference<Map<String, TargetTable>> bound = new AtomicReference<>();
+        new StoreBackedDagSource(undiscoveredStore(), capturing(bound)).dagFor(PIPELINE);
+
+        Map<String, TargetTable> targets = bound.get();
+        assertThat(targets)
+                .as("the streams the view sink was given a model for, with no discovery to draw on")
+                .containsKey(STEP);
+
+        TargetTable assembled = targets.get(STEP);
+        assertThat(assembled.name())
+                .as("the collection assembled documents materialize into, which the view names")
+                .isEqualTo(VIEW);
+        assertThat(assembled.fields().stream().filter(TargetField::primaryKey).map(TargetField::name))
+                .as("the key an upsert matches on, which the view declares rather than discovers")
+                .containsExactly("id");
+    }
+
     /** Records the map handed to the sink binder without building a writer. */
     private static StoreBackedDagSource.SinkWriterBinder capturing(
             AtomicReference<Map<String, TargetTable>> bound) {
@@ -100,6 +130,21 @@ class AnAssembledDocumentMaterializesIntoTheViewWithTheRootsKeyTest {
 
     /** Two single-table sources, the deployment's managed store, and a nest pipeline declaring a view. */
     private static InMemoryStorePort seedStore() {
+        InMemoryStorePort store = new InMemoryStorePort(seedArtifacts());
+        store.schemas().save(discovered(PARENT_SOURCE,
+                new SourceTable(PARENT_TABLE,
+                        List.of(new SourceField("id", "int"), new SourceField("name", "string")),
+                        List.of("id"), List.of())));
+        store.schemas().save(discovered(CHILD_SOURCE,
+                new SourceTable(CHILD_TABLE,
+                        List.of(new SourceField("id", "int"), new SourceField("order_id", "int"),
+                                new SourceField("sku", "string")),
+                        List.of("id"), List.of())));
+        return store;
+    }
+
+    /** The artifacts both witnesses share; only whether a discovery was saved separates them. */
+    private static InMemoryArtifactStore seedArtifacts() {
         InMemoryArtifactStore artifacts = new InMemoryArtifactStore();
         artifacts.save(source(PARENT_SOURCE, PARENT_TABLE));
         artifacts.save(source(CHILD_SOURCE, CHILD_TABLE));
@@ -122,18 +167,12 @@ class AnAssembledDocumentMaterializesIntoTheViewWithTheRootsKeyTest {
                 new ViewBlock.Inline(VIEW, FromRef.literal(STEP), "id", null, null),
                 null,
                 new Settings(null, null, null, null, ReadMode.SNAPSHOT_AND_CDC, "earliest"), null));
+        return artifacts;
+    }
 
-        InMemoryStorePort store = new InMemoryStorePort(artifacts);
-        store.schemas().save(discovered(PARENT_SOURCE,
-                new SourceTable(PARENT_TABLE,
-                        List.of(new SourceField("id", "int"), new SourceField("name", "string")),
-                        List.of("id"), List.of())));
-        store.schemas().save(discovered(CHILD_SOURCE,
-                new SourceTable(CHILD_TABLE,
-                        List.of(new SourceField("id", "int"), new SourceField("order_id", "int"),
-                                new SourceField("sku", "string")),
-                        List.of("id"), List.of())));
-        return store;
+    /** The same workspace with no discovery saved for either source. */
+    private static InMemoryStorePort undiscoveredStore() {
+        return new InMemoryStorePort(seedArtifacts());
     }
 
     private static SourceResource source(String id, String table) {

@@ -104,6 +104,33 @@ class ANestedDocumentReachesTheSinkWithTheRootsModelTest {
                 .isEqualTo(PARENT_TABLE);
     }
 
+    /**
+     * The table half of the same claim, over a root that was never discovered. The columns are a
+     * discovery's to supply and are absent here; which table the documents land in is the topology's, and
+     * is known without one.
+     *
+     * <p>Undiscovered, this stream used to reach the sink as a name and nothing else, and the sink's
+     * fallback then named the collection after the transform step. That put assembled documents somewhere
+     * no discovered run would ever put them, so whether a discovery had run decided where the data went.
+     */
+    @Test
+    void theSinkIsToldWhereUndiscoveredAssembledDocumentsLand() {
+        AtomicReference<Map<String, TargetTable>> bound = new AtomicReference<>();
+        new StoreBackedDagSource(undiscoveredStore(), capturing(bound)).dagFor(PIPELINE);
+
+        assertThat(bound.get())
+                .as("the streams the sink was given a model for, with no discovery to draw on")
+                .containsKey(STEP);
+        assertThat(bound.get().get(STEP).name())
+                .as("the table assembled documents land in, which is the root's rather than the step's")
+                .isEqualTo(PARENT_TABLE);
+    }
+
+    /** The same workspace with no discovery saved for either source. */
+    private static InMemoryStorePort undiscoveredStore() {
+        return new InMemoryStorePort(seedArtifacts());
+    }
+
     /** The witness's own documents, parsed by the product's parser and stored as an apply would. */
     private static InMemoryStorePort parsedStore() {
         DslParser parser = new DslParser();
@@ -195,6 +222,21 @@ class ANestedDocumentReachesTheSinkWithTheRootsModelTest {
 
     /** Two single-table sources, a sink connection, and a nest pipeline serving the assembled step. */
     private static InMemoryStorePort seedStore() {
+        InMemoryStorePort store = new InMemoryStorePort(seedArtifacts());
+        store.schemas().save(discovered(PARENT_SOURCE,
+                new SourceTable(PARENT_TABLE,
+                        List.of(new SourceField("id", "int"), new SourceField("name", "string")),
+                        List.of("id"), List.of())));
+        store.schemas().save(discovered(CHILD_SOURCE,
+                new SourceTable(CHILD_TABLE,
+                        List.of(new SourceField("id", "int"), new SourceField("order_id", "int"),
+                                new SourceField("sku", "string")),
+                        List.of("id"), List.of())));
+        return store;
+    }
+
+    /** The artifacts both witnesses share; only whether a discovery was saved separates them. */
+    private static InMemoryArtifactStore seedArtifacts() {
         InMemoryArtifactStore artifacts = new InMemoryArtifactStore();
         artifacts.save(source(PARENT_SOURCE, PARENT_TABLE));
         artifacts.save(source(CHILD_SOURCE, CHILD_TABLE));
@@ -214,18 +256,7 @@ class ANestedDocumentReachesTheSinkWithTheRootsModelTest {
                 new ServeBlock.Inline(null, FromRef.literal(STEP),
                         List.of(new SyncElement("sync_1", DEST_ID, null, null, null, null)), null, null),
                 new Settings(null, null, null, null, ReadMode.SNAPSHOT_AND_CDC, "earliest"), null));
-
-        InMemoryStorePort store = new InMemoryStorePort(artifacts);
-        store.schemas().save(discovered(PARENT_SOURCE,
-                new SourceTable(PARENT_TABLE,
-                        List.of(new SourceField("id", "int"), new SourceField("name", "string")),
-                        List.of("id"), List.of())));
-        store.schemas().save(discovered(CHILD_SOURCE,
-                new SourceTable(CHILD_TABLE,
-                        List.of(new SourceField("id", "int"), new SourceField("order_id", "int"),
-                                new SourceField("sku", "string")),
-                        List.of("id"), List.of())));
-        return store;
+        return artifacts;
     }
 
     private static SourceResource source(String id, String table) {

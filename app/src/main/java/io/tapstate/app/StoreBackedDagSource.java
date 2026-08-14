@@ -41,6 +41,7 @@ import io.tapstate.spi.store.SourceTable;
 import io.tapstate.spi.store.SrsMeta;
 import io.tapstate.spi.store.StorePort;
 import io.tapstate.spi.transform.TransformPort;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -253,9 +254,12 @@ final class StoreBackedDagSource implements DagSource {
      * document is addressed by the nest root's key, which the author writes and which need not be the root
      * table's primary key.
      *
-     * <p>A nest whose root table was never discovered contributes nothing. That leaves the sink where it was
-     * before this resolution existed - naming the stream and knowing no more about it - which is the same
-     * place any undiscovered table leaves it, rather than a failure of its own.
+     * <p>A nest whose root table was never discovered still contributes the table its documents land in,
+     * which the topology knows without a discovery having run; only the columns are left out. Contributing
+     * nothing at all would drop the assembled stream from the set of streams that reach a sink, and a sink
+     * asked about a stream it was never told of falls back to a descriptor built from the bare stream name
+     * - putting the documents under the transform step's name rather than the root's, silently. A nest
+     * whose root alias resolves to no table at all is a different case and still contributes nothing.
      */
     private Map<String, TargetTable> assembledTargets(
             PipelineResource pipeline, Map<String, TargetTable> bySourceTable,
@@ -270,10 +274,13 @@ final class StoreBackedDagSource implements DagSource {
                 continue;
             }
             NestTable root = byAlias.get(nest.root().from());
-            TargetTable model = root == null ? null : bySourceTable.get(root.name());
-            if (model != null) {
-                assembled.put(step.id(), TargetModelResolver.keyedOn(model, nest.root().key()));
+            if (root == null) {
+                continue;
             }
+            TargetTable model = bySourceTable.get(root.name());
+            assembled.put(step.id(), model != null
+                    ? TargetModelResolver.keyedOn(model, nest.root().key())
+                    : new TargetTable(root.name(), List.of()));
         }
         return assembled;
     }
@@ -391,8 +398,28 @@ final class StoreBackedDagSource implements DagSource {
      */
     private static TargetTable viewTargetTable(
             ViewTargetResolver.ViewTarget target, TargetTable stream) {
-        List<TargetField> fields = stream == null ? List.of() : stream.fields();
+        List<TargetField> streamFields = stream == null ? List.of() : stream.fields();
+        List<TargetField> fields = new ArrayList<>(streamFields.size() + 1);
+        // The key first and always, carrying the stream's type for it when the stream declares one. A
+        // view names its own key, so it has one to be matched on before any discovery has run - and a
+        // type it could not resolve is left for the connector to infer rather than standing in the way.
+        fields.add(new TargetField(target.primaryKey(), typeOf(streamFields, target.primaryKey()), true));
+        for (TargetField field : streamFields) {
+            if (!field.name().equals(target.primaryKey())) {
+                fields.add(new TargetField(field.name(), field.type(), false));
+            }
+        }
         return new TargetTable(target.collection(), fields, target.indexes());
+    }
+
+    /** The stream's own type token for one column, or null when the stream does not declare it. */
+    private static String typeOf(List<TargetField> fields, String name) {
+        for (TargetField field : fields) {
+            if (field.name().equals(name)) {
+                return field.type();
+            }
+        }
+        return null;
     }
 
     /**

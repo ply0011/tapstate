@@ -35,12 +35,20 @@ final class ViewTargetResolver {
     private ViewTargetResolver() {
     }
 
-    /** The resolved address of one view's materialization. */
-    record ViewTarget(String sourceId, String collection, List<TargetIndex> indexes) {
+    /**
+     * The resolved address of one view's materialization, and the key its documents are addressed by.
+     *
+     * <p>The key travels with the address because both are the view's own answer rather than anything a
+     * discovery supplies: it is the column the unique index is built on, so it is also the column an
+     * upsert has to match on. Letting the two be decided in different places is how a collection ends up
+     * refusing, on its own index, a write the sink believed was an update.
+     */
+    record ViewTarget(String sourceId, String collection, String primaryKey, List<TargetIndex> indexes) {
 
         ViewTarget {
             Objects.requireNonNull(sourceId, "sourceId");
             Objects.requireNonNull(collection, "collection");
+            Objects.requireNonNull(primaryKey, "primaryKey");
             indexes = indexes == null ? List.of() : List.copyOf(indexes);
         }
     }
@@ -78,7 +86,7 @@ final class ViewTargetResolver {
                 indexes.add(new TargetIndex(List.of(field), false));
             }
         }
-        return new ViewTarget(STATE_STORE_SOURCE_ID, collection, indexes);
+        return new ViewTarget(STATE_STORE_SOURCE_ID, collection, view.primaryKey(), indexes);
     }
 
     private static TapstateException unsupportedTier(ViewBlock.Inline view, String tier) {
