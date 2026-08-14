@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static java.util.Map.entry;
@@ -39,7 +40,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * stimulus whose duration has to exceed a collection window is still a duration nothing checks.
  *
  * <p>This scan found a sleep the day it was written that a plain text search over the same tree had
- * just missed, so the two are not interchangeable: the gate reads every source line itself.
+ * just missed, so the two are not interchangeable: the gate reads every source itself.
+ *
+ * <p><b>What this gate does not see.</b> It matches text, so its reach is the shape of the call and
+ * nothing deeper, and saying where that ends is part of what it is worth. Whitespace no longer decides:
+ * a call split before its dot was measured slipping through and now counts, and two calls on one line
+ * count as two. Still invisible, and deliberately named rather than left to be discovered: a wait that
+ * never spells the word, such as {@code LockSupport.parkNanos}, {@code Object.wait(millis)} or an
+ * unconditional {@code latch.await(millis, unit)}; a sleep reached through a helper that lives outside
+ * this module, where nothing here reads its source; and anything assembled at runtime. Each is a real
+ * way to make this gate green over a fixed wait. They are left out because closing them by text would
+ * cost more false alarms than the sleeps it would catch, and the honest position is that this gate
+ * raises the price of a settle rather than making one impossible. A wait belongs on an observable
+ * condition whether or not a gate can see it.
  */
 class FixedSleepGateTest {
 
@@ -79,7 +92,7 @@ class FixedSleepGateTest {
             entry("test/java/io/tapstate/e2e/NestThrottleCoalescesHotRootIT.java", 1L));
 
     private static final Pattern SLEEP = Pattern.compile(
-            "Thread\\.sleep\\(|TimeUnit\\.[A-Z_]+\\.sleep\\(");
+            "Thread\\s*\\.\\s*sleep\\s*\\(|TimeUnit\\s*\\.\\s*[A-Z_]+\\s*\\.\\s*sleep\\s*\\(");
 
     @Test
     void everyFixedSleepInThisModuleIsANamedPollPrimitive() {
@@ -109,6 +122,32 @@ class FixedSleepGateTest {
         assertThat(sleepsUnder(root)).containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
                 "one/Twin.java", 1L,
                 "two/Twin.java", 1L));
+    }
+
+    /**
+     * A sleep is a sleep however it is typed, so the scan may not be decided by formatting.
+     *
+     * <p>Reading line by line, the gate used to see {@code Thread.sleep(} and miss the same call with a
+     * line break before the dot - which the formatter is free to introduce, and which anyone wanting a
+     * settle past the gate can type on purpose. Both were measured: the one-line form fails this gate on
+     * an exact per-file count, the split form passed it while sleeping just as long.
+     *
+     * <p>Two sleeps sharing one line are two sleeps here for the same reason - what is counted is the
+     * calls, not the lines that happen to carry them.
+     */
+    @Test
+    void aSleepIsCountedHoweverItIsSpacedAcrossLines(@TempDir Path root) throws IOException {
+        // Spelled in pieces for the reason above: written whole, these would be counted by the walk.
+        String split = "Thread" + "\n            ." + "sleep(";
+        String inline = "Thread." + "sleep(";
+        Files.writeString(root.resolve("Split.java"),
+                "class Split { void a() throws Exception { " + split + "1); } }");
+        Files.writeString(root.resolve("Pair.java"),
+                "class Pair { void a() throws Exception { " + inline + "1); " + inline + "2); } }");
+
+        assertThat(sleepsUnder(root)).containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
+                "Split.java", 1L,
+                "Pair.java", 2L));
     }
 
     /**
@@ -144,9 +183,12 @@ class FixedSleepGateTest {
         } catch (IOException e) {
             throw new UncheckedIOException("cannot read " + source, e);
         }
-        return lines.stream()
+        // Comments drop out line-wise, then the rest is matched as one text rather than line by line:
+        // a call split before its dot spans two lines and no single line holds it, and two calls
+        // sharing a line are two calls. What is counted is the matches, not the lines carrying them.
+        String code = lines.stream()
                 .filter(line -> !line.trim().startsWith("//") && !line.trim().startsWith("*"))
-                .filter(line -> SLEEP.matcher(line).find())
-                .count();
+                .collect(Collectors.joining("\n"));
+        return SLEEP.matcher(code).results().count();
     }
 }
