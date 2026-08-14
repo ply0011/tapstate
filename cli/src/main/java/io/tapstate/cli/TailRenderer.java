@@ -2,20 +2,21 @@ package io.tapstate.cli;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.StringJoiner;
+import java.util.Locale;
+import java.util.Map;
 
 /**
- * Renders the appended view: one event per change, oldest first, never redrawn. Like the in-place
- * view it renders from a {@link DocumentDiff} rather than comparing rows itself — the two are two
- * renderings of one comparison, and a second comparison is how they would part ways.
+ * Renders the appended view: one event per change the store made, oldest first, never redrawn.
  *
- * <p>Every event opens at column zero with its own time and key, so the stream stays something a
- * reader can pipe into a search. What follows is indented under it, which is why the two are told
- * apart by position rather than by punctuation a grep would have to know about.
+ * <p>It shows what arrived and works nothing out. A view that compared each change against an earlier
+ * one could say more — which field moved, what it moved from — but only by keeping its own history
+ * and presenting it as the store's, and a reader would have no way to tell whose it was. What is on
+ * screen here is exactly what the connector supplied: both rows when a change carries both, one when
+ * it carries one, and the kind and the time always.
  *
- * <p>A list that gained entries shows the entries it gained, not the list again. For the rows worth
- * watching — the ones with an array that grows — reprinting the array is the difference between one
- * line per change and a screen per change.
+ * <p>Every event opens at column zero with its time and kind, so the stream stays something a reader
+ * can pipe into a search; the rows are indented under it, told apart by position rather than by
+ * punctuation a grep would have to know about.
  */
 final class TailRenderer {
 
@@ -25,34 +26,23 @@ final class TailRenderer {
     private TailRenderer() {
     }
 
-    /**
-     * The lines one change produces: an event line naming when, which row and what changed, then one
-     * detail line per field carrying what the event line has no room for. Empty when nothing changed,
-     * so a stream never emits an event that says nothing.
-     */
-    static List<String> lines(String time, String key, DocumentDiff diff) {
-        if (diff.isEmpty()) {
-            return List.of();
-        }
+    /** The lines one change produces: the event, then whichever rows it carried. */
+    static List<String> lines(TailChange change) {
         List<String> lines = new ArrayList<>();
-        lines.add(time + "  " + key + "  " + diff.summary());
-        for (DocumentChange change : diff.changes()) {
-            lines.add(DETAIL_INDENT + change.mark().slot() + " " + change.field() + "  " + detail(change));
-        }
+        lines.add(change.at() + "  " + change.kind().name().toLowerCase(Locale.ROOT));
+        row(lines, "before", change.before());
+        row(lines, "after ", change.after());
         return lines;
     }
 
-    /** What one change says beyond its mark and field: the entries gained, the two values, or nothing. */
-    private static String detail(DocumentChange change) {
-        if (!change.addedEntries().isEmpty()) {
-            StringJoiner entries = new StringJoiner(", ");
-            change.addedEntries().forEach(entry -> entries.add(JsonOut.compact(entry)));
-            return entries.toString();
+    /**
+     * One side of a change, or nothing at all when it was not carried. Nothing rather than an empty
+     * object: a row the connector did not supply and a row it supplied as empty are different facts,
+     * and only one of them is usually true.
+     */
+    private static void row(List<String> lines, String side, Map<String, Object> row) {
+        if (row != null) {
+            lines.add(DETAIL_INDENT + side + "  " + JsonOut.compact(row));
         }
-        return switch (change.mark()) {
-            case CHANGED -> JsonOut.compact(change.before()) + " → " + JsonOut.compact(change.after());
-            case ADDED -> JsonOut.compact(change.after());
-            case REMOVED -> "(was " + JsonOut.compact(change.before()) + ")";
-        };
     }
 }

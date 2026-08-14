@@ -190,4 +190,33 @@ class DataBrowserCallTest {
                 .isInstanceOf(Malformed.class);
         assertThat(((Malformed) parsed).reason()).contains("$contains");
     }
+
+    @Test
+    void aReadAndAFollowTakeTheSameFilterWrittenTheSameWay() {
+        // One filter language for the whole face. The two verbs read it through the same translator, so
+        // a reader who knows how to narrow a read knows how to narrow a follow -- and a filter that
+        // means one thing in one of them cannot come to mean another in the other.
+        Object read = ((DataBrowserCall.Find) DataBrowserCall.parse(
+                "views.orders.find({status: \"Paid\", age: {$gt: 12}})")).filter();
+        Object followed = ((DataBrowserCall.Live) DataBrowserCall.parseLive(
+                "tail", "views.orders {status: \"Paid\", age: {$gt: 12}}")).filter();
+
+        assertThat(followed)
+                .as("the same words, translated into the same request; two grammars for one face is "
+                        + "how the same written filter starts answering differently depending on which "
+                        + "verb was asked")
+                .isEqualTo(read);
+    }
+
+    @Test
+    void aReadAndAFollowRefuseTheSameThingsForTheSameReason() {
+        DataBrowserCall read = DataBrowserCall.parse("views.orders.find({status: {$regex: \"^P\"}})");
+        DataBrowserCall followed = DataBrowserCall.parseLive("tail", "views.orders {status: {$regex: \"^P\"}}");
+
+        assertThat(read).isInstanceOf(Malformed.class);
+        assertThat(followed).isInstanceOf(Malformed.class);
+        assertThat(((Malformed) followed).reason())
+                .as("and the refusal names the same alternative, since it is the same vocabulary")
+                .isEqualTo(((Malformed) read).reason());
+    }
 }

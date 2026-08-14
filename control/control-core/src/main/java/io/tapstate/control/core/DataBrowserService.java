@@ -138,9 +138,10 @@ public final class DataBrowserService {
         ConnectionConfig config = requireCollection(sourceId, collection);
         DataBrowserSubscription subscription = tailProbe.tail(
                 config, new DataBrowserTailRequest(collection), change -> {
-            // A removal carries no row to test, and withholding it because a filter cannot be evaluated
-            // against nothing would leave a reader watching a row that has quietly gone.
-            if (filter == null || change.row() == null || filter.matches(change.row())) {
+            // Tested against the row as it now is, or as it was when that is all the change carries.
+            // A change with neither is admitted: withholding it because there was nothing to test
+            // would drop an event the store really made, which is what a follow exists to report.
+            if (filter == null || change.subject() == null || filter.matches(change.subject())) {
                 sink.onChange(DataBrowserChangeEvent.from(change));
             }
         });

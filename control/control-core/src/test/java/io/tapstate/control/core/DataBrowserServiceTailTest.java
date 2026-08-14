@@ -98,16 +98,16 @@ class DataBrowserServiceTailTest {
                 seen::add);
 
         opened.get().onChange(new DataBrowserChange(
-                DataBrowserChange.Kind.UPSERT, "ord_1", Map.of("status", "Paid"), 1L));
+                DataBrowserChange.Kind.INSERT, null, Map.of("status", "Paid"), 1L));
         opened.get().onChange(new DataBrowserChange(
-                DataBrowserChange.Kind.UPSERT, "ord_2", Map.of("status", "Shipped"), 2L));
+                DataBrowserChange.Kind.INSERT, null, Map.of("status", "Shipped"), 2L));
 
-        assertThat(seen).extracting(DataBrowserChangeEvent::key).containsExactly("ord_1");
+        assertThat(seen).extracting(DataBrowserChangeEvent::at).containsExactly(1L);
     }
 
     @Test
-    @DisplayName("a removal reaches the reader whatever the filter says, having no row to test")
-    void aRemovalIsNeverFilteredOut() {
+    @DisplayName("a removal is tested on the row it carried, and reaches the reader when it carried none")
+    void aRemovalIsTestedOnWhatItCarried() {
         AtomicReference<DataBrowserChangeListener> opened = new AtomicReference<>();
         DataBrowserService service = service(List.of("order_state"), opened, new AtomicInteger());
         List<DataBrowserChangeEvent> seen = new ArrayList<>();
@@ -116,13 +116,15 @@ class DataBrowserServiceTailTest {
                 new DataBrowserCriteria.Match("status", DataBrowserCriteria.Operator.EQ, "Paid"),
                 seen::add);
         opened.get().onChange(new DataBrowserChange(
-                DataBrowserChange.Kind.DELETE, "ord_1", null, 3L));
+                DataBrowserChange.Kind.DELETE, Map.of("status", "Paid"), null, 3L));
+        opened.get().onChange(new DataBrowserChange(DataBrowserChange.Kind.DELETE, null, null, 4L));
 
-        assertThat(seen)
-                .as("withholding it because a filter cannot be evaluated against nothing would leave "
-                        + "the reader watching a row that has quietly gone")
-                .extracting(DataBrowserChangeEvent::key).containsExactly("ord_1");
-        assertThat(seen.get(0).removed()).isTrue();
+        assertThat(seen).extracting(DataBrowserChangeEvent::at)
+                .as("a removal that carried the row is tested on it like any other change; one that "
+                        + "carried nothing is admitted, because dropping it would lose an event the "
+                        + "store really made and there was nothing to judge it by")
+                .containsExactly(3L, 4L);
+        assertThat(seen.get(0).kind()).isEqualTo(DataBrowserChangeEvent.Kind.DELETE);
     }
 
     @Test

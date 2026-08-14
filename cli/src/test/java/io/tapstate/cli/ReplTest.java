@@ -3303,8 +3303,10 @@ class ReplTest {
         // reaches the store is the settled version of a row -- rapid changes are folded before they are
         // written, upstream of the store, so no better transport would recover them.
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
-        client.tailFrames.add(TailChange.upsert("14:22:11", "ord_1", Map.of("status", "Paid")));
-        client.tailFrames.add(TailChange.upsert("14:22:15", "ord_1", Map.of("status", "Shipped")));
+        client.tailFrames.add(new TailChange(TailChange.Kind.INSERT, "14:22:11", null,
+                Map.of("status", "Paid")));
+        client.tailFrames.add(new TailChange(TailChange.Kind.UPDATE, "14:22:15",
+                Map.of("status", "Paid"), Map.of("status", "Shipped")));
         Harness h = onlineSession(Path.of("tap-work"), client);
         int mark = h.sink().toString().length();
 
@@ -3312,18 +3314,19 @@ class ReplTest {
 
         String output = h.sink().toString().substring(mark);
         assertThat(output).contains("not every intermediate version");
-        assertThat(output).contains("ord_1");
+        assertThat(output).contains("insert").contains("update");
         assertThat(output)
-                .as("the second change is shown against what the stream itself last showed, which is "
-                        + "the only previous version it can honestly claim to know")
-                .contains("~ status");
+                .as("both sides of the alteration are shown because this change carried both; nothing "
+                        + "is worked out from an earlier event")
+                .contains("Paid").contains("Shipped");
     }
 
     @Test
     void tailNeedsNoTerminalBecauseItOnlyEverAppends() {
         // The opposite of the in-place view, and the reason both exist: this one is the pipeable half.
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
-        client.tailFrames.add(TailChange.upsert("14:22:11", "ord_1", Map.of("status", "Paid")));
+        client.tailFrames.add(new TailChange(TailChange.Kind.INSERT, "14:22:11", null,
+                Map.of("status", "Paid")));
         Harness h = onlineSession(Path.of("tap-work"), client);
         h.repl().terminalCheck(() -> false);
         int mark = h.sink().toString().length();
@@ -3332,7 +3335,7 @@ class ReplTest {
 
         String output = h.sink().toString().substring(mark);
         assertThat(output).doesNotContain("cli.watch-needs-a-terminal");
-        assertThat(output).contains("ord_1");
+        assertThat(output).contains("insert");
     }
 
     @Test

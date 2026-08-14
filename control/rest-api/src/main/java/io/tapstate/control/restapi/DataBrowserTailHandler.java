@@ -159,11 +159,15 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
      */
     private static String frame(DataBrowserChangeEvent change) {
         Map<String, Object> frame = new LinkedHashMap<>();
-        frame.put("kind", change.removed() ? "DELETE" : "UPSERT");
-        frame.put("key", change.key());
+        frame.put("kind", change.kind().name());
         frame.put("at", change.at());
-        if (change.row() != null) {
-            frame.put("row", change.row());
+        // Each row is present only when the change carried it. Sending an empty one instead would say
+        // the connector supplied a row with nothing in it, which is a different fact from silence.
+        if (change.before() != null) {
+            frame.put("before", change.before());
+        }
+        if (change.after() != null) {
+            frame.put("after", change.after());
         }
         return JsonWriter.write(frame);
     }

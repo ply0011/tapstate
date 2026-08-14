@@ -930,18 +930,19 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
     /** One streamed change frame, or null when the frame is not one. */
     private static TailChange tailChange(String frame) {
         Object parsed = JsonReader.parse(frame);
-        if (!(parsed instanceof Map<?, ?> map) || !(map.get("key") instanceof String key)) {
+        if (!(parsed instanceof Map<?, ?> map) || !(map.get("kind") instanceof String kind)) {
             return null;
         }
         String at = TIME.format(Instant.ofEpochMilli(
                 map.get("at") instanceof Number ms ? ms.longValue() : 0L).atZone(ZoneId.systemDefault()));
-        if ("DELETE".equals(map.get("kind"))) {
-            return TailChange.delete(at, key);
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> row = map.get("row") instanceof Map<?, ?> written
-                ? (Map<String, Object>) written : Map.of();
-        return TailChange.upsert(at, key, row);
+        // A row the frame did not carry stays absent here. Decoding it into an empty map would turn
+        // "the connector did not say" into "the connector said there was nothing".
+        return new TailChange(TailChange.Kind.valueOf(kind), at, row(map, "before"), row(map, "after"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> row(Map<?, ?> frame, String side) {
+        return frame.get(side) instanceof Map<?, ?> written ? (Map<String, Object>) written : null;
     }
 
     /** How a streamed change's time is shown: the clock, because a follow is read as it happens. */

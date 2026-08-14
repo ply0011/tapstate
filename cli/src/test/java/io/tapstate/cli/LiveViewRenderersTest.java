@@ -4,12 +4,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,19 +25,6 @@ class LiveViewRenderersTest {
             row.put((String) pairs[i], pairs[i + 1]);
         }
         return row;
-    }
-
-    /** The (mark, field) pairs a rendering claims changed, read back out of the text it produced. */
-    private static List<String> markedFields(List<String> lines) {
-        Pattern marked = Pattern.compile("([+~-]) (\\w+)");
-        List<String> found = new ArrayList<>();
-        for (String line : lines) {
-            Matcher matcher = marked.matcher(line);
-            while (matcher.find()) {
-                found.add(matcher.group(1) + matcher.group(2));
-            }
-        }
-        return found;
     }
 
     @Nested
@@ -137,73 +121,5 @@ class LiveViewRenderersTest {
                     .contains("no change yet")
                     .contains("checked 14:22:19");
         }
-    }
-
-    @Nested
-    @DisplayName("the appended view")
-    class TailLines {
-
-        @Test
-        @DisplayName("every event starts with its own time and key, so the stream stays pipeable")
-        void eventLineCarriesTimeAndKey() {
-            Map<String, Object> before = row("id", "ord_123", "status", "Paid");
-            Map<String, Object> after = row("id", "ord_123", "status", "Shipped");
-
-            List<String> lines = TailRenderer.lines("14:22:15", "ord_123", DocumentDiff.between(before, after));
-
-            assertThat(lines.get(0)).startsWith("14:22:15  ord_123  ");
-            assertThat(lines.get(0)).contains("~status");
-        }
-
-        @Test
-        @DisplayName("a list that grew shows the entries that arrived, not the list all over again")
-        void showsTheEntriesAListGained() {
-            Map<String, Object> shipment = row("shipment_id", "shp_2", "carrier", "FedEx");
-            Map<String, Object> before = row("id", "ord_123", "shipments", List.of(row("shipment_id", "shp_1")));
-            Map<String, Object> after = row("id", "ord_123",
-                    "shipments", List.of(row("shipment_id", "shp_1"), shipment));
-
-            List<String> lines = TailRenderer.lines("14:22:11", "ord_123", DocumentDiff.between(before, after));
-
-            assertThat(lines.get(0)).contains("+1 shipments");
-            assertThat(lines)
-                    .as("the entry that arrived is the news; reprinting the array turns one line into a "
-                            + "screen for exactly the rows worth watching")
-                    .anySatisfy(line -> assertThat(line).contains("shp_2").contains("FedEx"))
-                    .noneSatisfy(line -> assertThat(line).contains("shp_1"));
-        }
-
-        @Test
-        @DisplayName("nothing changed means no line at all, not an empty one")
-        void writesNothingForAnUnchangedRow() {
-            Map<String, Object> unchanged = row("id", "ord_123");
-
-            assertThat(TailRenderer.lines("14:22:15", "ord_123", DocumentDiff.between(unchanged, unchanged)))
-                    .isEmpty();
-        }
-    }
-
-    @Test
-    @DisplayName("both views, given one comparison, report the same changes in the same order")
-    void bothViewsReportTheSameChanges() {
-        Map<String, Object> before = row(
-                "id", "ord_123", "status", "Paid", "coupon", "SUMMER",
-                "shipments", List.of(row("shipment_id", "shp_1")));
-        Map<String, Object> after = row(
-                "id", "ord_123", "status", "Shipped",
-                "shipments", List.of(row("shipment_id", "shp_1"), row("shipment_id", "shp_2")),
-                "tracking", "1Z999");
-        DocumentDiff diff = DocumentDiff.between(before, after);
-
-        List<String> inPlace = markedFields(WatchRenderer.frame("views.order_state", after, diff, 5L));
-        List<String> appended = markedFields(TailRenderer.lines("14:22:15", "ord_123", diff));
-
-        assertThat(diff.changes())
-                .as("an empty comparison would make the comparison below vacuous")
-                .isNotEmpty();
-        assertThat(inPlace)
-                .as("two renderings of one comparison; a view that walked the rows itself would drift "
-                        + "from the other one field at a time, and both would look right alone")
-                .containsExactlyElementsOf(appended);
     }
 }

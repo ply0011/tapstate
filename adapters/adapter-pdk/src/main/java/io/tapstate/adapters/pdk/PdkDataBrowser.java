@@ -190,11 +190,6 @@ public final class PdkDataBrowser implements DataBrowser {
     @Override
     public DataBrowserSubscription tail(
             ConnectionConfig config, DataBrowserTailRequest request, DataBrowserChangeListener listener) {
-        // What identifies a row, asked once per follow rather than once per change. It comes from the
-        // connector's own declared key, which is the connector-neutral answer: naming a particular
-        // store's identifier field here would pin this face to that store, and the identifier field is
-        // exactly the binding this face spent a decision getting rid of.
-        List<String> key = pool.call(config, connector -> keyOf(connector, request.collection()));
         // A follow holds its connector for as long as somebody is watching, so it cannot take a pooled
         // instance - but it is still an instance, and it counts where they count.
         ConnectorInstancePool.Reservation slot = pool.reserveOutsidePool();
@@ -204,7 +199,7 @@ public final class PdkDataBrowser implements DataBrowser {
                     new CaptureListener() {
                         @Override
                         public void onEvent(Envelope event) {
-                            DataBrowserChange change = project(event, key);
+                            DataBrowserChange change = project(event);
                             // A stream also carries schema changes, which are not a row changing and
                             // have nowhere to go in a view of rows.
                             if (change != null) {
@@ -240,55 +235,26 @@ public final class PdkDataBrowser implements DataBrowser {
     /**
      * One change, as a view of rows sees it. Null for anything that is not a row changing.
      *
-     * <p>A creation and an alteration arrive as one kind. Which one a write was is a distinction the
-     * stream does not reliably make - an alteration of a row the reader has not seen yet and a
-     * creation are the same event downstream - and nothing above acts on it.
+     * <p>The three kinds the store distinguishes are kept as three. A reader following a collection
+     * is watching what the store did, and "a row appeared" and "a row changed" are different facts
+     * about that -- folding them together would be this layer deciding they are not.
      */
-    private static DataBrowserChange project(Envelope event, List<String> key) {
+    private static DataBrowserChange project(Envelope event) {
+        // Both rows are passed through exactly as the connector supplied them, including their
+        // absence. How completely a change describes itself is the connector's business, and a layer
+        // that filled a gap here would hand the reader an answer that looks like the stream's.
         return switch (event.op()) {
-            case INSERT, UPDATE, READ -> new DataBrowserChange(
-                    DataBrowserChange.Kind.UPSERT, identity(event.after(), key), event.after(), event.ts());
+            case INSERT, READ -> new DataBrowserChange(
+                    DataBrowserChange.Kind.INSERT, null, event.after(), event.ts());
+            case UPDATE -> new DataBrowserChange(
+                    DataBrowserChange.Kind.UPDATE, event.before(), event.after(), event.ts());
             case DELETE -> new DataBrowserChange(
-                    DataBrowserChange.Kind.DELETE, identity(event.before(), key), null, event.ts());
+                    DataBrowserChange.Kind.DELETE, event.before(), null, event.ts());
             case DDL -> null;
         };
     }
 
-    /**
-     * The row's identity: its declared key fields' values, joined. Empty when the collection declares
-     * no key, or when the change did not carry the fields that make it up - both are the same honest
-     * answer, that this change cannot be tied to any other.
-     */
-    private static String identity(Map<String, Object> row, List<String> key) {
-        if (row == null || key.isEmpty()) {
-            return "";
-        }
-        StringJoiner identity = new StringJoiner("/");
-        for (String field : key) {
-            Object value = row.get(field);
-            if (value == null) {
-                return "";
-            }
-            identity.add(String.valueOf(value));
-        }
-        return identity.toString();
-    }
 
-    /** The collection's declared key fields, in the order the connector reports them. */
-    private static List<String> keyOf(PdkConnector connector, String collection) {
-        List<TapTable> discovered = new ArrayList<>();
-        drive(connector, () -> {
-            connector.connector().discoverSchema(
-                    connector.context(), List.of(collection), NAME_BATCH_SIZE, discovered::addAll);
-            return null;
-        });
-        for (TapTable table : discovered) {
-            if (collection.equals(table.getId()) && table.primaryKeys() != null) {
-                return new ArrayList<>(table.primaryKeys());
-            }
-        }
-        return List.of();
-    }
 
     /** Hands back every pooled connector and stops evicting. */
     @Override
