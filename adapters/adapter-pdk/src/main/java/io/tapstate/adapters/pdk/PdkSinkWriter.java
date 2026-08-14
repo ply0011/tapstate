@@ -108,7 +108,9 @@ final class PdkSinkWriter implements SinkWriter {
                 for (Map.Entry<String, List<TapRecordEvent>> entry : rowsByTable.entrySet()) {
                     List<TapRecordEvent> rows = entry.getValue();
                     TargetTable target = targets.get(entry.getKey());
-                    TapTable table = target != null ? TargetTapTable.build(target) : new TapTable(rows.get(0).getTableId());
+                    TapTable table = target != null
+                            ? TargetTapTable.build(target)
+                            : TargetTapTable.bare(rows.get(0).getTableId());
                     ensureIndexes(entry.getKey(), target, table);
                     // A connector may report the batch in several flushes, one callback each; accumulate.
                     write.writeRecord(connector.context(), rows, table,
