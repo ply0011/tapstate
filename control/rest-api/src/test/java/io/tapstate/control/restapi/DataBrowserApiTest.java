@@ -12,8 +12,11 @@ import io.tapstate.control.core.TokenSecrets;
 import io.tapstate.control.core.TokenService;
 import io.tapstate.control.core.TokenSigner;
 import io.tapstate.control.core.VerifiedToken;
+import io.tapstate.core.model.Metadata;
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceResource;
+import io.tapstate.core.model.Storage;
+import io.tapstate.core.model.ViewResource;
 import io.tapstate.runtime.probe.DataBrowserCollectionsProbe;
 import io.tapstate.runtime.probe.DataBrowserFindProbe;
 import io.tapstate.runtime.probe.DataBrowserStatsProbe;
@@ -23,6 +26,11 @@ import io.tapstate.spi.store.DataBrowserFilter;
 import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserTableInfo;
+import io.tapstate.spi.store.DiscoveredSourceModel;
+import io.tapstate.spi.store.SchemaStore;
+import io.tapstate.spi.store.SourceField;
+import io.tapstate.spi.store.SourceModel;
+import io.tapstate.spi.store.SourceTable;
 import io.tapstate.spi.store.TokenRecord;
 import io.tapstate.spi.store.TokenStore;
 import org.junit.jupiter.api.AfterAll;
@@ -95,6 +103,7 @@ class DataBrowserApiTest {
         context.getBean(FakeCollectionsProbe.class).reset();
         context.getBean(FakeFindProbe.class).reset();
         context.getBean(FakeStatsProbe.class).reset();
+        context.getBean(FakeSchemaStore.class).reset();
         context.getBean(FakeTokenStore.class).clear();
     }
 
@@ -116,9 +125,46 @@ class DataBrowserApiTest {
                 .header("Authorization", "Bearer " + token(Scope.READ))
                 .retrieve().toEntity(CollectionList.class).getBody();
 
-        assertThat(body.collections()).containsExactly("order_state", "customers");
+        assertThat(body.collections())
+                .extracting(CollectionList.Entry::name)
+                .containsExactly("order_state", "customers");
         // The read ran on the source's own connection, resolved from the declaration rather than the request.
         assertThat(context.getBean(FakeCollectionsProbe.class).lastConfig().connectorId()).isEqualTo("mongodb");
+    }
+
+    @Test
+    void carriesTheKindTheFieldsAndTheAuthoredDescriptionOfEachCollection() {
+        context.getBean(FakeCollectionsProbe.class).answer("order_state");
+        context.getBean(FakeSchemaStore.class).found("order_state", "id", "status", "shipments");
+
+        Map<String, Object> listed = firstListedCollection();
+
+        assertThat(listed).containsEntry("name", "order_state")
+                .containsEntry("kind", "view")
+                .containsEntry("fields", List.of("id", "status", "shipments"))
+                .containsEntry("description", "One row per order, shipments inlined");
+    }
+
+    @Test
+    void leavesOutTheKeyForEverythingNobodyAnswered() {
+        // The whole point of the shape, asserted on the wire rather than on the record: a caller reading
+        // `fields: []` is told the collection has no fields, and reading `description: ""` is told
+        // somebody described it as nothing. Neither is true, and only an absent key says so.
+        context.getBean(FakeCollectionsProbe.class).answer("customers");
+
+        Map<String, Object> listed = firstListedCollection();
+
+        assertThat(listed).containsEntry("name", "customers").containsEntry("kind", "view");
+        assertThat(listed).doesNotContainKey("fields").doesNotContainKey("description");
+    }
+
+    /** The first entry of the listing body, read as raw JSON so an absent key stays distinguishable. */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> firstListedCollection() {
+        Map<String, Object> body = client().get().uri("/api/sources/views/collections")
+                .header("Authorization", "Bearer " + token(Scope.READ))
+                .retrieve().toEntity(Map.class).getBody();
+        return (Map<String, Object>) ((List<Object>) body.get("collections")).get(0);
     }
 
     // ---- reading one collection's rows ----
@@ -555,10 +601,25 @@ class DataBrowserApiTest {
 
         @Bean
         ArtifactStore artifactStore() {
-            return new OneSourceStore(new SourceResource(
-                    "views", null, "mongodb",
-                    Map.of("uri", "mongodb://db.local", "database", "shop"),
-                    null, null, null, null, null));
+            // One declared source and one view declaring where it materializes: enough for a listing to
+            // have both a collection somebody described and one nobody did.
+            return new DeclaredWorkspaceStore(
+                    new SourceResource(
+                            "views", null, "mongodb",
+                            Map.of("uri", "mongodb://db.local", "database", "shop"),
+                            null, null, null, null, null),
+                    new ViewResource(
+                            "v_order_state",
+                            new Metadata(null, "One row per order, shipments inlined"),
+                            null,
+                            new Storage(null, new Storage.Warm("order_state", null), null),
+                            null,
+                            null));
+        }
+
+        @Bean
+        FakeSchemaStore schemaStore() {
+            return new FakeSchemaStore();
         }
 
         @Bean
@@ -579,21 +640,27 @@ class DataBrowserApiTest {
         @Bean
         DataBrowserService dataBrowserService(
                 ArtifactStore store,
+                SchemaStore schemas,
                 DataBrowserCollectionsProbe collections,
                 DataBrowserStatsProbe stats,
                 DataBrowserFindProbe find) {
-            return new DataBrowserService(store, collections, stats, find, NO_FOLLOWS);
+            return new DataBrowserService(store, schemas, collections, stats, find, NO_FOLLOWS);
         }
     }
 
     // ---- fakes ----
 
-    /** A store holding exactly one declared source, so resolution is real and everything else is absent. */
-    private static final class OneSourceStore implements ArtifactStore {
+    /** A store holding the declared workspace, so resolution is real and everything else is absent. */
+    private static final class DeclaredWorkspaceStore implements ArtifactStore {
         private final SourceResource source;
+        private final List<Resource> declared;
 
-        private OneSourceStore(SourceResource source) {
+        private DeclaredWorkspaceStore(SourceResource source, Resource... alsoDeclared) {
             this.source = source;
+            List<Resource> all = new ArrayList<>();
+            all.add(source);
+            all.addAll(List.of(alsoDeclared));
+            this.declared = List.copyOf(all);
         }
 
         @Override
@@ -608,7 +675,36 @@ class DataBrowserApiTest {
 
         @Override
         public List<Resource> list() {
-            return List.of(source);
+            return declared;
+        }
+    }
+
+    /** A schema store a case seeds to say what discovery found, or leaves empty to say it never ran. */
+    private static final class FakeSchemaStore implements SchemaStore {
+        private DiscoveredSourceModel discovered;
+
+        void reset() {
+            discovered = null;
+        }
+
+        void found(String collection, String... fields) {
+            List<SourceField> columns = new ArrayList<>(fields.length);
+            for (String field : fields) {
+                columns.add(new SourceField(field, "string"));
+            }
+            discovered = new DiscoveredSourceModel("views", "mongodb", 1L,
+                    new SourceModel(List.of(new SourceTable(collection, columns, List.of(), List.of()))));
+        }
+
+        @Override
+        public void save(DiscoveredSourceModel model) {
+            throw new UnsupportedOperationException("the browse face never writes");
+        }
+
+        @Override
+        public Optional<DiscoveredSourceModel> get(String connectionId) {
+            return Optional.ofNullable(discovered)
+                    .filter(model -> model.connectionId().equals(connectionId));
         }
     }
 

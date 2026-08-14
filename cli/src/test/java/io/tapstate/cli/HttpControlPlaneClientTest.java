@@ -249,6 +249,32 @@ class HttpControlPlaneClientTest {
     }
 
     @Test
+    void readsTheCollectionNamesOutOfWhatTheListingEndpointAnswers() throws Exception {
+        // Read against the body the server really sends, entries and all. A decoder that still expected
+        // bare names would find none it recognized and report an empty database — a silent wrong answer,
+        // not a failure, which is why this is asserted against the wire rather than a fake client.
+        AtomicReference<CapturedRequest> seen = new AtomicReference<>();
+        HttpServer server = apiServer("/api/sources/views/collections", 200,
+                "{\"collections\":["
+                        + "{\"name\":\"order_state\",\"kind\":\"view\",\"fields\":[\"id\"],"
+                        + "\"description\":\"One row per order\"},"
+                        + "{\"name\":\"customers\",\"kind\":\"view\"}]}",
+                seen);
+        try {
+            DataBrowserOutcome.Collections outcome =
+                    new HttpControlPlaneClient().collections(baseOf(server), "tok-abc", "views");
+
+            assertThat(outcome).isInstanceOf(DataBrowserOutcome.Collections.Listed.class);
+            assertThat(((DataBrowserOutcome.Collections.Listed) outcome).collections())
+                    .containsExactly("order_state", "customers");
+            assertThat(seen.get().method()).isEqualTo("GET");
+            assertThat(seen.get().authorization()).isEqualTo("Bearer tok-abc");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void applyPostsTheDraftsWithABearerCredentialAndReturnsTheOutcomes() throws Exception {
         AtomicReference<CapturedRequest> seen = new AtomicReference<>();
         HttpServer server = apiServer("/api/artifacts:apply", 200,

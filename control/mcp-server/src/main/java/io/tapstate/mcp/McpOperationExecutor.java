@@ -11,6 +11,7 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -59,6 +60,10 @@ final class McpOperationExecutor {
                 case "pipeline.metrics" -> pipelineRead(args, "metrics");
                 case "pipeline.snapshot" -> pipelineRead(args, "snapshot");
                 case "pipeline.logs" -> pipelineLogs(args);
+                case "data-browser.collections" -> get(collectionsOf(args));
+                case "data-browser.stats" -> get(collectionOf(args) + "/stats");
+                case "data-browser.find" -> post(
+                        collectionOf(args) + ":find", readRequest(args), RequestBudget.HEAVY);
                 default -> McpResult.coded(
                         ControlError.MALFORMED_REQUEST,
                         Map.of("reason", "unsupported MCP operation: " + operation.id()));
@@ -92,6 +97,33 @@ final class McpOperationExecutor {
             path += "?limit=" + Math.max(1, Math.min(200, number.intValue()));
         }
         return get(path);
+    }
+
+    /** The listing path for the source a read names. */
+    private static String collectionsOf(Map<String, Object> arguments) {
+        return "/api/sources/" + segment(required(arguments, "sourceId")) + "/collections";
+    }
+
+    /** The path of the one collection a read names, which every read but the listing does. */
+    private static String collectionOf(Map<String, Object> arguments) {
+        return collectionsOf(arguments) + "/" + segment(required(arguments, "collection"));
+    }
+
+    /**
+     * What a read asks for, with the two names that travel in the path left out of it. Only what was
+     * asked for is sent: an absent filter reads every row and an absent order leaves the order to the
+     * database, and sending a null under either key says something different to a face that reads
+     * present-and-null apart from absent.
+     */
+    private static Map<String, Object> readRequest(Map<String, Object> arguments) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        for (String asked : List.of("filter", "sort", "limit")) {
+            Object value = arguments.get(asked);
+            if (value != null) {
+                body.put(asked, value);
+            }
+        }
+        return body;
     }
 
     private McpResult get(String path) {

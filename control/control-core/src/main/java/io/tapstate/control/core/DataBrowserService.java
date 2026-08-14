@@ -1,7 +1,9 @@
 package io.tapstate.control.core;
 
 import io.tapstate.core.common.TapstateException;
+import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceResource;
+import io.tapstate.core.model.ViewResource;
 import io.tapstate.runtime.probe.DataBrowserCollectionsProbe;
 import io.tapstate.runtime.probe.DataBrowserFindProbe;
 import io.tapstate.runtime.probe.DataBrowserStatsProbe;
@@ -11,9 +13,16 @@ import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSubscription;
 import io.tapstate.spi.store.DataBrowserTailRequest;
+import io.tapstate.spi.store.DiscoveredSourceModel;
+import io.tapstate.spi.store.SchemaStore;
+import io.tapstate.spi.store.SourceField;
+import io.tapstate.spi.store.SourceTable;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * The control plane's three data-browser verbs: list a declared source's collections, report one
@@ -51,6 +60,7 @@ public final class DataBrowserService {
     public static final int MAX_LIMIT = 200;
 
     private final ArtifactStore store;
+    private final SchemaStore schemaStore;
     private final DataBrowserCollectionsProbe collectionsProbe;
     private final DataBrowserStatsProbe statsProbe;
     private final DataBrowserFindProbe findProbe;
@@ -58,20 +68,79 @@ public final class DataBrowserService {
 
     public DataBrowserService(
             ArtifactStore store,
+            SchemaStore schemaStore,
             DataBrowserCollectionsProbe collectionsProbe,
             DataBrowserStatsProbe statsProbe,
             DataBrowserFindProbe findProbe,
             DataBrowserTailProbe tailProbe) {
         this.store = Objects.requireNonNull(store, "store");
+        this.schemaStore = Objects.requireNonNull(schemaStore, "schemaStore");
         this.collectionsProbe = Objects.requireNonNull(collectionsProbe, "collectionsProbe");
         this.statsProbe = Objects.requireNonNull(statsProbe, "statsProbe");
         this.findProbe = Objects.requireNonNull(findProbe, "findProbe");
         this.tailProbe = Objects.requireNonNull(tailProbe, "tailProbe");
     }
 
-    /** Lists the collections the source's own database holds, in the order the connector reports them. */
-    public List<String> collections(String sourceId) {
-        return collectionsProbe.collections(connection(sourceId));
+    /**
+     * Lists the collections the source's own database holds, in the order the connector reports them,
+     * each with what is known about it beyond its name.
+     *
+     * <p>The two derived answers are read from what already exists rather than produced here. The
+     * fields come from the latest discovery stored for this source's connection, so listing never
+     * triggers one — that would turn a read into a write, and an audited one. The description comes
+     * from the view that declares the collection as where it materializes. Neither has a source for
+     * every collection, and where there is none the answer is left out rather than emptied: an empty
+     * field list says the collection has no fields, which is not what "nobody looked" means.
+     */
+    public List<DataBrowserCollection> collections(String sourceId) {
+        ConnectionConfig config = connection(sourceId);
+        List<String> names = collectionsProbe.collections(config);
+        Map<String, List<String>> discovered = discoveredFields(config.id());
+        Map<String, String> declared = declaredDescriptions();
+        List<DataBrowserCollection> listed = new ArrayList<>(names.size());
+        for (String name : names) {
+            listed.add(new DataBrowserCollection(
+                    name, DataBrowserCollection.VIEW, discovered.get(name), declared.get(name)));
+        }
+        return List.copyOf(listed);
+    }
+
+    /**
+     * The top-level field names the latest discovery on this connection reported, by collection. A
+     * connection nothing has been discovered on contributes no entries, so every collection on it is
+     * left without fields rather than given an empty list.
+     */
+    private Map<String, List<String>> discoveredFields(String connectionId) {
+        Optional<DiscoveredSourceModel> latest = schemaStore.get(connectionId);
+        if (latest.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<String>> byCollection = new LinkedHashMap<>();
+        for (SourceTable table : latest.get().model().tables()) {
+            byCollection.put(table.name(), table.fields().stream().map(SourceField::name).toList());
+        }
+        return byCollection;
+    }
+
+    /**
+     * The authored description of each collection some stored view declares as its warm destination.
+     * A view that declares no warm collection names none, and one that wrote no description
+     * contributes no entry — being declared is not itself a description.
+     */
+    private Map<String, String> declaredDescriptions() {
+        Map<String, String> byCollection = new LinkedHashMap<>();
+        for (Resource stored : store.list()) {
+            if (!(stored instanceof ViewResource view)
+                    || view.storage() == null
+                    || view.storage().warm() == null
+                    || view.metadata() == null
+                    || view.metadata().description() == null
+                    || view.metadata().description().isBlank()) {
+                continue;
+            }
+            byCollection.putIfAbsent(view.storage().warm().collection(), view.metadata().description());
+        }
+        return byCollection;
     }
 
     /** Reports what the connector knows about one of the source's collections. */

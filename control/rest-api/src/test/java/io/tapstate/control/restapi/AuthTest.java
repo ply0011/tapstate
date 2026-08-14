@@ -691,6 +691,7 @@ class AuthTest {
         DataBrowserService dataBrowserService(InMemoryArtifactStore store) {
             return new DataBrowserService(
                     store,
+                    new NoDiscoveries(),
                     config -> {
                         throw new UnsupportedOperationException(
                                 "data-browser.collections is not exercised in this test");

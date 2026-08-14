@@ -459,6 +459,7 @@ class PipelineApiTest {
         DataBrowserService dataBrowserService(ArtifactStore store) {
             return new DataBrowserService(
                     store,
+                    new NoDiscoveries(),
                     config -> {
                         throw new UnsupportedOperationException(
                                 "data-browser.collections is not exercised in this test");

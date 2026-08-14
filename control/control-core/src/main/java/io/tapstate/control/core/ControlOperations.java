@@ -93,12 +93,28 @@ public final class ControlOperations {
     // Which database a read reaches follows from the source's own connection; no verb takes one, and the
     // find request has no field for one. The control plane's tables sit on the same server as the data,
     // so that confinement is the point of the shape rather than a simplification of it.
-    public static final Operation DATA_BROWSER_COLLECTIONS =
-            new Operation("data-browser.collections", Scope.READ, false, null, CLI_POC);
-    public static final Operation DATA_BROWSER_FIND =
-            new Operation("data-browser.find", Scope.READ, false, null, CLI_POC);
-    public static final Operation DATA_BROWSER_STATS =
-            new Operation("data-browser.stats", Scope.READ, false, null, CLI_POC);
+    //
+    // All three are open on the MCP face as well, which costs nothing beyond the mark: the tool
+    // catalog derives its names and schemas from these entries, so no adapter holds a second list.
+    // What that face does need is a listing that says more than the names — a caller with no person
+    // behind it decides what to read next from this answer alone.
+    public static final Operation DATA_BROWSER_COLLECTIONS = mcp(
+            "data-browser.collections", Scope.READ, false,
+            "List the collections a declared Source's own database holds, each with what is known "
+                    + "about it: the kind of collection, the fields discovery found, and whatever the "
+                    + "workspace said about it. These are the collections the database actually holds, "
+                    + "not the ones the workspace declared. A field list or a description that nobody "
+                    + "answered is left out rather than sent empty.");
+    public static final Operation DATA_BROWSER_FIND = mcp(
+            "data-browser.find", Scope.READ, false,
+            "Read rows from one collection of a declared Source's own database. A preview of the first "
+                    + "rows, not a page: the read is one-shot, and there is no way to ask for the next "
+                    + "ones. Filtering uses this API's own small vocabulary, not the database's query "
+                    + "language.");
+    public static final Operation DATA_BROWSER_STATS = mcp(
+            "data-browser.stats", Scope.READ, false,
+            "Report what the connector knows about the size of one collection of a declared Source's "
+                    + "own database.");
 
     // cluster domain: topology is sensitive, so listing members is a registry operation (authenticated
     // like every other verb) rather than an anonymous endpoint — only the process-liveness probe stays

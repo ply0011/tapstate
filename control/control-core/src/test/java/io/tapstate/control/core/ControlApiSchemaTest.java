@@ -16,10 +16,11 @@ class ControlApiSchemaTest {
             "connection.test", "connection.test-result", "connection.discover-schema", "connection.schema",
             "artifact.validate", "artifact.apply",
             "pipeline.start", "pipeline.stop", "pipeline.status", "pipeline.metrics",
-            "pipeline.snapshot", "pipeline.logs");
+            "pipeline.snapshot", "pipeline.logs",
+            "data-browser.collections", "data-browser.find", "data-browser.stats");
 
     @Test
-    void betaMcpSurfaceIsExactlyTheOnlinePipelineClosure() {
+    void betaMcpSurfaceIsTheOnlinePipelineClosureAndTheReadFace() {
         Set<String> actual = ControlOperations.registry().exposedOn(Frontend.MCP, Maturity.BETA).stream()
                 .map(Operation::id)
                 .collect(Collectors.toSet());

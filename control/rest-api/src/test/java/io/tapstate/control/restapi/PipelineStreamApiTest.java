@@ -266,6 +266,7 @@ class PipelineStreamApiTest {
         io.tapstate.control.core.DataBrowserService dataBrowserService() {
             return new io.tapstate.control.core.DataBrowserService(
                     appliedPipelines(),
+                    new NoDiscoveries(),
                     config -> {
                         throw new AssertionError("the handshake must be refused before any read");
                     },

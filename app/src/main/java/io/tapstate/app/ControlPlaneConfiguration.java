@@ -371,10 +371,14 @@ class ControlPlaneConfiguration {
 
     @Bean
     DataBrowserService dataBrowserService(
-            ArtifactStore artifactStore, DataBrowserCollectionsProbe collectionsProbe,
+            ArtifactStore artifactStore, SchemaStore schemaStore,
+            DataBrowserCollectionsProbe collectionsProbe,
             DataBrowserStatsProbe statsProbe, DataBrowserFindProbe findProbe,
             DataBrowserTailProbe tailProbe) {
-        return new DataBrowserService(artifactStore, collectionsProbe, statsProbe, findProbe, tailProbe);
+        // The schema store is read, never written, from here: a listing reports what the last discovery
+        // found and never runs one, which would turn a read into an audited write.
+        return new DataBrowserService(
+                artifactStore, schemaStore, collectionsProbe, statsProbe, findProbe, tailProbe);
     }
 
     @Bean

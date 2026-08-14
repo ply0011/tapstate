@@ -53,7 +53,7 @@ class DataBrowserController {
     CollectionList collections(@PathVariable("sourceId") String sourceId) {
         // The path variable is named explicitly: this build compiles without -parameters, so an inferred
         // name would not resolve at runtime.
-        return new CollectionList(browser.collections(sourceId));
+        return CollectionList.of(browser.collections(sourceId));
     }
 
     @Verb("data-browser.stats")

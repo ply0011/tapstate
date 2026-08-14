@@ -215,14 +215,21 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
         };
     }
 
-    /** The collection names from a 200 body, or null when the body is not shaped like that answer. */
+    /**
+     * The collection names from a 200 body, or null when the body is not shaped like that answer.
+     *
+     * <p>Each entry says more than its name — what class of collection it is, the fields discovery
+     * found, the text whoever declared it wrote — and this shell reads only the name back out, because
+     * that is all it prints. What the rest is for is a caller that has to decide what to read next
+     * without a person looking at the screen.
+     */
     private static List<String> names(Object body) {
         if (!(body instanceof Map<?, ?> m && m.get("collections") instanceof List<?> listed)) {
             return null;
         }
         List<String> names = new ArrayList<>(listed.size());
-        for (Object name : listed) {
-            if (name instanceof String text) {
+        for (Object entry : listed) {
+            if (entry instanceof Map<?, ?> described && described.get("name") instanceof String text) {
                 names.add(text);
             }
         }

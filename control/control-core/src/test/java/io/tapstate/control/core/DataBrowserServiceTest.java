@@ -59,7 +59,9 @@ class DataBrowserServiceTest {
             return List.of("order_state", "customers");
         });
 
-        assertThat(service.collections("views")).containsExactly("order_state", "customers");
+        assertThat(service.collections("views"))
+                .extracting(DataBrowserCollection::name)
+                .containsExactly("order_state", "customers");
         assertThat(driven.get().id()).isEqualTo("views");
         assertThat(driven.get().connectorId()).isEqualTo("mongodb");
         assertThat(driven.get().settings()).containsEntry("database", "shop");
@@ -111,6 +113,7 @@ class DataBrowserServiceTest {
         AtomicReference<String> read = new AtomicReference<>();
         DataBrowserService service = new DataBrowserService(
                 store(VIEWS),
+                new EmptySchemaStore(),
                 config -> List.of("order_state"),
                 (config, collection) -> {
                     read.set(collection);
@@ -131,6 +134,7 @@ class DataBrowserServiceTest {
         AtomicReference<DataBrowserQuery> read = new AtomicReference<>();
         DataBrowserService service = new DataBrowserService(
                 store(VIEWS),
+                new EmptySchemaStore(),
                 config -> List.of("order_state"),
                 (config, collection) -> null,
                 (config, query) -> {
@@ -149,6 +153,7 @@ class DataBrowserServiceTest {
         AtomicReference<String> read = new AtomicReference<>();
         DataBrowserService service = new DataBrowserService(
                 store(VIEWS),
+                new EmptySchemaStore(),
                 config -> List.of("order_state"),
                 (config, collection) -> {
                     read.set(collection);
@@ -171,6 +176,7 @@ class DataBrowserServiceTest {
         // here would state as fact - to every face at once - the one thing nobody worked out.
         DataBrowserService service = new DataBrowserService(
                 store(VIEWS),
+                new EmptySchemaStore(),
                 config -> List.of("order_state"),
                 (config, collection) -> new DataBrowserTableInfo(null, null, null),
                 (config, query) -> NOTHING,
@@ -190,6 +196,7 @@ class DataBrowserServiceTest {
                 new DataBrowserPreview(List.of(Map.of("order_id", "ord_123")), 512L, true);
         DataBrowserService service = new DataBrowserService(
                 store(VIEWS),
+                new EmptySchemaStore(),
                 config -> List.of("order_state"),
                 (config, collection) -> null,
                 (config, query) -> {
@@ -383,6 +390,7 @@ class DataBrowserServiceTest {
         AtomicReference<ConnectionConfig> listed = new AtomicReference<>();
         DataBrowserService service = new DataBrowserService(
                 store(VIEWS),
+                new EmptySchemaStore(),
                 config -> {
                     listed.set(config);
                     return List.of("order_state");
@@ -403,6 +411,7 @@ class DataBrowserServiceTest {
     private static DataBrowserService finding(AtomicReference<DataBrowserQuery> driven) {
         return new DataBrowserService(
                 store(VIEWS),
+                new EmptySchemaStore(),
                 config -> List.of("order_state"),
                 (config, collection) -> null,
                 (config, query) -> {
@@ -414,7 +423,8 @@ class DataBrowserServiceTest {
 
     private static DataBrowserService service(ArtifactStore store, DataBrowserCollectionsProbe listing) {
         return new DataBrowserService(
-                store, listing, (config, collection) -> null, (config, query) -> NOTHING,
+                store, new EmptySchemaStore(), listing, (config, collection) -> null,
+                (config, query) -> NOTHING,
                 NO_FOLLOWS);
     }
 

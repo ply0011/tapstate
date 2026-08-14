@@ -21,16 +21,43 @@ class McpToolCatalogTest {
     private static final List<String> READ_TOOLS = List.of(
             "connector_list", "connector_get", "source_list", "source_get", "source_draft",
             "connection_test_result", "connection_schema", "artifact_validate",
-            "pipeline_status", "pipeline_metrics", "pipeline_snapshot", "pipeline_logs");
+            "pipeline_status", "pipeline_metrics", "pipeline_snapshot", "pipeline_logs",
+            "data_browser_collections", "data_browser_find", "data_browser_stats");
 
     private static final List<String> WRITE_TOOLS = List.of(
             "artifact_apply", "connection_test", "connection_discover_schema",
             "pipeline_start", "pipeline_stop");
 
     @Test
-    void defaultSurfaceContainsExactlyTheTwelveReadTools() {
+    void defaultSurfaceContainsExactlyTheFifteenReadTools() {
         assertThat(McpToolCatalog.operations(false).stream().map(McpToolCatalog::toolName))
                 .containsExactlyInAnyOrderElementsOf(READ_TOOLS);
+    }
+
+    @Test
+    void theDataBrowserToolsAppearWithNoMcpCodeOfTheirOwn() {
+        // The whole claim of this surface: a verb becomes a tool by being marked on its registry entry,
+        // not by anything written here. These three carry no branch, no name and no schema in this
+        // module — take the two marks off the entries and all three disappear.
+        assertThat(McpToolCatalog.operations(false).stream().map(McpToolCatalog::toolName))
+                .contains("data_browser_collections", "data_browser_find", "data_browser_stats");
+    }
+
+    @Test
+    void tellsACallerWhatAnAbsentFieldListMeansAndHowToGetTheShapeAnyway() {
+        // An agent that reads an absent `fields` as "no fields" stops there and reports an empty
+        // collection. The schema is where it is told otherwise, and told what to do instead — nothing
+        // else in the protocol carries that, and there is no person on this face to infer it.
+        Map<String, Object> result = ControlApiSchema.resolve(
+                ControlOperations.DATA_BROWSER_COLLECTIONS.schema().result());
+        Map<?, ?> entry = (Map<?, ?>) ((Map<?, ?>) ((Map<?, ?>) result.get("properties"))
+                .get("collections")).get("items");
+        Map<?, ?> fields = (Map<?, ?>) ((Map<?, ?>) entry.get("properties")).get("fields");
+
+        assertThat((String) fields.get("description"))
+                .contains("Absent")
+                .contains("not the same as")
+                .contains("first page");
     }
 
     @Test

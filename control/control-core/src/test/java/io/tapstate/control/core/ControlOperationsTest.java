@@ -158,7 +158,9 @@ class ControlOperationsTest {
     }
 
     @Test
-    void betaMcpFaceIsTheOnlinePipelineClosureAndRestExposureRemainsEmpty() {
+    void betaMcpFaceIsTheOnlinePipelineClosurePlusTheReadFaceAndRestExposureRemainsEmpty() {
+        // The read face joins on the same terms as everything else here — a mark on the registry entry.
+        // The three are read-scoped, so a caller holding no write capability still gets all three.
         assertThat(registry.exposedOn(Frontend.MCP, Maturity.BETA))
                 .extracting(Operation::id)
                 .containsExactlyInAnyOrder(
@@ -168,7 +170,8 @@ class ControlOperationsTest {
                         "connection.discover-schema", "connection.schema",
                         "artifact.validate", "artifact.apply",
                         "pipeline.start", "pipeline.stop", "pipeline.status",
-                        "pipeline.metrics", "pipeline.snapshot", "pipeline.logs");
+                        "pipeline.metrics", "pipeline.snapshot", "pipeline.logs",
+                        "data-browser.collections", "data-browser.find", "data-browser.stats");
         assertThat(registry.exposedOn(Frontend.REST, Maturity.GA)).isEmpty();
     }
 }

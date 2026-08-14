@@ -70,7 +70,19 @@ class McpOperationExecutorTest {
                     Map.entry(ControlOperations.PIPELINE_STATUS, pipeline),
                     Map.entry(ControlOperations.PIPELINE_METRICS, pipeline),
                     Map.entry(ControlOperations.PIPELINE_SNAPSHOT, pipeline),
-                    Map.entry(ControlOperations.PIPELINE_LOGS, logs));
+                    Map.entry(ControlOperations.PIPELINE_LOGS, logs),
+                    Map.entry(ControlOperations.DATA_BROWSER_COLLECTIONS, Map.of("sourceId", "views")),
+                    Map.entry(ControlOperations.DATA_BROWSER_STATS,
+                            Map.of("sourceId", "views", "collection", "order_state")),
+                    Map.entry(ControlOperations.DATA_BROWSER_FIND,
+                            Map.of("sourceId", "views", "collection", "order_state")));
+
+            // "Every" is derived, not counted by hand. The routing is a switch over operation ids, and
+            // the failure it has is silent in exactly this shape: a verb marked open on this face with
+            // no branch answers `unsupported MCP operation` to a caller who was told the tool exists.
+            assertThat(calls.stream().map(Map.Entry::getKey))
+                    .as("every operation the registry opens on MCP is exercised here")
+                    .containsExactlyInAnyOrderElementsOf(McpToolCatalog.operations(true));
 
             for (Map.Entry<io.tapstate.control.core.Operation, Map<String, Object>> call : calls) {
                 assertThat(executor.execute(call.getKey(), call.getValue()).error())
@@ -85,7 +97,10 @@ class McpOperationExecutorTest {
                     "/api/connections/orders/schema", "/api/artifacts:validate", "/api/artifacts:apply",
                     "/api/pipelines/orders:start", "/api/pipelines/orders:stop",
                     "/api/pipelines/orders/status", "/api/pipelines/orders/metrics",
-                    "/api/pipelines/orders/snapshot", "/api/pipelines/orders/logs?limit=200");
+                    "/api/pipelines/orders/snapshot", "/api/pipelines/orders/logs?limit=200",
+                    "/api/sources/views/collections",
+                    "/api/sources/views/collections/order_state/stats",
+                    "/api/sources/views/collections/order_state:find");
         } finally {
             server.stop(0);
         }

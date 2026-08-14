@@ -56,6 +56,7 @@ class DataBrowserServiceTailTest {
             AtomicInteger closes) {
         return new DataBrowserService(
                 store(VIEWS),
+                new EmptySchemaStore(),
                 config -> held,
                 (config, collection) -> new DataBrowserTableInfo(0L, 0L, 0L),
                 (config, query) -> {
