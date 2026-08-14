@@ -50,6 +50,8 @@ import io.tapstate.runtime.probe.DelegatingConnectionProbe;
 import io.tapstate.runtime.probe.DelegatingDataBrowserCollectionsProbe;
 import io.tapstate.runtime.probe.DelegatingDataBrowserFindProbe;
 import io.tapstate.runtime.probe.DelegatingDataBrowserStatsProbe;
+import io.tapstate.runtime.probe.DelegatingDataBrowserTailProbe;
+import io.tapstate.runtime.probe.DataBrowserTailProbe;
 import io.tapstate.runtime.probe.DelegatingSchemaDiscoveryProbe;
 import io.tapstate.runtime.probe.SchemaDiscoveryProbe;
 import io.tapstate.spi.store.AuditStore;
@@ -361,10 +363,16 @@ class ControlPlaneConfiguration {
     }
 
     @Bean
+    DataBrowserTailProbe dataBrowserTailProbe(DataBrowser browser) {
+        return new DelegatingDataBrowserTailProbe(browser);
+    }
+
+    @Bean
     DataBrowserService dataBrowserService(
             ArtifactStore artifactStore, DataBrowserCollectionsProbe collectionsProbe,
-            DataBrowserStatsProbe statsProbe, DataBrowserFindProbe findProbe) {
-        return new DataBrowserService(artifactStore, collectionsProbe, statsProbe, findProbe);
+            DataBrowserStatsProbe statsProbe, DataBrowserFindProbe findProbe,
+            DataBrowserTailProbe tailProbe) {
+        return new DataBrowserService(artifactStore, collectionsProbe, statsProbe, findProbe, tailProbe);
     }
 
     @Bean

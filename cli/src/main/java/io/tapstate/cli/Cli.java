@@ -155,7 +155,7 @@ public final class Cli implements Runnable {
      * one row, refreshed where it stands, or every change to the whole table — which is why there is no
      * flag anywhere that turns one into the other.
      */
-    static final List<String> LIVE_VIEW_VERBS = List.of("watch");
+    static final List<String> LIVE_VIEW_VERBS = List.of("watch", "tail");
 
     /**
      * Verbs that need a live server connection — every projected verb that does not also run offline
@@ -238,6 +238,8 @@ public final class Cli implements Runnable {
             // and the help guard cannot pin a wrapped line.
             Map.entry("watch", new VerbHelp("<source>.<collection> [<filter>]",
                     "Watch one row in place until Ctrl-C; needs a terminal.")),
+            Map.entry("tail", new VerbHelp("<source>.<collection> [<filter>]",
+                    "Follow a whole collection's changes until Ctrl-C; pipes fine.")),
             // The reserved verbs. Each says what it is reserved for: "not implemented yet" answers the
             // question only once the reader knows what was going to be there.
             Map.entry("run", new VerbHelp("[<path>]",

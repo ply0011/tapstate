@@ -103,6 +103,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class AuthTest {
 
+    /** A follow probe that is never driven: nothing here streams, and one that answered
+     * would let a case pass by following instead of reading. */
+    private static final io.tapstate.runtime.probe.DataBrowserTailProbe NO_FOLLOWS =
+            (config, request, listener) -> {
+                throw new AssertionError("no case here opens a follow");
+            };
+
     private static final Instant NOW = Instant.parse("2026-07-08T12:00:00Z");
 
     private static ConfigurableApplicationContext context;
@@ -695,7 +702,7 @@ class AuthTest {
                     (config, query) -> {
                         throw new UnsupportedOperationException(
                                 "data-browser.find is not exercised in this test");
-                    });
+                    }, NO_FOLLOWS);
         }
 
         // The connector register controller is bundled with the whole ControlHttpFace, so its service must be

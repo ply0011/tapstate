@@ -79,6 +79,13 @@ final class Repl {
     /** How often the in-place view asks again. Stated in its own header, because it is a poll. */
     private static final Duration WATCH_INTERVAL = Duration.ofSeconds(1);
 
+    /**
+     * How many rows the appended view remembers the last shown version of. Bounded because a follow on
+     * a busy collection meets unboundedly many rows, and it is somebody else's write rate that decides
+     * how many.
+     */
+    private static final int TAIL_MEMORY = 1000;
+
     /** How often a wait wakes to notice the user interrupted it. */
     private static final Duration CANCEL_POLL = Duration.ofMillis(200);
 
@@ -678,7 +685,8 @@ final class Repl {
             case DataBrowserCall.Collections listing -> browseCollections(listing);
             case DataBrowserCall.Stats stats -> browseStats(stats);
             case DataBrowserCall.Find find -> browseFind(find);
-            case DataBrowserCall.Live live -> watchLive(live);
+            case DataBrowserCall.Live live -> live.verb().equals("tail")
+                    ? tailLive(live) : watchLive(live);
             case DataBrowserCall.Malformed ignored -> Cli.EXIT_USAGE;    // handled above
         };
     }
@@ -718,6 +726,38 @@ final class Repl {
                 break;
             }
         }
+        return Cli.EXIT_OK;
+    }
+
+    /**
+     * {@code tail <source>.<collection> [<filter>]} — every change to the collection, appended, until
+     * Ctrl-C. Unlike the in-place view it needs no terminal: it only ever appends, so it pipes.
+     *
+     * <p>The note under the header is not politeness. Read as a list of everything that happened, an
+     * appended stream over-promises: what reaches the store is the settled version of a row, and rapid
+     * changes are folded together before they are ever written. That folding happens upstream of the
+     * store, so this is not the transport being lossy and a better transport would not change it — the
+     * only honest fix is to say so.
+     */
+    private int tailLive(DataBrowserCall.Live live) {
+        PrintWriter out = commandLine.getOut();
+        String namespace = live.sourceId() + "." + live.collection();
+        TailView view = new TailView(TAIL_MEMORY);
+        out.println("following " + namespace + " · whole collection · streaming changes");
+        out.println("note: shows changes as written to the store — not every intermediate version");
+        out.flush();
+        streamCancelled = false;
+        String refusal = controlPlane.tail(session.landingNode(), session.credential(),
+                live.sourceId(), live.collection(), live.filter(),
+                change -> {
+                    view.onChange(change).forEach(out::println);
+                    out.flush();
+                },
+                this::isStreamCancelled);
+        if (refusal != null) {
+            return renderRejection(refusal, null);
+        }
+        // A stream ends because the user stopped it, which is the way it is meant to end.
         return Cli.EXIT_OK;
     }
 

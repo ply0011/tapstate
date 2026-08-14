@@ -1,0 +1,143 @@
+package io.tapstate.control.core;
+
+import io.tapstate.core.common.TapstateException;
+import io.tapstate.core.model.Resource;
+import io.tapstate.core.model.SourceResource;
+import io.tapstate.spi.store.ArtifactStore;
+import io.tapstate.spi.store.DataBrowserChange;
+import io.tapstate.spi.store.DataBrowserChangeListener;
+import io.tapstate.spi.store.DataBrowserSubscription;
+import io.tapstate.spi.store.DataBrowserTableInfo;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * The followed half of the read face. Two of its rules are the ones that fail quietly if they are
+ * wrong: the confinement, which a follow reaches by a different road than a read and therefore has to
+ * be checked again on that road; and what a filter does to a removal, which has no row to test.
+ */
+class DataBrowserServiceTailTest {
+
+    private static final String VIEWS = "views";
+
+    private static ArtifactStore store(String sourceId) {
+        return new ArtifactStore() {
+            @Override
+            public void saveAll(List<Resource> artifacts) {
+            }
+
+            @Override
+            public Optional<Resource> get(String id) {
+                return id.equals(sourceId)
+                        ? Optional.of(new SourceResource(id, null, "mongodb", Map.of("uri", "mongodb://db.local"),
+                                null, null, null, null, null))
+                        : Optional.empty();
+            }
+
+            @Override
+            public List<Resource> list() {
+                return List.of();
+            }
+        };
+    }
+
+    /** A service whose collections listing is {@code held}, and whose follow records and replays. */
+    private static DataBrowserService service(List<String> held, AtomicReference<DataBrowserChangeListener> opened,
+            AtomicInteger closes) {
+        return new DataBrowserService(
+                store(VIEWS),
+                config -> held,
+                (config, collection) -> new DataBrowserTableInfo(0L, 0L, 0L),
+                (config, query) -> {
+                    throw new AssertionError("a follow must not run a bounded read");
+                },
+                (config, request, listener) -> {
+                    opened.set(listener);
+                    return closes::incrementAndGet;
+                });
+    }
+
+    @Test
+    @DisplayName("a follow of a collection the source's database does not hold is refused before it opens")
+    void refusesACollectionTheDatabaseDoesNotHold() {
+        AtomicReference<DataBrowserChangeListener> opened = new AtomicReference<>();
+        DataBrowserService service = service(List.of("order_state"), opened, new AtomicInteger());
+
+        assertThatThrownBy(() -> service.tail(VIEWS, "tokens", null, change -> { }))
+                .as("a follow reaches the store through a different function than a read, and that "
+                        + "function takes its table from whoever calls it - so the check that the "
+                        + "collection is one this source's own database holds has to happen on this "
+                        + "road too. Enforced on one of two roads it is not enforced")
+                .isInstanceOf(TapstateException.class)
+                .satisfies(refused -> assertThat(((TapstateException) refused).code().code())
+                        .isEqualTo("data-browser.unknown-collection"));
+        assertThat(opened.get())
+                .as("and refused before the stream opens, not after it is already running")
+                .isNull();
+    }
+
+    @Test
+    @DisplayName("a filter narrows what the reader is shown, one change at a time")
+    void filterNarrowsWhatIsDelivered() {
+        AtomicReference<DataBrowserChangeListener> opened = new AtomicReference<>();
+        DataBrowserService service = service(List.of("order_state"), opened, new AtomicInteger());
+        List<DataBrowserChangeEvent> seen = new ArrayList<>();
+
+        service.tail(VIEWS, "order_state",
+                new DataBrowserCriteria.Match("status", DataBrowserCriteria.Operator.EQ, "Paid"),
+                seen::add);
+
+        opened.get().onChange(new DataBrowserChange(
+                DataBrowserChange.Kind.UPSERT, "ord_1", Map.of("status", "Paid"), 1L));
+        opened.get().onChange(new DataBrowserChange(
+                DataBrowserChange.Kind.UPSERT, "ord_2", Map.of("status", "Shipped"), 2L));
+
+        assertThat(seen).extracting(DataBrowserChangeEvent::key).containsExactly("ord_1");
+    }
+
+    @Test
+    @DisplayName("a removal reaches the reader whatever the filter says, having no row to test")
+    void aRemovalIsNeverFilteredOut() {
+        AtomicReference<DataBrowserChangeListener> opened = new AtomicReference<>();
+        DataBrowserService service = service(List.of("order_state"), opened, new AtomicInteger());
+        List<DataBrowserChangeEvent> seen = new ArrayList<>();
+
+        service.tail(VIEWS, "order_state",
+                new DataBrowserCriteria.Match("status", DataBrowserCriteria.Operator.EQ, "Paid"),
+                seen::add);
+        opened.get().onChange(new DataBrowserChange(
+                DataBrowserChange.Kind.DELETE, "ord_1", null, 3L));
+
+        assertThat(seen)
+                .as("withholding it because a filter cannot be evaluated against nothing would leave "
+                        + "the reader watching a row that has quietly gone")
+                .extracting(DataBrowserChangeEvent::key).containsExactly("ord_1");
+        assertThat(seen.get(0).removed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("closing the follow closes the stream underneath it")
+    void closingTheFollowClosesTheStream() {
+        AtomicInteger closes = new AtomicInteger();
+        DataBrowserService service = service(
+                List.of("order_state"), new AtomicReference<>(), closes);
+
+        DataBrowserFollow follow = service.tail(VIEWS, "order_state", null, change -> { });
+        follow.close();
+
+        assertThat(closes.get())
+                .as("what a follow holds is a connector instance and a place in the host's ceiling; a "
+                        + "close that stopped at this layer would leak both with nothing to report it")
+                .isEqualTo(1);
+    }
+}

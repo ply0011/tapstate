@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -416,5 +417,56 @@ class ConnectorInstancePoolTest {
         public Instant instant() {
             return now;
         }
+    }
+
+    @Test
+    @DisplayName("an instance the pool does not hold still counts against the host-wide ceiling")
+    void aReservationCountsTowardsTheCeiling() {
+        // A follow keeps its connector for as long as somebody watches rather than for one call, so it
+        // cannot be pooled -- and it is still an instance, multiplying out to the same driver
+        // connections. A ceiling that counted only the pooled ones would be a ceiling anybody could
+        // walk around by following a collection instead of reading it.
+        ConnectorInstancePool<FakeInstance> pool = pool(ConnectorInstancePool.DEFAULTS.withTotal(2));
+
+        pool.reserveOutsidePool();
+        pool.reserveOutsidePool();
+
+        assertThat(pool.liveInstances()).isEqualTo(2);
+        assertThatThrownBy(pool::reserveOutsidePool)
+                .isInstanceOf(TapstateException.class)
+                .satisfies(refused -> assertThat(((TapstateException) refused).code().code())
+                        .isEqualTo("connector.instance-limit-reached"));
+    }
+
+    @Test
+    @DisplayName("closing a reservation gives its place back, and closing it twice gives back only one")
+    void closingAReservationReleasesExactlyOnePlace() {
+        ConnectorInstancePool<FakeInstance> pool = pool(ConnectorInstancePool.DEFAULTS.withTotal(1));
+        ConnectorInstancePool.Reservation held = pool.reserveOutsidePool();
+
+        held.close();
+        held.close();
+
+        assertThat(pool.liveInstances())
+                .as("a close that gave back two places would let the next caller past a full ceiling; "
+                        + "one that gave back none is the leak this exists to stop")
+                .isZero();
+        assertThat(pool.reserveOutsidePool()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("a reservation does not evict a pooled instance to make room")
+    void aReservationDoesNotEvictToMakeRoom() {
+        // An idle pooled instance is a fair thing to close for a query, which is over in seconds.
+        // Giving one up for a follow that may hold its place for hours trades a reusable instance for
+        // a parked one.
+        ConnectorInstancePool<FakeInstance> pool = pool(ConnectorInstancePool.DEFAULTS.withTotal(1));
+        pool.call(config("a", "mongodb://one"), instance -> instance);   // leaves one idle instance behind
+
+        assertThatThrownBy(pool::reserveOutsidePool)
+                .isInstanceOf(TapstateException.class);
+        assertThat(pool.liveInstances())
+                .as("and the pooled instance is still there, not closed on the way to refusing")
+                .isEqualTo(1);
     }
 }

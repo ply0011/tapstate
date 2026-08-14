@@ -19,6 +19,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -196,6 +197,66 @@ final class ConnectorInstancePool<T> implements AutoCloseable {
     }
 
     // ---- acquire / release -----------------------------------------------------------------------
+
+    /** A booked place in the host-wide ceiling for an instance the pool does not hold. */
+    interface Reservation extends AutoCloseable {
+
+        /** Gives the place back. Idempotent. */
+        @Override
+        void close();
+    }
+
+    /**
+     * Books one place in the host-wide ceiling for an instance this pool will never hold — a follow,
+     * which keeps its connector for as long as somebody is watching rather than for one call.
+     *
+     * <p>It cannot be pooled and it must still be counted. An instance is an instance: it multiplies
+     * out to the same driver connections whether a query or a watcher is holding it, so a ceiling
+     * that only counted the pooled ones would be a ceiling anybody could walk around by following a
+     * collection. Refused with the same code a read is refused with when nothing can be given up.
+     *
+     * <p>Nothing here evicts to make room. An idle pooled instance would be a fair thing to close for
+     * a query, which is over in seconds; giving one up for a subscription that may hold its place for
+     * hours trades a reusable instance for a parked one.
+     */
+    Reservation reserveOutsidePool() {
+        lock.lock();
+        try {
+            if (closed) {
+                throw new TapstateException(ConnectorError.INSTANCE_LIMIT_REACHED,
+                        Map.of("limit", String.valueOf(limits.total())), null);
+            }
+            if (live >= limits.total()) {
+                throw new TapstateException(ConnectorError.INSTANCE_LIMIT_REACHED,
+                        Map.of("limit", String.valueOf(limits.total())), null);
+            }
+            live++;
+        } finally {
+            lock.unlock();
+        }
+        AtomicBoolean released = new AtomicBoolean();
+        return () -> {
+            if (!released.compareAndSet(false, true)) {
+                return;
+            }
+            lock.lock();
+            try {
+                live--;
+            } finally {
+                lock.unlock();
+            }
+        };
+    }
+
+    /** How many instances this host is holding, pooled and reserved alike. */
+    int liveInstances() {
+        lock.lock();
+        try {
+            return live;
+        } finally {
+            lock.unlock();
+        }
+    }
 
     /**
      * Takes one caller's turn against {@code config}: an idle instance if there is one, a fresh one if

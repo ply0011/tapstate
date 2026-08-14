@@ -199,6 +199,14 @@ interface ControlPlaneClient extends AutoCloseable {
      */
     String followLogs(URI baseUrl, String credential, String pipelineId, LogStream sink, BooleanSupplier stop);
 
+    /**
+     * Follows one collection's changes over the websocket, delivering each to {@code sink} until
+     * {@code stop} says so. Returns the code of a refusal that will never be served, or null for every
+     * other ending. Never throws: a stream that ended is not a failure of the caller's command.
+     */
+    String tail(URI baseUrl, String credential, String sourceId, String collection, Object filter,
+                TailStream sink, BooleanSupplier stop);
+
     @Override
     default void close() {
     }

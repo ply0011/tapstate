@@ -13,6 +13,9 @@ import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -908,7 +911,48 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
         });
     }
 
+
+    @Override
+    public String tail(URI baseUrl, String credential, String sourceId, String collection, Object filter,
+            TailStream sink, BooleanSupplier stop) {
+        String path = "/api/data-browser/" + encode(sourceId) + "/" + encode(collection) + "/tail";
+        // The filter travels in the handshake query because a handshake has no body. It goes as the same
+        // JSON a read would have sent, so both faces meet the identical reading on the far side.
+        String query = filter == null ? "" : "?filter=" + encode(JsonOut.compact(filter));
+        return stream(wsUri(baseUrl, path + query), credential, stop, frame -> {
+            TailChange change = tailChange(frame);
+            if (change != null) {
+                sink.change(change);
+            }
+        });
+    }
+
+    /** One streamed change frame, or null when the frame is not one. */
+    private static TailChange tailChange(String frame) {
+        Object parsed = JsonReader.parse(frame);
+        if (!(parsed instanceof Map<?, ?> map) || !(map.get("key") instanceof String key)) {
+            return null;
+        }
+        String at = TIME.format(Instant.ofEpochMilli(
+                map.get("at") instanceof Number ms ? ms.longValue() : 0L).atZone(ZoneId.systemDefault()));
+        if ("DELETE".equals(map.get("kind"))) {
+            return TailChange.delete(at, key);
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> row = map.get("row") instanceof Map<?, ?> written
+                ? (Map<String, Object>) written : Map.of();
+        return TailChange.upsert(at, key, row);
+    }
+
+    /** How a streamed change's time is shown: the clock, because a follow is read as it happens. */
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
+
+    private static String encode(String segment) {
+        return URLEncoder.encode(segment, StandardCharsets.UTF_8);
+    }
+
     /** The websocket policy-violation close code, which the server sends carrying a coded refusal. */
+
     private static final int WS_POLICY_VIOLATION = 1008;
 
     /**

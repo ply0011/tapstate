@@ -5,9 +5,12 @@ import io.tapstate.core.model.SourceResource;
 import io.tapstate.runtime.probe.DataBrowserCollectionsProbe;
 import io.tapstate.runtime.probe.DataBrowserFindProbe;
 import io.tapstate.runtime.probe.DataBrowserStatsProbe;
+import io.tapstate.runtime.probe.DataBrowserTailProbe;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowserQuery;
+import io.tapstate.spi.store.DataBrowserSubscription;
+import io.tapstate.spi.store.DataBrowserTailRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -51,16 +54,19 @@ public final class DataBrowserService {
     private final DataBrowserCollectionsProbe collectionsProbe;
     private final DataBrowserStatsProbe statsProbe;
     private final DataBrowserFindProbe findProbe;
+    private final DataBrowserTailProbe tailProbe;
 
     public DataBrowserService(
             ArtifactStore store,
             DataBrowserCollectionsProbe collectionsProbe,
             DataBrowserStatsProbe statsProbe,
-            DataBrowserFindProbe findProbe) {
+            DataBrowserFindProbe findProbe,
+            DataBrowserTailProbe tailProbe) {
         this.store = Objects.requireNonNull(store, "store");
         this.collectionsProbe = Objects.requireNonNull(collectionsProbe, "collectionsProbe");
         this.statsProbe = Objects.requireNonNull(statsProbe, "statsProbe");
         this.findProbe = Objects.requireNonNull(findProbe, "findProbe");
+        this.tailProbe = Objects.requireNonNull(tailProbe, "tailProbe");
     }
 
     /** Lists the collections the source's own database holds, in the order the connector reports them. */
@@ -106,6 +112,39 @@ public final class DataBrowserService {
                 sort == null ? null : sort.toPortRequest(),
                 bound);
         return DataBrowserPreviewReport.from(findProbe.find(config, query));
+    }
+
+    /**
+     * Follows one of the source's collections, delivering each change that {@code filter} admits to
+     * {@code listener} until the returned subscription is closed. A null filter admits everything.
+     *
+     * <p>The same confinement the reads get, applied again on a different road. The follow reaches the
+     * store through another function entirely, and that function takes its table from whoever calls it
+     * — so the check that the collection is one this source's own database holds has to happen here
+     * too. A rule enforced on one of two paths is not a rule.
+     *
+     * <p>The filter is applied here, to each change as it arrives, and that is a choice with a cost
+     * worth stating: it narrows what the caller is shown, never what the store captures. Everything
+     * the collection does is still streamed and still costs what it costs. It is not an oversight that
+     * it is not pushed down — the read function behind this takes a table, not a query, so there is
+     * nowhere to push it to.
+     */
+    public DataBrowserFollow tail(
+            String sourceId,
+            String collection,
+            DataBrowserCriteria filter,
+            DataBrowserChangeSink sink) {
+        Objects.requireNonNull(sink, "sink");
+        ConnectionConfig config = requireCollection(sourceId, collection);
+        DataBrowserSubscription subscription = tailProbe.tail(
+                config, new DataBrowserTailRequest(collection), change -> {
+            // A removal carries no row to test, and withholding it because a filter cannot be evaluated
+            // against nothing would leave a reader watching a row that has quietly gone.
+            if (filter == null || change.row() == null || filter.matches(change.row())) {
+                sink.onChange(DataBrowserChangeEvent.from(change));
+            }
+        });
+        return subscription::close;
     }
 
     /**

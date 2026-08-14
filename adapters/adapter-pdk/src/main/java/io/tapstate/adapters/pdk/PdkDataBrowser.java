@@ -1,6 +1,11 @@
 package io.tapstate.adapters.pdk;
 
 import io.tapstate.core.common.TapstateException;
+import io.tapstate.core.event.Envelope;
+import io.tapstate.spi.capture.CaptureConfig;
+import io.tapstate.spi.capture.CaptureListener;
+import io.tapstate.spi.capture.CapturePort;
+import io.tapstate.spi.capture.Subscription;
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowser;
 import io.tapstate.spi.store.DataBrowserFilter;
@@ -10,10 +15,15 @@ import io.tapstate.spi.store.DataBrowserFilter.Conjunct;
 import io.tapstate.spi.store.DataBrowserFilter.Match;
 import io.tapstate.spi.store.DataBrowserFilter.Operator;
 import io.tapstate.spi.store.DataBrowserPreview;
+import io.tapstate.spi.store.DataBrowserChange;
+import io.tapstate.spi.store.DataBrowserChangeListener;
 import io.tapstate.spi.store.DataBrowserQuery;
+import io.tapstate.spi.store.DataBrowserSubscription;
+import io.tapstate.spi.store.DataBrowserTailRequest;
 import io.tapstate.spi.store.DataBrowserSort;
 import io.tapstate.spi.store.DataBrowserTableInfo;
 import io.tapdata.pdk.apis.entity.ExecuteResult;
+import io.tapdata.entity.schema.TapTable;
 import io.tapdata.pdk.apis.entity.TapExecuteCommand;
 import io.tapdata.pdk.apis.functions.connection.GetTableInfoFunction;
 import io.tapdata.pdk.apis.functions.connection.GetTableNamesFunction;
@@ -24,10 +34,12 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.StringJoiner;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
@@ -78,6 +90,14 @@ public final class PdkDataBrowser implements DataBrowser {
     private final ConnectorInstancePool<PdkConnector> pool;
     private final ScheduledExecutorService evictions;
 
+    /**
+     * The capture side, driven for follows. A follow is a change stream, and driving one is already
+     * solved here: discovering the tables, filling their field types onto the context, deriving a
+     * position to start from, and skipping the control events a stream carries to say it is alive. A
+     * second copy of that loop in this class would be a second place for any of it to go stale.
+     */
+    private final CapturePort capture;
+
     public PdkDataBrowser(ConnectorProvisioner provisioner) {
         this(provisioner, ConnectorInstancePool.DEFAULTS, Clock.systemUTC());
     }
@@ -85,6 +105,7 @@ public final class PdkDataBrowser implements DataBrowser {
     PdkDataBrowser(ConnectorProvisioner provisioner, ConnectorInstancePool.Limits limits, Clock clock) {
         this.pool = new ConnectorInstancePool<>(
                 config -> openAndInitialize(provisioner, config), PdkDataBrowser::shutDown, limits, clock);
+        this.capture = new PdkCapturePort(provisioner);
         this.evictions = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "data-browser-eviction");
             thread.setDaemon(true);
@@ -164,6 +185,109 @@ public final class PdkDataBrowser implements DataBrowser {
             }
             return new DataBrowserPreview(rows, approximateTotal(connector, query), moreAvailable);
         });
+    }
+
+    @Override
+    public DataBrowserSubscription tail(
+            ConnectionConfig config, DataBrowserTailRequest request, DataBrowserChangeListener listener) {
+        // What identifies a row, asked once per follow rather than once per change. It comes from the
+        // connector's own declared key, which is the connector-neutral answer: naming a particular
+        // store's identifier field here would pin this face to that store, and the identifier field is
+        // exactly the binding this face spent a decision getting rid of.
+        List<String> key = pool.call(config, connector -> keyOf(connector, request.collection()));
+        // A follow holds its connector for as long as somebody is watching, so it cannot take a pooled
+        // instance - but it is still an instance, and it counts where they count.
+        ConnectorInstancePool.Reservation slot = pool.reserveOutsidePool();
+        try {
+            Subscription stream = capture.cdc(
+                    new CaptureConfig(config.connectorId(), config.settings(), List.of(request.collection())),
+                    new CaptureListener() {
+                        @Override
+                        public void onEvent(Envelope event) {
+                            DataBrowserChange change = project(event, key);
+                            // A stream also carries schema changes, which are not a row changing and
+                            // have nowhere to go in a view of rows.
+                            if (change != null) {
+                                listener.onChange(change);
+                            }
+                        }
+
+                        @Override
+                        public void onError(Throwable error) {
+                            listener.onError(error);
+                        }
+                    });
+            AtomicBoolean closed = new AtomicBoolean();
+            return () -> {
+                if (!closed.compareAndSet(false, true)) {
+                    return;
+                }
+                // The place in the ceiling is given back after the stream is stopped, and in a finally:
+                // a close that threw on the way out would otherwise leak the count rather than the
+                // connector, which is the half nothing would ever report.
+                try {
+                    stream.close();
+                } finally {
+                    slot.close();
+                }
+            };
+        } catch (RuntimeException | Error failedToStart) {
+            slot.close();
+            throw failedToStart;
+        }
+    }
+
+    /**
+     * One change, as a view of rows sees it. Null for anything that is not a row changing.
+     *
+     * <p>A creation and an alteration arrive as one kind. Which one a write was is a distinction the
+     * stream does not reliably make - an alteration of a row the reader has not seen yet and a
+     * creation are the same event downstream - and nothing above acts on it.
+     */
+    private static DataBrowserChange project(Envelope event, List<String> key) {
+        return switch (event.op()) {
+            case INSERT, UPDATE, READ -> new DataBrowserChange(
+                    DataBrowserChange.Kind.UPSERT, identity(event.after(), key), event.after(), event.ts());
+            case DELETE -> new DataBrowserChange(
+                    DataBrowserChange.Kind.DELETE, identity(event.before(), key), null, event.ts());
+            case DDL -> null;
+        };
+    }
+
+    /**
+     * The row's identity: its declared key fields' values, joined. Empty when the collection declares
+     * no key, or when the change did not carry the fields that make it up - both are the same honest
+     * answer, that this change cannot be tied to any other.
+     */
+    private static String identity(Map<String, Object> row, List<String> key) {
+        if (row == null || key.isEmpty()) {
+            return "";
+        }
+        StringJoiner identity = new StringJoiner("/");
+        for (String field : key) {
+            Object value = row.get(field);
+            if (value == null) {
+                return "";
+            }
+            identity.add(String.valueOf(value));
+        }
+        return identity.toString();
+    }
+
+    /** The collection's declared key fields, in the order the connector reports them. */
+    private static List<String> keyOf(PdkConnector connector, String collection) {
+        List<TapTable> discovered = new ArrayList<>();
+        drive(connector, () -> {
+            connector.connector().discoverSchema(
+                    connector.context(), List.of(collection), NAME_BATCH_SIZE, discovered::addAll);
+            return null;
+        });
+        for (TapTable table : discovered) {
+            if (collection.equals(table.getId()) && table.primaryKeys() != null) {
+                return new ArrayList<>(table.primaryKeys());
+            }
+        }
+        return List.of();
     }
 
     /** Hands back every pooled connector and stops evicting. */

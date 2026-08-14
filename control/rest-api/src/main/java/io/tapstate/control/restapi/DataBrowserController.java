@@ -86,7 +86,7 @@ class DataBrowserController {
      * combination nested inside a combination, or a document in the store's own query language sent as
      * though this face still forwarded one. The last is the one worth naming — it used to work.
      */
-    private static DataBrowserCriteria criteria(DataBrowserFindRequest.Filter filter) {
+    static DataBrowserCriteria criteria(DataBrowserFindRequest.Filter filter) {
         if (filter == null) {
             return null;
         }

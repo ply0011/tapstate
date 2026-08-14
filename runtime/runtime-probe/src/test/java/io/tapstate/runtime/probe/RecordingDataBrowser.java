@@ -2,6 +2,10 @@ package io.tapstate.runtime.probe;
 
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowser;
+import io.tapstate.spi.store.DataBrowserChange;
+import io.tapstate.spi.store.DataBrowserChangeListener;
+import io.tapstate.spi.store.DataBrowserSubscription;
+import io.tapstate.spi.store.DataBrowserTailRequest;
 import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserTableInfo;
@@ -73,5 +77,27 @@ final class RecordingDataBrowser implements DataBrowser {
             throw new AssertionError("this browser was not primed for " + operation);
         }
         return answer;
+    }
+
+    /** The follow requests this browser was asked for, newest last. */
+    final java.util.List<String> tailed = new java.util.ArrayList<>();
+
+    /** How many of the follows handed out have been closed. */
+    int closedFollows;
+
+    /** The listener the last follow was opened with, so a test can push a change through the seam. */
+    DataBrowserChangeListener lastListener;
+
+    @Override
+    public DataBrowserSubscription tail(
+            ConnectionConfig config, DataBrowserTailRequest request, DataBrowserChangeListener listener) {
+        tailed.add(config.id() + "/" + request.collection());
+        lastListener = listener;
+        return () -> closedFollows++;
+    }
+
+    /** Delivers one change as the store would, so what the seam does with it can be asserted. */
+    void deliver(DataBrowserChange change) {
+        lastListener.onChange(change);
     }
 }

@@ -139,6 +139,20 @@ class ReplTest {
         DataBrowserOutcome.Stats statsOutcome = new DataBrowserOutcome.Stats.Unreachable();
         DataBrowserOutcome.Find findOutcome = new DataBrowserOutcome.Find.Unreachable();
         final List<String> dataBrowserCalls = new ArrayList<>();
+
+        /** Changes the fake streams to a follow, delivered in order before the stream ends. */
+        final List<TailChange> tailFrames = new ArrayList<>();
+
+        /** A refusal the follow ends with, or null when it ends because the caller stopped it. */
+        String tailRefusal;
+
+        @Override
+        public String tail(URI baseUrl, String credential, String sourceId, String collection,
+                           Object filter, TailStream sink, java.util.function.BooleanSupplier stop) {
+            dataBrowserCalls.add("tail " + sourceId + "." + collection + " filter=" + filter);
+            tailFrames.forEach(sink::change);
+            return tailRefusal;
+        }
         Object lastFindFilter;
         DataBrowserCall.Order lastFindSort;
         Integer lastFindLimit;
@@ -3279,5 +3293,59 @@ class ReplTest {
         h.repl().dispatch("watch views.order_state");
 
         assertThat(h.sink().toString().substring(mark)).contains("cli.not-connected");
+    }
+
+    // ---- the appended view ----
+
+    @Test
+    void tailStreamsEveryChangeAndSaysWhatItCannotPromise() {
+        // The note is load-bearing. An appended stream reads as "everything that happened", and what
+        // reaches the store is the settled version of a row -- rapid changes are folded before they are
+        // written, upstream of the store, so no better transport would recover them.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailFrames.add(TailChange.upsert("14:22:11", "ord_1", Map.of("status", "Paid")));
+        client.tailFrames.add(TailChange.upsert("14:22:15", "ord_1", Map.of("status", "Shipped")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("not every intermediate version");
+        assertThat(output).contains("ord_1");
+        assertThat(output)
+                .as("the second change is shown against what the stream itself last showed, which is "
+                        + "the only previous version it can honestly claim to know")
+                .contains("~ status");
+    }
+
+    @Test
+    void tailNeedsNoTerminalBecauseItOnlyEverAppends() {
+        // The opposite of the in-place view, and the reason both exist: this one is the pipeable half.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailFrames.add(TailChange.upsert("14:22:11", "ord_1", Map.of("status", "Paid")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).doesNotContain("cli.watch-needs-a-terminal");
+        assertThat(output).contains("ord_1");
+    }
+
+    @Test
+    void tailSendsItsFilterToTheServerRatherThanNarrowingLocally() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch("tail views.order_state {status: \"Paid\"}");
+
+        assertThat(client.dataBrowserCalls)
+                .as("narrowing on the client would still carry every change of the whole collection "
+                        + "over the wire, which is the cost the filter exists to cut")
+                .anySatisfy(call -> assertThat(call).contains("tail views.order_state")
+                        .contains("status").contains("Paid"));
     }
 }

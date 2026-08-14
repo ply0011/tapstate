@@ -33,6 +33,16 @@ import org.junit.jupiter.api.Test;
  */
 class DataBrowserServiceTest {
 
+    /**
+     * A follow probe that is never driven. Every case here is about the bounded reads, and a probe that
+     * answered would let one of them pass by following instead of reading.
+     */
+    private static final io.tapstate.runtime.probe.DataBrowserTailProbe NO_FOLLOWS =
+            (config, request, listener) -> {
+                throw new AssertionError("a bounded read must not open a follow");
+            };
+
+
     /** What a probe answers when a test does not care what came back. */
     private static final DataBrowserPreview NOTHING = new DataBrowserPreview(List.of(), null, false);
 
@@ -106,7 +116,8 @@ class DataBrowserServiceTest {
                     read.set(collection);
                     return new DataBrowserTableInfo(0L, 0L, 0L);
                 },
-                (config, query) -> NOTHING);
+                (config, query) -> NOTHING,
+                NO_FOLLOWS);
 
         assertThatThrownBy(() -> service.stats("views", "absent")).isInstanceOf(TapstateException.class);
         assertThat(read.get()).isNull();
@@ -125,7 +136,8 @@ class DataBrowserServiceTest {
                 (config, query) -> {
                     read.set(query);
                     return NOTHING;
-                });
+                },
+                NO_FOLLOWS);
 
         assertThatThrownBy(() -> service.find("views", "absent", null, null, 10))
                 .isInstanceOf(TapstateException.class);
@@ -142,7 +154,8 @@ class DataBrowserServiceTest {
                     read.set(collection);
                     return new DataBrowserTableInfo(512L, 40960L, 80L);
                 },
-                (config, query) -> NOTHING);
+                (config, query) -> NOTHING,
+                NO_FOLLOWS);
 
         DataBrowserStatsReport report = service.stats("views", "order_state");
 
@@ -160,7 +173,8 @@ class DataBrowserServiceTest {
                 store(VIEWS),
                 config -> List.of("order_state"),
                 (config, collection) -> new DataBrowserTableInfo(null, null, null),
-                (config, query) -> NOTHING);
+                (config, query) -> NOTHING,
+                NO_FOLLOWS);
 
         DataBrowserStatsReport report = service.stats("views", "order_state");
 
@@ -181,7 +195,8 @@ class DataBrowserServiceTest {
                 (config, query) -> {
                     driven.set(query);
                     return expected;
-                });
+                },
+                NO_FOLLOWS);
 
         DataBrowserPreviewReport preview = service.find(
                 "views", "order_state", new Match("status", Operator.EQ, "paid"), null, 25);
@@ -373,7 +388,8 @@ class DataBrowserServiceTest {
                     return List.of("order_state");
                 },
                 (config, collection) -> null,
-                (config, query) -> NOTHING);
+                (config, query) -> NOTHING,
+                NO_FOLLOWS);
 
         assertThatThrownBy(() -> service.find("views", "order_state", null, null, 500))
                 .isInstanceOf(TapstateException.class);
@@ -392,12 +408,14 @@ class DataBrowserServiceTest {
                 (config, query) -> {
                     driven.set(query);
                     return NOTHING;
-                });
+                },
+                NO_FOLLOWS);
     }
 
     private static DataBrowserService service(ArtifactStore store, DataBrowserCollectionsProbe listing) {
         return new DataBrowserService(
-                store, listing, (config, collection) -> null, (config, query) -> NOTHING);
+                store, listing, (config, collection) -> null, (config, query) -> NOTHING,
+                NO_FOLLOWS);
     }
 
     private static ArtifactStore store(Resource... stored) {
