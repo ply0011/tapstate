@@ -30,8 +30,17 @@ import java.util.Objects;
  */
 public sealed interface DataBrowserCriteria {
 
+    /**
+     * What a conjunction may hold: one term, or one alternative between terms. Nothing else — so the
+     * deepest expression writable is a conjunction of alternatives of terms, and no fourth level exists
+     * to write. That is the shape a reader actually types (several conditions, one of them a choice); an
+     * arbitrarily nested boolean expression is a query rather than a preview.
+     */
+    sealed interface Conjunct extends DataBrowserCriteria {
+    }
+
     /** One field tested against one value. {@code field} may be a dot path, since documents nest. */
-    record Match(String field, Operator operator, Object value) implements DataBrowserCriteria {
+    record Match(String field, Operator operator, Object value) implements Conjunct {
 
         public Match {
             Objects.requireNonNull(field, "field");
@@ -41,16 +50,16 @@ public sealed interface DataBrowserCriteria {
         }
     }
 
-    /** Every term has to hold. */
-    record All(List<Match> terms) implements DataBrowserCriteria {
+    /** Every one of these has to hold; each is a term or an alternative between terms. */
+    record All(List<Conjunct> terms) implements DataBrowserCriteria {
 
         public All {
             terms = requireAtLeastOne(terms);
         }
     }
 
-    /** At least one term has to hold. */
-    record Any(List<Match> terms) implements DataBrowserCriteria {
+    /** At least one term has to hold. Terms only — an alternative of alternatives says nothing more. */
+    record Any(List<Match> terms) implements Conjunct {
 
         public Any {
             terms = requireAtLeastOne(terms);
@@ -125,8 +134,8 @@ public sealed interface DataBrowserCriteria {
     default DataBrowserFilter toPortRequest() {
         return switch (this) {
             case Match match -> port(match);
-            case All all -> new DataBrowserFilter.All(ports(all.terms()));
-            case Any any -> new DataBrowserFilter.Any(ports(any.terms()));
+            case Any any -> new DataBrowserFilter.Any(terms(any.terms()));
+            case All all -> new DataBrowserFilter.All(conjuncts(all.terms()));
         };
     }
 
@@ -135,14 +144,23 @@ public sealed interface DataBrowserCriteria {
                 match.field(), match.operator().toPortRequest(), match.value());
     }
 
-    private static List<DataBrowserFilter.Match> ports(List<Match> terms) {
+    private static List<DataBrowserFilter.Match> terms(List<Match> terms) {
         List<DataBrowserFilter.Match> translated = new ArrayList<>(terms.size());
         terms.forEach(term -> translated.add(port(term)));
         return translated;
     }
 
-    private static List<Match> requireAtLeastOne(List<Match> terms) {
-        List<Match> copy = List.copyOf(Objects.requireNonNull(terms, "terms"));
+    private static List<DataBrowserFilter.Conjunct> conjuncts(List<Conjunct> members) {
+        List<DataBrowserFilter.Conjunct> translated = new ArrayList<>(members.size());
+        // Each member translated as itself: an alternative inside a conjunction stays an alternative.
+        // Flattened into the conjunction it would read as `a AND b AND c` where `a AND (b OR c)` was
+        // asked for -- a stricter filter that still returns rows, so nothing downstream reports it.
+        members.forEach(member -> translated.add((DataBrowserFilter.Conjunct) member.toPortRequest()));
+        return translated;
+    }
+
+    private static <T> List<T> requireAtLeastOne(List<T> terms) {
+        List<T> copy = List.copyOf(Objects.requireNonNull(terms, "terms"));
         if (copy.isEmpty()) {
             throw new TapstateException(
                     ControlError.MALFORMED_REQUEST,

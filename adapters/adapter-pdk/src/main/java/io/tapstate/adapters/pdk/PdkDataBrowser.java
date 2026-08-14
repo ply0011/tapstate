@@ -6,6 +6,7 @@ import io.tapstate.spi.store.DataBrowser;
 import io.tapstate.spi.store.DataBrowserFilter;
 import io.tapstate.spi.store.DataBrowserFilter.All;
 import io.tapstate.spi.store.DataBrowserFilter.Any;
+import io.tapstate.spi.store.DataBrowserFilter.Conjunct;
 import io.tapstate.spi.store.DataBrowserFilter.Match;
 import io.tapstate.spi.store.DataBrowserFilter.Operator;
 import io.tapstate.spi.store.DataBrowserPreview;
@@ -296,14 +297,20 @@ public final class PdkDataBrowser implements DataBrowser {
         return switch (filter) {
             case null -> new LinkedHashMap<>();
             case Match match -> term(match);
+            case Any any -> combination("$or", any.terms().stream().map(t -> (Conjunct) t).toList());
             case All all -> combination("$and", all.terms());
-            case Any any -> combination("$or", any.terms());
         };
     }
 
-    private static Map<String, Object> combination(String connective, List<Match> terms) {
-        List<Map<String, Object>> translated = new ArrayList<>(terms.size());
-        terms.forEach(term -> translated.add(term(term)));
+    /**
+     * One connective over its members. A member is itself translated, so an alternative sitting inside a
+     * conjunction comes through as its own nested connective rather than being flattened into the outer
+     * one — flattened, {@code a AND (b OR c)} becomes {@code a AND b AND c}, which is a stricter filter
+     * that still returns rows.
+     */
+    private static Map<String, Object> combination(String connective, List<Conjunct> members) {
+        List<Map<String, Object>> translated = new ArrayList<>(members.size());
+        members.forEach(member -> translated.add(translate(member)));
         Map<String, Object> document = new LinkedHashMap<>();
         document.put(connective, translated);
         return document;

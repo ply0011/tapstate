@@ -41,18 +41,18 @@ class DataBrowserCallTest {
     }
 
     @Test
-    void readsATermWrittenWithBareKeysAndDoubleQuotes() {
+    void readsALiteralWrittenWithBareKeysAndDoubleQuotes() {
         // The shell's literal is a JavaScript object rather than strict JSON, because that is what a
-        // reader coming from a database shell types. What it spells out is the vocabulary itself, in the
-        // same three words every other surface sends.
-        assertThat(DataBrowserCall.parse("views.order_state.find({field: \"status\", op: \"eq\", value: \"Paid\"})"))
+        // reader coming from a database shell types. What it means is settled elsewhere; what is pinned
+        // here is that the two spellings a reader reaches for both lex.
+        assertThat(DataBrowserCall.parse("views.order_state.find({status: \"Paid\"})"))
                 .isEqualTo(new Find("views", "order_state",
                         Map.of("field", "status", "op", "eq", "value", "Paid"), null, null));
     }
 
     @Test
     void readsSingleQuotedTextAsText() {
-        assertThat(((Find) DataBrowserCall.parse("v.c.find({field:'a', op:'eq', value:'b'})")).filter())
+        assertThat(((Find) DataBrowserCall.parse("v.c.find({a: 'b'})")).filter())
                 .isEqualTo(Map.of("field", "a", "op", "eq", "value", "b"));
     }
 
@@ -60,20 +60,16 @@ class DataBrowserCallTest {
     void readsNumbersAndBooleansAsThemselvesRatherThanAsText() {
         // A number sent as text is a filter that matches nothing against a numeric field, and reads back
         // as a collection that holds no such rows.
-        assertThat(((Find) DataBrowserCall.parse("v.c.find({field:'total', op:'gt', value:100})")).filter())
+        assertThat(((Find) DataBrowserCall.parse("v.c.find({total: {$gt: 100}})")).filter())
                 .isEqualTo(Map.of("field", "total", "op", "gt", "value", 100L));
-        assertThat(((Find) DataBrowserCall.parse("v.c.find({field:'note', op:'exists', value:true})")).filter())
+        assertThat(((Find) DataBrowserCall.parse("v.c.find({note: {$exists: true}})")).filter())
                 .isEqualTo(Map.of("field", "note", "op", "exists", "value", true));
     }
 
     @Test
-    void readsACombinationWithItsListOfTerms() {
-        assertThat(((Find) DataBrowserCall.parse(
-                "v.c.find({all: [{field:'status', op:'eq', value:'Paid'}, {field:'total', op:'gt', value:100}]})"))
-                .filter())
-                .isEqualTo(Map.of("all", List.of(
-                        Map.of("field", "status", "op", "eq", "value", "Paid"),
-                        Map.of("field", "total", "op", "gt", "value", 100L))));
+    void readsAListLiteralAsAList() {
+        assertThat(((Find) DataBrowserCall.parse("v.c.find({status: {$in: ['Paid', 'Shipped']}})")).filter())
+                .isEqualTo(Map.of("field", "status", "op", "in", "value", List.of("Paid", "Shipped")));
     }
 
     @Test

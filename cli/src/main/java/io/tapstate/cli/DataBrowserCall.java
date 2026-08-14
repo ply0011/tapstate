@@ -19,11 +19,12 @@ import java.util.Map;
  *   &lt;source&gt;.&lt;collection&gt;.find([&lt;filter&gt;]) [.sort({field: "f", dir: "asc"})] [.limit(n)]
  * </pre>
  *
- * <p>The filter is written as a JavaScript object rather than as strict JSON — bare keys, either quote —
- * and what it spells out is Tapstate's own filter vocabulary, in the same three words every other
- * surface sends: {@code {field, op, value}} for one term, {@code {all: [...]}} or {@code {any: [...]}}
- * for a combination of them. It is deliberately not the store's own query language: this shell composes
- * a request, it does not forward one.
+ * <p>The filter is written the way a reader writes one in a database shell — {@code {status: "Paid"}},
+ * {@code {age: {$gt: 12}}}, {@code $or} for a choice — because that is the syntax they already know.
+ * {@link MongoShellFilter} reads it and rebuilds it as Tapstate's own vocabulary before it goes
+ * anywhere, so the shell accepts that syntax without forwarding it: what leaves this process says only
+ * what the vocabulary can say, and the operators that evaluate code inside a database have no term to
+ * be translated into.
  *
  * <p>{@link #parse} answers null for a line that is not one of these at all, so the verb table still
  * gets every line this shell has no claim on. A line that is plainly meant as one and cannot be read
@@ -139,7 +140,9 @@ sealed interface DataBrowserCall {
 
     private static DataBrowserCall parseFind(Reader reader, String sourceId, String collection) {
         reader.expect('(');
-        Object filter = reader.peek() == ')' ? null : reader.value();
+        // Read as the shell's own syntax, then rebuilt as the vocabulary before it goes anywhere. What
+        // reaches the wire is never the document that was typed.
+        Object filter = reader.peek() == ')' ? null : MongoShellFilter.translate(reader.value());
         reader.expect(')');
         Order sort = null;
         Integer limit = null;
@@ -222,12 +225,17 @@ sealed interface DataBrowserCall {
             }
         }
 
-        /** A bare word: a verb, a key, or one of the three literals. */
+        /**
+         * A bare word: a verb, a key, or one of the three literals. {@code $} is a word character here
+         * because the shell's operators are spelt with one; refusing it in the lexer would answer
+         * {@code {$where: ...}} with a complaint about punctuation rather than with the reason it is not
+         * taken, and the reason is the whole of what a reader needs.
+         */
         String word() {
             skipBlanks();
             int start = at;
             while (at < source.length() && (Character.isLetterOrDigit(source.charAt(at))
-                    || source.charAt(at) == '_' || source.charAt(at) == '-')) {
+                    || source.charAt(at) == '_' || source.charAt(at) == '-' || source.charAt(at) == '$')) {
                 at++;
             }
             if (start == at) {

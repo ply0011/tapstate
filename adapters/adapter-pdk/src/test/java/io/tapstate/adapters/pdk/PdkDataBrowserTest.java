@@ -314,6 +314,26 @@ class PdkDataBrowserTest {
     }
 
     @Test
+    void findKeepsAnAlternativeNestedInsideAConjunctionRatherThanFlatteningIt(@TempDir Path dir) {
+        // `a AND (b OR c)` flattened into `a AND b AND c` is a stricter filter that still returns rows,
+        // so nothing downstream reports it - the read simply answers a question nobody asked.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery("orders",
+                new All(List.of(
+                        new Match("id", Operator.EQ, 1),
+                        new Any(List.of(new Match("status", Operator.EQ, "0"),
+                                new Match("status", Operator.EQ, "1"))))),
+                10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of("$and", List.of(
+                Map.of("id", Map.of("$eq", 1)),
+                Map.of("$or", List.of(
+                        Map.of("status", Map.of("$eq", "0")),
+                        Map.of("status", Map.of("$eq", "1")))))));
+    }
+
+    @Test
     void findAsksForEveryRowWhenNoTermWasGiven(@TempDir Path dir) {
         // A connector hands an absent filter straight to its driver, which refuses a null one, so the
         // empty document has to be assembled here rather than left out.

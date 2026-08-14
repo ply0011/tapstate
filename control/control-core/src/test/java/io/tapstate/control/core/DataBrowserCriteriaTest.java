@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.control.core.DataBrowserCriteria.All;
+import io.tapstate.control.core.DataBrowserCriteria.Any;
 import io.tapstate.control.core.DataBrowserCriteria.Match;
 import io.tapstate.control.core.DataBrowserCriteria.Operator;
 import io.tapstate.core.common.TapstateException;
@@ -91,11 +92,14 @@ class DataBrowserCriteriaTest {
     }
 
     @Test
-    void nestsOnlyOneLevelDeep() {
-        // The bound is held by the shape rather than by a check: a combination takes terms, so there is
-        // no way to write a combination inside one. Asserted because it is the property the vocabulary
-        // was narrowed for, and a later widening of these signatures would silently undo it.
+    void boundsHowDeepAnExpressionCanNestByShape() {
+        // The bound is held by the types rather than by a check: a conjunction takes conjuncts (a term or
+        // one alternative), and an alternative takes terms only — so there is no fourth level to write.
+        // Asserted because it is the property the vocabulary was narrowed for, and a later widening of
+        // either signature would silently undo it.
         assertThat(All.class.getRecordComponents()[0].getGenericType().getTypeName())
+                .isEqualTo("java.util.List<io.tapstate.control.core.DataBrowserCriteria$Conjunct>");
+        assertThat(Any.class.getRecordComponents()[0].getGenericType().getTypeName())
                 .isEqualTo("java.util.List<io.tapstate.control.core.DataBrowserCriteria$Match>");
     }
 }

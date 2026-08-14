@@ -20,8 +20,17 @@ import java.util.Objects;
  */
 public sealed interface DataBrowserFilter {
 
+    /**
+     * What a conjunction may hold: one term, or one alternative between terms. Nothing else — so the
+     * deepest expression writable is a conjunction of alternatives of terms, and no fourth level exists
+     * to write. That is the shape a reader actually types (several conditions, one of them a choice); an
+     * arbitrarily nested boolean expression is a query rather than a preview.
+     */
+    sealed interface Conjunct extends DataBrowserFilter {
+    }
+
     /** One field tested against one value. {@code field} may be a dot path, since documents nest. */
-    record Match(String field, Operator operator, Object value) implements DataBrowserFilter {
+    record Match(String field, Operator operator, Object value) implements Conjunct {
 
         public Match {
             Objects.requireNonNull(field, "field");
@@ -33,16 +42,16 @@ public sealed interface DataBrowserFilter {
         }
     }
 
-    /** Every term has to hold. */
-    record All(List<Match> terms) implements DataBrowserFilter {
+    /** Every one of these has to hold; each is a term or an alternative between terms. */
+    record All(List<Conjunct> terms) implements DataBrowserFilter {
 
         public All {
             terms = requireAtLeastOne(terms);
         }
     }
 
-    /** At least one term has to hold. */
-    record Any(List<Match> terms) implements DataBrowserFilter {
+    /** At least one term has to hold. Terms only — an alternative of alternatives says nothing more. */
+    record Any(List<Match> terms) implements Conjunct {
 
         public Any {
             terms = requireAtLeastOne(terms);
@@ -86,9 +95,9 @@ public sealed interface DataBrowserFilter {
         }
     }
 
-    private static List<Match> requireAtLeastOne(List<Match> terms) {
+    private static <T> List<T> requireAtLeastOne(List<T> terms) {
         Objects.requireNonNull(terms, "terms");
-        List<Match> copy = List.copyOf(terms);
+        List<T> copy = List.copyOf(terms);
         if (copy.isEmpty()) {
             // An empty combination reads as every row, which is what an absent filter already says. Two
             // spellings of one request is how a surface comes to have two answers for it.

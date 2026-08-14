@@ -955,13 +955,16 @@ class ReplTest {
     }
 
     @Test
-    void findCarriesTheParsedVocabularyOrderAndSizeToTheServer() {
+    void findSendsTheVocabularyRatherThanTheDocumentThatWasTyped() {
+        // The filter is written in the shell's syntax and leaves as Tapstate's vocabulary. Sending the
+        // typed document instead would be a passthrough with a friendly parser in front of it, which is
+        // the one thing this face is not.
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
         client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(), null, false);
         Harness h = onlineSession(Path.of("tap-work"), client);
 
         h.repl().dispatch(
-                "views.order_state.find({field:'status', op:'eq', value:'Paid'}).sort({field:'total', dir:'desc'}).limit(5)");
+                "views.order_state.find({status: 'Paid'}).sort({field:'total', dir:'desc'}).limit(5)");
 
         assertThat(client.lastFindFilter)
                 .isEqualTo(Map.of("field", "status", "op", "eq", "value", "Paid"));
@@ -1026,7 +1029,7 @@ class ReplTest {
         Harness h = onlineSession(Path.of("tap-work"), client);
         int mark = h.sink().toString().length();
 
-        h.repl().dispatch("views.order_state.find({field:'status', op:'eq', value:'Paid'})");
+        h.repl().dispatch("views.order_state.find({status: 'Paid'})");
 
         String output = h.sink().toString().substring(mark);
         assertThat(output).contains("showing 1 ").doesNotContain(" of ~").doesNotContain("of ~0");

@@ -221,12 +221,33 @@ class DataBrowserApiTest {
     }
 
     @Test
+    void carriesAnAlternativeNestedInsideAConjunction() {
+        // The shape a reader types most: several conditions, one of them a choice. It is the one nesting
+        // the vocabulary allows, so the boundary has to let it through rather than refuse it as depth.
+        context.getBean(FakeCollectionsProbe.class).answer("order_state");
+
+        find(Map.of("filter", Map.of("all", List.of(
+                Map.of("field", "id", "op", "eq", "value", 1),
+                Map.of("any", List.of(
+                        Map.of("field", "status", "op", "eq", "value", "0"),
+                        Map.of("field", "status", "op", "eq", "value", "1")))))));
+
+        assertThat(context.getBean(FakeFindProbe.class).lastQuery().filter())
+                .isEqualTo(new DataBrowserFilter.All(List.of(
+                        new DataBrowserFilter.Match("id", DataBrowserFilter.Operator.EQ, 1),
+                        new DataBrowserFilter.Any(List.of(
+                                new DataBrowserFilter.Match("status", DataBrowserFilter.Operator.EQ, "0"),
+                                new DataBrowserFilter.Match("status", DataBrowserFilter.Operator.EQ, "1"))))));
+    }
+
+    @Test
     void refusesACombinationHoldingAnotherCombination() {
-        // The nesting bound, at the one boundary where it is expressible at all: the control-ring type
-        // cannot hold a nested combination, so a request carrying one has to be refused with a reason
-        // rather than crash binding it.
-        assertThat(refusedFilter(Map.of("all", List.of(
-                Map.of("any", List.of(Map.of("field", "a", "op", "eq", "value", 1))))))
+        // The nesting bound, at the one boundary where a deeper one is expressible at all. A conjunction
+        // may hold an alternative -- that is the shape above -- but an alternative holds terms, so a
+        // choice between groups of conditions has no vocabulary term and is refused with a reason rather
+        // than crashing the bind.
+        assertThat(refusedFilter(Map.of("any", List.of(
+                Map.of("all", List.of(Map.of("field", "a", "op", "eq", "value", 1))))))
                 .code()).isEqualTo("control.malformed-request");
     }
 

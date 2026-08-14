@@ -104,22 +104,41 @@ class DataBrowserController {
         if (filter.all() != null && filter.any() != null) {
             throw MalformedRequest.rejecting("a `filter` combines with `all` or with `any`, not both", null);
         }
-        List<DataBrowserFindRequest.Filter> written =
-                filter.all() != null ? filter.all() : filter.any();
-        List<DataBrowserCriteria.Match> terms = new ArrayList<>(written.size());
-        written.forEach(term -> terms.add(term(term)));
-        return filter.all() != null
-                ? new DataBrowserCriteria.All(terms)
-                : new DataBrowserCriteria.Any(terms);
+        if (filter.any() != null) {
+            // An alternative holds terms. A choice between groups of conditions has no term in the
+            // vocabulary, so it is refused here rather than flattened into something narrower.
+            List<DataBrowserCriteria.Match> terms = new ArrayList<>(filter.any().size());
+            filter.any().forEach(written -> terms.add(term(written)));
+            return new DataBrowserCriteria.Any(terms);
+        }
+        // A conjunction holds terms and alternatives alike: several conditions with one of them a choice
+        // is the shape a reader writes most, and it is the one nesting the vocabulary allows.
+        List<DataBrowserCriteria.Conjunct> members = new ArrayList<>(filter.all().size());
+        filter.all().forEach(written -> members.add(conjunct(written)));
+        return new DataBrowserCriteria.All(members);
+    }
+
+    /** One member of a conjunction: a term, or one alternative between terms. */
+    private static DataBrowserCriteria.Conjunct conjunct(DataBrowserFindRequest.Filter filter) {
+        if (filter.any() == null) {
+            return term(filter);
+        }
+        if (filter.all() != null) {
+            throw MalformedRequest.rejecting("a `filter` combines with `all` or with `any`, not both", null);
+        }
+        List<DataBrowserCriteria.Match> terms = new ArrayList<>(filter.any().size());
+        filter.any().forEach(written -> terms.add(term(written)));
+        return new DataBrowserCriteria.Any(terms);
     }
 
     /** One term of the vocabulary, refusing anything that is not one. */
     private static DataBrowserCriteria.Match term(DataBrowserFindRequest.Filter filter) {
         if (filter.all() != null || filter.any() != null) {
-            // The one-level bound. It holds by shape everywhere above this line; here, where a caller can
-            // still write a deeper one down, it holds by refusal.
+            // The nesting bound. It holds by shape everywhere above this line — a conjunction may hold an
+            // alternative, an alternative holds terms, and there is no fourth level to build. Here, where
+            // a caller can still write a deeper one down, it holds by refusal.
             throw MalformedRequest.rejecting(
-                    "a `filter` combination holds terms, not further combinations", null);
+                    "a `filter` alternative holds terms, not further combinations", null);
         }
         MalformedRequest.requireText(filter.field(), "a filter term needs the `field` to test");
         MalformedRequest.requireText(filter.op(), "a filter term needs an `op`");
