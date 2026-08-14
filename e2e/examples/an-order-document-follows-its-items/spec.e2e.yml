@@ -1,0 +1,108 @@
+# The golden path: two real tables become one document per order, and the document follows its items.
+#
+# This is the release gate, and it is the demo and the quickstart - one content, three uses. A shop's
+# orders and their line items live in two MySQL tables; the product assembles each order and its items
+# into a single Mongo document; changing a line item afterwards is reflected in the order document it
+# belongs to. Every other example proves one seam. This one is the product doing the thing it is for.
+#
+# The core claim is the last of those: the ripple. A snapshot crossing only proves rows moved once, and
+# rows moving once is what every other real-connector example already shows. What a nest has to do, and
+# what nothing else here witnesses, is keep a document that was already written correct after one of the
+# rows behind it changes - an insert appearing in the array, an update reaching the element it belongs
+# to, a delete taking that element away again.
+#
+# What is asserted, and what is deliberately not:
+#   - Structure and values are read by path, never by row count. A count says rows crossed; it cannot
+#     say the right rows landed in the right document, which is the only claim worth making here.
+#   - The value assertion is made on the order holding exactly one item, so it names items[0] without
+#     depending on the order elements take inside the array. The size assertions use the two-item order,
+#     where an index is never named at all.
+#   - Nothing asserts how many times a document was written, or that any intermediate version was ever
+#     visible. A nest publishes the settled state and coalesces bursts, so a case that expected to see
+#     each version in turn would be asserting something the product does not promise - and would fail
+#     for a reason that has nothing to do with a defect.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips it,
+# naming a directory whose jars do not resolve fails it.
+name: an-order-document-follows-its-items
+setup:
+  databases:
+    src: { kind: mysql }
+    tgt: { kind: mongo }
+  connectors: [mysql, mongodb]
+  apply: [src_orders.tap.yml, src_items.tap.yml, tgt_mongo.tap.yml, pipeline.tap.yml]
+  discover: [src_orders, src_items]
+pipeline: pipeline.tap.yml
+seed:
+  # Order 1 carries two items and is where the array grows and shrinks; order 2 carries exactly one and
+  # is where a value is changed, so that assertion names items[0] without assuming an element order.
+  src_orders.orders:
+    values:
+      - { id: 1, customer: ada }
+      - { id: 2, customer: grace }
+  src_items.order_items:
+    values:
+      - { id: 10, order_id: 1, sku: bolt, qty: 2 }
+      - { id: 11, order_id: 1, sku: nut, qty: 7 }
+      - { id: 12, order_id: 2, sku: washer, qty: 1 }
+steps:
+  - start
+  # The assembled document, before anything changes: the order's own column and its items, by count of
+  # elements rather than by index, plus the single-item order read element and all.
+  - await:
+      doc:
+        tgt_mongo.order_state:
+          where: { id: 1 }
+          expect: { customer: ada }
+          size: { items: 2 }
+  - await:
+      doc:
+        tgt_mongo.order_state:
+          where: { id: 2 }
+          expect: { customer: grace, "items[0].sku": washer, "items[0].qty": 1 }
+          size: { items: 1 }
+
+  # Ripple 1 - a new line item appears in the order it belongs to, and in no other.
+  - cdc:
+      src_items.order_items:
+        - insert: { id: 13, order_id: 1, sku: screw, qty: 5 }
+  - await:
+      doc:
+        tgt_mongo.order_state:
+          where: { id: 1 }
+          size: { items: 3 }
+  - assert:
+      doc:
+        tgt_mongo.order_state:
+          where: { id: 2 }
+          size: { items: 1 }
+
+  # Ripple 2 - a changed value reaches the element it belongs to. Read on the one-item order, so the
+  # element is unambiguous, and read as a value: a size assertion here would pass without the change.
+  - cdc:
+      src_items.order_items:
+        - update: { where: { id: 12 }, set: { qty: 42 } }
+  - await:
+      doc:
+        tgt_mongo.order_state:
+          where: { id: 2 }
+          expect: { "items[0].sku": washer, "items[0].qty": 42 }
+          size: { items: 1 }
+
+  # Ripple 3 - a removed line item leaves the array. The order's own columns are read again in the same
+  # breath: a document rebuilt on a delete has to still be the order, not a husk holding a shorter list.
+  - cdc:
+      src_items.order_items:
+        - delete: { where: { id: 13 } }
+  - await:
+      doc:
+        tgt_mongo.order_state:
+          where: { id: 1 }
+          expect: { customer: ada }
+          size: { items: 2 }
+
+  # One document per order, still - and the count the whole run settles on, which is what lets the sweep
+  # check this example from outside its own addressing. Three item changes crossed and not one of them
+  # created or destroyed an order: a nest answering a child's arrival by writing a second root, or a
+  # child's removal by dropping one, would leave every assertion above holding.
+  - assert: { count: { tgt_mongo.order_state: 2 } }

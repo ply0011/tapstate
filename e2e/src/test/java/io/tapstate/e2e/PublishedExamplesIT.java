@@ -143,6 +143,10 @@ class PublishedExamplesIT {
         stageConnectorJars(envelope.setup().connectors());
 
         String run = store(workspace, tier);
+        // Every store this run uses is named after it, except the one that holds operator state: that
+        // name is fixed, so what a previous tier of this same example left there is still sitting on the
+        // daemon under this pipeline's own id.
+        SharedMongo.forgetOperatorState();
         // The stores the example asked for come up before anything else: a resource cannot be applied
         // before the endpoint whose address it interpolates exists.
         try (ProvisionedStores stores = ProvisionedStores.provision(envelope.setup().databases(), run);

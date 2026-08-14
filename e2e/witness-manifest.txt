@@ -16,6 +16,8 @@ a-row-keeps-its-sequence-across-the-crossing on IN_PROCESS
 a-row-keeps-its-sequence-across-the-crossing on REAL_PROCESS
 a-sink-write-failure-is-observable on IN_PROCESS
 a-sink-write-failure-is-observable on REAL_PROCESS
+an-order-document-follows-its-items on IN_PROCESS
+an-order-document-follows-its-items on REAL_PROCESS
 default-selection-reaches-every-discovered-table on IN_PROCESS
 default-selection-reaches-every-discovered-table on REAL_PROCESS
 negative-lookahead-source-regex-roundtrip on IN_PROCESS

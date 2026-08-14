@@ -1,0 +1,21 @@
+# The parent source leads the list: the target model a sink writes is resolved from the first source.
+version: tapstate/v1
+kind: pipeline
+id: order_state
+source: [ src_orders, src_items ]
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: order_doc
+    type: nest
+    from: { o: orders, i: order_items }
+    root:
+      from: o
+      key: [ id ]
+      embed:
+        - { from: i, on: { order_id: id }, as: array, path: items, arrayKey: [ id ] }
+serve:
+  from: order_doc
+  sync:
+    - source: tgt_mongo
+      rename:
+        map: { orders: order_state }
