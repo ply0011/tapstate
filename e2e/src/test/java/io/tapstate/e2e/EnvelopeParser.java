@@ -290,12 +290,86 @@ public final class EnvelopeParser {
         throw new EnvelopeException(refusal);
     }
 
-    private static Step.Cdc cdc(Object node) {
+    private static Step cdc(Object node) {
         Map<String, Object> mapping = mapping(node, "cdc");
         if (mapping.size() != 1) {
             throw new EnvelopeException("a cdc step names exactly one table, found: " + mapping.keySet());
         }
         Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
+        // The two forms are told apart by shape, not by a keyword: a list is the author naming each
+        // change, anything else is the counted form. A keyword would make every specification say which
+        // dialect it is written in before saying anything about the run.
+        if (only.getValue() instanceof List<?> changes) {
+            return explicitChanges(alias(only.getKey()), changes, "cdc." + only.getKey());
+        }
+        return generatedChanges(only);
+    }
+
+    private static Step.CdcChanges explicitChanges(TableAlias table, List<?> written, String where) {
+        if (written.isEmpty()) {
+            throw new EnvelopeException(
+                    "the cdc step at " + where + " names no changes; a step that exists to produce them "
+                            + "cannot ask for none");
+        }
+        List<CdcChange> changes = new ArrayList<>();
+        for (Object entry : written) {
+            changes.add(change(entry, where));
+        }
+        return new Step.CdcChanges(table, changes);
+    }
+
+    /** One written change: exactly one operation word, carrying the body that operation reads. */
+    private static CdcChange change(Object node, String where) {
+        Map<String, Object> mapping = mapping(node, where);
+        if (mapping.size() != 1) {
+            throw new EnvelopeException(
+                    "a change names exactly one operation, found: " + mapping.keySet() + " at " + where);
+        }
+        Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
+        String operation = where + "." + only.getKey();
+        return switch (cdcOp(only.getKey())) {
+            case INSERT -> new CdcChange.Insert(requireColumns(mapping(only.getValue(), operation),
+                    operation, "an insert lays down a row, so it names the columns to write"));
+            case UPDATE -> {
+                Map<String, Object> body = mapping(only.getValue(), operation);
+                yield new CdcChange.Update(
+                        locator(body, operation, "an update"),
+                        requireColumns(mapping(body.get("set"), operation + ".set"), operation + ".set",
+                                "an update that sets nothing changes nothing; name the columns in set"));
+            }
+            case DELETE -> new CdcChange.Delete(locator(mapping(only.getValue(), operation), operation,
+                    "a delete"));
+        };
+    }
+
+    /**
+     * The {@code where} of an update or a delete, refused when absent.
+     *
+     * <p>Absent, it would read as every row - an update over the whole table, or a delete of it - which
+     * is a change no author writes on purpose and which passes any assertion that counts rows.
+     */
+    private static Map<String, Object> locator(Map<String, Object> body, String operation, String what) {
+        Object located = body.get("where");
+        if (located == null) {
+            throw new EnvelopeException(
+                    what + " at " + operation + " names no where, so it would reach every row in the "
+                            + "table; name the row it is meant to reach");
+        }
+        return requireColumns(mapping(located, operation + ".where"), operation + ".where",
+                what + " names the columns that locate its row in where");
+    }
+
+    private static Map<String, Object> requireColumns(Map<String, Object> columns, String where, String why) {
+        if (columns.isEmpty()) {
+            throw new EnvelopeException(why + ", and " + where + " is empty");
+        }
+        // The same two scalars a seed may spell. A change writes into the table a seed laid down, so a
+        // value this word accepts and that one refuses would be a column no seed could have created.
+        columns.forEach((column, value) -> requireScalar(value, where + "." + column));
+        return columns;
+    }
+
+    private static Step.Cdc generatedChanges(Map.Entry<String, Object> only) {
         String change = string(only.getValue(), "cdc." + only.getKey());
         String[] parts = change.trim().split("\\s+");
         if (parts.length != 2) {

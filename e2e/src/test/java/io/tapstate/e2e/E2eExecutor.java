@@ -126,6 +126,10 @@ public final class E2eExecutor {
                 binding.cdc(cdc.table(), cdc.op(), cdc.rows());
                 lastChanged = cdc.table();
             }
+            case Step.CdcChanges cdc -> {
+                binding.cdc(cdc.table(), cdc.changes());
+                lastChanged = cdc.table();
+            }
             case Step.Assertion assertion -> check(assertion.matcher(), pipelineId);
             case Step.Await await -> {
                 await(await.matcher(), pipelineId);

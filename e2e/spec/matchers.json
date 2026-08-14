@@ -54,7 +54,7 @@
     },
     {
       "word": "cdc",
-      "description": "Produces changes against a seeded table while the pipeline runs."
+      "description": "Produces changes against a seeded table while the pipeline runs. Either counted ('insert 10', the driver choosing rows and values) or named one by one - the latter is what lets a case say which row changes and what it becomes, which is what an assertion on a value has to be able to produce."
     }
   ],
   "cdcOperations": [

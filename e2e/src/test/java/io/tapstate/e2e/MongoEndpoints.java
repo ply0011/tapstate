@@ -7,6 +7,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Updates;
 import org.bson.Document;
+import org.bson.conversions.Bson;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -98,6 +99,61 @@ final class MongoEndpoints implements Endpoints {
                     Filters.in(IDENTITY_FIELD, lowestIds(collection, rows)),
                     Updates.set(TOUCHED_FIELD, true));
             case DELETE -> collection.deleteMany(Filters.in(IDENTITY_FIELD, lowestIds(collection, rows)));
+        }
+    }
+
+    /**
+     * Applies each named change in order, as the write that change is.
+     *
+     * <p>An update or a delete that matches nothing fails rather than passing quietly: the row a case
+     * names is the row its assertion is about, so reaching none means the specification and what the
+     * collection holds have drifted apart, and a silent no-op would let the run assert the absence of a
+     * change it never made.
+     */
+    @Override
+    public void cdc(EndpointAddress address, String table, List<CdcChange> changes) {
+        MongoCollection<Document> collection = collection(address, table);
+        for (CdcChange change : changes) {
+            switch (change) {
+                case CdcChange.Insert insert -> collection.insertOne(normalizedDocument(insert.row()));
+                case CdcChange.Update update -> reached(
+                        collection.updateMany(filter(update.where()), Updates.combine(sets(update.set())))
+                                .getMatchedCount(),
+                        table, "update");
+                case CdcChange.Delete delete -> reached(
+                        collection.deleteMany(filter(delete.where())).getDeletedCount(), table, "delete");
+            }
+        }
+    }
+
+    /**
+     * Values widened on the way in, the same as a seed's. A where asking for 1 has to match a document
+     * seeded with 1, and the two would be Int32 and Int64 if only one side widened.
+     */
+    private static Document normalizedDocument(Map<String, Object> row) {
+        Document document = new Document();
+        row.forEach((column, value) -> document.append(column, normalized(value)));
+        return document;
+    }
+
+    private static Bson filter(Map<String, Object> where) {
+        return Filters.and(where.entrySet().stream()
+                .map(setting -> Filters.eq(setting.getKey(), normalized(setting.getValue())))
+                .toList());
+    }
+
+    private static List<Bson> sets(Map<String, Object> values) {
+        return values.entrySet().stream()
+                .map(value -> Updates.set(value.getKey(), normalized(value.getValue())))
+                .toList();
+    }
+
+    private static void reached(long documents, String table, String operation) {
+        if (documents == 0) {
+            throw new EnvelopeException(
+                    "the " + operation + " on " + table + " reached no documents; the change names the "
+                            + "document its assertion is about, so reaching none means the specification "
+                            + "and what the collection holds have drifted apart");
         }
     }
 

@@ -175,9 +175,21 @@
                 "pattern": "^[^.]+\\..+$"
               },
               "additionalProperties": {
-                "type": "string",
-                "description": "A change, written '<operation> <rows>'.",
-                "pattern": "^(delete|insert|update)\\s+\\d+$"
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "description": "A change, written '<operation> <rows>'. The driver chooses the rows.",
+                    "pattern": "^(delete|insert|update)\\s+\\d+$"
+                  },
+                  {
+                    "type": "array",
+                    "description": "Changes named one by one, applied in order. What the counted form cannot say: which row changes and what it becomes.",
+                    "minItems": 1,
+                    "items": {
+                      "$ref": "#/$defs/change"
+                    }
+                  }
+                ]
               }
             }
           }
@@ -203,6 +215,107 @@
           "properties": {
             "assert": {
               "$ref": "#/$defs/matcher"
+            }
+          }
+        }
+      ]
+    },
+    "change": {
+      "description": "One change, named by its operation.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "insert"
+          ],
+          "properties": {
+            "insert": {
+              "type": "object",
+              "description": "Columns and their values, as the specification spells them.",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": [
+                  "integer",
+                  "string"
+                ],
+                "description": "An integer or a string; wider value types are a widening of the vocabulary."
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "update"
+          ],
+          "properties": {
+            "update": {
+              "type": "object",
+              "description": "Changes the columns in set on the rows where locates.",
+              "properties": {
+                "where": {
+                  "type": "object",
+                  "description": "Columns and their values, as the specification spells them.",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "description": "An integer or a string; wider value types are a widening of the vocabulary."
+                  }
+                },
+                "set": {
+                  "type": "object",
+                  "description": "Columns and their values, as the specification spells them.",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "description": "An integer or a string; wider value types are a widening of the vocabulary."
+                  }
+                }
+              },
+              "required": [
+                "where",
+                "set"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "delete"
+          ],
+          "properties": {
+            "delete": {
+              "type": "object",
+              "description": "Takes away the rows where locates.",
+              "properties": {
+                "where": {
+                  "type": "object",
+                  "description": "Columns and their values, as the specification spells them.",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "description": "An integer or a string; wider value types are a widening of the vocabulary."
+                  }
+                }
+              },
+              "required": [
+                "where"
+              ],
+              "additionalProperties": false
             }
           }
         }

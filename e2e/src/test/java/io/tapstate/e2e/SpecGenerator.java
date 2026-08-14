@@ -3,6 +3,7 @@ package io.tapstate.e2e;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -87,6 +88,7 @@ final class SpecGenerator {
         defs.put("setup", setupDef());
         defs.put("seed", seedDef());
         defs.put("step", stepDef());
+        defs.put("change", changeDef());
         defs.put("matcher", matcherDef());
         return defs;
     }
@@ -203,10 +205,21 @@ final class SpecGenerator {
     }
 
     private static Map<String, Object> cdcBody() {
+        Map<String, Object> counted = new LinkedHashMap<>();
+        counted.put("type", "string");
+        counted.put("description", "A change, written '<operation> <rows>'. The driver chooses the rows.");
+        counted.put("pattern", "^(" + String.join("|", Vocabulary.CDC_OPERATIONS) + ")\\s+\\d+$");
+
+        Map<String, Object> named = new LinkedHashMap<>();
+        named.put("type", "array");
+        named.put("description",
+                "Changes named one by one, applied in order. What the counted form cannot say: which "
+                        + "row changes and what it becomes.");
+        named.put("minItems", 1);
+        named.put("items", Map.of("$ref", "#/$defs/change"));
+
         Map<String, Object> change = new LinkedHashMap<>();
-        change.put("type", "string");
-        change.put("description", "A change, written '<operation> <rows>'.");
-        change.put("pattern", "^(" + String.join("|", Vocabulary.CDC_OPERATIONS) + ")\\s+\\d+$");
+        change.put("oneOf", List.of(counted, named));
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", "object");
@@ -215,6 +228,63 @@ final class SpecGenerator {
         body.put("maxProperties", 1);
         body.put("propertyNames", Map.of("pattern", ALIAS_PATTERN));
         body.put("additionalProperties", change);
+        return body;
+    }
+
+    /**
+     * One named change: exactly one operation word, carrying what that operation reads. An update and a
+     * delete both require {@code where} - without it they would reach every row in the table, which no
+     * author writes on purpose and which passes any assertion that only counts rows.
+     */
+    private static Map<String, Object> changeDef() {
+        Map<String, Object> columns = new LinkedHashMap<>();
+        columns.put("type", "object");
+        columns.put("description", "Columns and their values, as the specification spells them.");
+        columns.put("minProperties", 1);
+        columns.put("additionalProperties", scalarValue());
+
+        List<Object> forms = new ArrayList<>();
+        for (CdcOp op : CdcOp.values()) {
+            String word = op.name().toLowerCase(Locale.ROOT);
+            forms.add(switch (op) {
+                case INSERT -> keyed(word, columns);
+                case UPDATE -> keyed(word, operation(
+                        "Changes the columns in set on the rows where locates.",
+                        ordered("where", columns, "set", columns), List.of("where", "set")));
+                case DELETE -> keyed(word, operation(
+                        "Takes away the rows where locates.",
+                        ordered("where", columns), List.of("where")));
+            });
+        }
+
+        Map<String, Object> change = new LinkedHashMap<>();
+        change.put("description", "One change, named by its operation.");
+        change.put("oneOf", forms);
+        return change;
+    }
+
+    /**
+     * Keys in the order written. {@code Map.of} randomises iteration per JVM, so a schema built from one
+     * would differ run to run - and the checked-in artifact it is compared against would flap rather
+     * than lock anything.
+     */
+    private static Map<String, Object> ordered(String firstKey, Object firstValue, Object... rest) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put(firstKey, firstValue);
+        for (int i = 0; i < rest.length; i += 2) {
+            map.put((String) rest[i], rest[i + 1]);
+        }
+        return map;
+    }
+
+    private static Map<String, Object> operation(
+            String description, Map<String, Object> properties, List<String> required) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("type", "object");
+        body.put("description", description);
+        body.put("properties", new LinkedHashMap<>(properties));
+        body.put("required", required);
+        body.put("additionalProperties", false);
         return body;
     }
 
@@ -393,7 +463,10 @@ final class SpecGenerator {
 
     private static String bodiedStepDescription(String word) {
         return switch (StepKeyword.valueOf(word.toUpperCase(java.util.Locale.ROOT))) {
-            case CDC -> "Produces changes against a seeded table while the pipeline runs.";
+            case CDC -> "Produces changes against a seeded table while the pipeline runs. Either counted "
+                    + "('insert 10', the driver choosing rows and values) or named one by one - the "
+                    + "latter is what lets a case say which row changes and what it becomes, which is "
+                    + "what an assertion on a value has to be able to produce.";
             case AWAIT -> "Polls a matcher until it holds or the bound expires.";
             case ASSERT -> "Checks a matcher once, now.";
         };

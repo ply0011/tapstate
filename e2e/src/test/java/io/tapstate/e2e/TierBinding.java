@@ -60,6 +60,9 @@ public interface TierBinding {
     /** Produces changes against a table while the pipeline runs. */
     void cdc(TableAlias table, CdcOp op, long rows);
 
+    /** Produces the named changes against a table, in order, while the pipeline runs. */
+    void cdc(TableAlias table, List<CdcChange> changes);
+
     /**
      * Re-emits a table's current rows as fresh change events, row keys unchanged.
      *

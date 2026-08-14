@@ -355,6 +355,77 @@ class MySqlEndpointsIT {
                 .hasMessageContaining("port");
     }
 
+    /**
+     * The named form does what the counted form cannot: reach one row by name and write a given value.
+     *
+     * <p>Read back over this test's own connection, column by column, because the whole point of the
+     * word is the value - a driver that applied the change to the wrong row, or wrote something else,
+     * would still leave the row count the counted form asserts.
+     */
+    @Test
+    void appliesNamedChangesToTheRowsTheyLocate() {
+        endpoints.seed(at(), TABLE, List.of(
+                Map.of("id", 1L, "name", "widget"),
+                Map.of("id", 2L, "name", "gadget")));
+
+        endpoints.cdc(at(), TABLE, List.of(
+                new CdcChange.Insert(Map.of("id", 3L, "name", "sprocket")),
+                new CdcChange.Update(Map.of("id", 1L), Map.of("name", "rewidget")),
+                new CdcChange.Delete(Map.of("id", 2L))));
+
+        assertThat(namedRows()).containsExactly("1,rewidget", "3,sprocket");
+    }
+
+    /**
+     * A change that locates nothing fails rather than passing as a no-op.
+     *
+     * <p>This is the failure the word exists to prevent: the row a case names is the row its assertion
+     * is about, so an update that quietly reaches none would leave the run asserting the absence of a
+     * change it never made - green, and about nothing.
+     */
+    @Test
+    void refusesANamedChangeThatReachesNoRow() {
+        endpoints.seed(at(), TABLE, List.of(Map.of("id", 1L, "name", "widget")));
+
+        assertThatThrownBy(() -> endpoints.cdc(at(), TABLE,
+                List.of(new CdcChange.Update(Map.of("id", 404L), Map.of("name", "ghost")))))
+                .hasMessageContaining("reached 0 rows");
+        assertThatThrownBy(() -> endpoints.cdc(at(), TABLE,
+                List.of(new CdcChange.Delete(Map.of("id", 404L)))))
+                .hasMessageContaining("reached 0 rows");
+    }
+
+    /** Order is the scenario: a later change reads what an earlier one left, not the seeded state. */
+    @Test
+    void appliesNamedChangesInTheOrderTheyAreWritten() {
+        endpoints.seed(at(), TABLE, List.of(Map.of("id", 1L, "name", "first")));
+
+        endpoints.cdc(at(), TABLE, List.of(
+                new CdcChange.Insert(Map.of("id", 2L, "name", "second")),
+                new CdcChange.Update(Map.of("id", 2L), Map.of("name", "changed")),
+                new CdcChange.Delete(Map.of("id", 1L))));
+
+        // Written in the other order, the update would reach no row and the delete would take the row
+        // the insert was about - so this passing is the ordering holding, not a coincidence of contents.
+        assertThat(namedRows()).containsExactly("2,changed");
+    }
+
+    /** Reads id and name back over this test's own connection - the named form writes real columns. */
+    private List<String> namedRows() {
+        List<String> rows = new ArrayList<>();
+        try (Connection connection = open();
+                Statement statement = connection.createStatement();
+                ResultSet results =
+                        statement.executeQuery("SELECT id, name FROM " + TABLE + " ORDER BY id")) {
+            while (results.next()) {
+                rows.add(results.getLong("id") + "," + results.getString("name"));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("cannot read " + TABLE + " back", e);
+        }
+        return rows;
+    }
+
     /** The address as a resource would carry it: five settings, no one of which is the whole address. */
     private static EndpointAddress at() {
         return new EndpointAddress("src_mysql", settings);

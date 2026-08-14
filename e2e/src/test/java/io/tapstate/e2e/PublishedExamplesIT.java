@@ -241,6 +241,7 @@ class PublishedExamplesIT {
                 case Step.Assertion assertion -> assertion.matcher();
                 case Step.Lifecycle ignored -> null;
                 case Step.Cdc ignored -> null;
+                case Step.CdcChanges ignored -> null;
             };
             if (matcher instanceof Matcher.Count count) {
                 return count.expected();

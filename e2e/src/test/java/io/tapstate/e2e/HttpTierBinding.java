@@ -125,6 +125,12 @@ final class HttpTierBinding implements TierBinding {
     }
 
     @Override
+    public void cdc(TableAlias table, List<CdcChange> changes) {
+        Endpoint endpoint = endpoint(table);
+        endpoint.driver().cdc(endpoint.address(), table.table(), changes);
+    }
+
+    @Override
     public void redeliver(TableAlias table) {
         Endpoint endpoint = endpoint(table);
         endpoint.driver().redeliver(endpoint.address(), table.table());

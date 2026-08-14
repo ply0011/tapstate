@@ -650,6 +650,11 @@ class E2eExecutorTest {
             calls.add("cdc:" + table + "=" + op + " x" + rows);
         }
 
+        @Override
+        public void cdc(TableAlias table, List<CdcChange> changes) {
+            calls.add("cdc:" + table + "=" + changes);
+        }
+
         private TableAlias redeliverMovesTable;
         private long redeliverMovesTo;
 

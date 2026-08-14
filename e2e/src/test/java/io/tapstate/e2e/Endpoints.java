@@ -39,6 +39,16 @@ interface Endpoints extends AutoCloseable {
     void cdc(EndpointAddress address, String table, CdcOp op, long rows);
 
     /**
+     * Applies the named changes in order, each against the rows it locates.
+     *
+     * <p>Separate from the counted form because the two ask different things of a store: that one lets
+     * the driver choose rows and values, this one is handed both and may only carry them across. A
+     * store whose format cannot hold what a change writes refuses by naming what it can hold - guessing
+     * a substitute would land data the specification never asked for and assert against it happily.
+     */
+    void cdc(EndpointAddress address, String table, List<CdcChange> changes);
+
+    /**
      * The one document the equality settings locate, or empty when none matches. Identity is spelled
      * {@code id} in the settings and in the returned document whatever the store calls it; the
      * translation is the driver's. More than one match is an error - a matcher that silently read the

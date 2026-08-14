@@ -4,6 +4,8 @@ import io.tapstate.core.lifecycle.LifecycleVerb;
 import io.tapstate.core.lifecycle.PipelineState;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.entry;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -229,6 +231,86 @@ class EnvelopeParserTest {
         assertThatThrownBy(() -> EnvelopeParser.parse(minimal("steps:\n  - cdc: { t.orders: truncate 1 }\n")))
                 .isInstanceOf(EnvelopeException.class)
                 .hasMessageContaining("truncate");
+    }
+
+    @Test
+    void readsExplicitChangesAsTheirOwnOperationsInDeclarationOrder() {
+        Envelope envelope = EnvelopeParser.parse(minimal(
+                """
+                steps:
+                  - cdc:
+                      t.order_items:
+                        - insert: { id: 91, order_id: 42, sku: bolt, qty: 2 }
+                        - update: { where: { id: 91 }, set: { qty: 5 } }
+                        - delete: { where: { id: 91 } }
+                """));
+
+        assertThat(envelope.steps()).singleElement().isInstanceOfSatisfying(Step.CdcChanges.class, step -> {
+            assertThat(step.table()).isEqualTo(new TableAlias("t", "order_items"));
+            // Order is the scenario: the update reaches a row the insert laid down, and the delete
+            // takes away what the update changed. Held as a list, read back as one.
+            // Values are held as the specification wrote them, not widened here: what a store makes of
+            // a whole number is the driver's business, the same as it is for seed values.
+            assertThat(step.changes()).containsExactly(
+                    new CdcChange.Insert(Map.of("id", 91, "order_id", 42, "sku", "bolt", "qty", 2)),
+                    new CdcChange.Update(Map.of("id", 91), Map.of("qty", 5)),
+                    new CdcChange.Delete(Map.of("id", 91)));
+        });
+    }
+
+    @Test
+    void keepsTheGeneratedFormWorkingBesideTheExplicitOne() {
+        Envelope envelope = EnvelopeParser.parse(minimal(
+                """
+                steps:
+                  - cdc: { t.orders: insert 100 }
+                  - cdc:
+                      t.orders:
+                        - delete: { where: { id: 1 } }
+                """));
+
+        assertThat(envelope.steps()).hasSize(2);
+        assertThat(envelope.steps().get(0)).isInstanceOf(Step.Cdc.class);
+        assertThat(envelope.steps().get(1)).isInstanceOf(Step.CdcChanges.class);
+    }
+
+    @Test
+    void refusesAnExplicitChangeThatNamesNoOperation() {
+        assertThatThrownBy(() -> EnvelopeParser.parse(minimal(
+                "steps:\n  - cdc:\n      t.o:\n        - truncate: { where: { id: 1 } }\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("truncate");
+    }
+
+    @Test
+    void refusesAnUpdateOrDeleteThatLocatesNothing() {
+        // Without where, an update is every row and a delete is the table. Both are almost certainly
+        // not what the author meant, and both would pass every count assertion while doing it.
+        assertThatThrownBy(() -> EnvelopeParser.parse(minimal(
+                "steps:\n  - cdc:\n      t.o:\n        - update: { set: { qty: 5 } }\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("where");
+        assertThatThrownBy(() -> EnvelopeParser.parse(minimal(
+                "steps:\n  - cdc:\n      t.o:\n        - delete: { }\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("where");
+    }
+
+    @Test
+    void refusesAnUpdateThatChangesNothing() {
+        assertThatThrownBy(() -> EnvelopeParser.parse(minimal(
+                "steps:\n  - cdc:\n      t.o:\n        - update: { where: { id: 1 } }\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("set");
+    }
+
+    @Test
+    void refusesAnEmptyChangeList() {
+        // An empty list reads as "produce no changes", which a step that exists to produce them
+        // cannot mean; it is a half-written specification, not an instruction.
+        assertThatThrownBy(() -> EnvelopeParser.parse(minimal("steps:\n  - cdc:\n      t.o: []\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("no changes");
     }
 
     @Test

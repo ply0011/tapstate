@@ -128,6 +128,23 @@ final class FileEndpoints implements Endpoints {
     }
 
     /**
+     * Refused: this format holds an id and a sequence, so it cannot carry a change that names columns.
+     *
+     * <p>Refusing rather than approximating. This store's file is a contract with a second, independent
+     * reader, and a change writing a column the format has no room for would have to be dropped or
+     * renamed to fit - either way the run would then assert against values the specification never
+     * asked for, and pass. A store that cannot hold what a case writes should send the author to one
+     * that can, which is what naming the format here does.
+     */
+    @Override
+    public void cdc(EndpointAddress address, String table, List<CdcChange> changes) {
+        throw new EnvelopeException(
+                "a file store holds rows of exactly id and seq, so it cannot apply changes that name "
+                        + "their own columns; the counted form ('insert 3') is what this store takes, "
+                        + "and a case that needs named values wants a store whose rows carry them");
+    }
+
+    /**
      * The rows the table holds now, or none when the table is not there. A table the product has not
      * written yet is absent rather than empty, and the honest count of it is zero: a specification that
      * waits for a first write is waiting for exactly this reading to move.

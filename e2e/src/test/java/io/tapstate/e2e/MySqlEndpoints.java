@@ -7,6 +7,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +43,13 @@ final class MySqlEndpoints implements Endpoints {
      * resource decides and what must not drift.
      */
     private static final String DRIVER_SETTINGS = "?sslMode=DISABLED&allowPublicKeyRetrieval=true";
+
+    /**
+     * An update or a delete holds to "reached something", not to a count: {@code where} is the author's
+     * locator and may legitimately match several rows, so a fixed expectation would refuse a case that
+     * changes every item of one order on purpose. Reaching nothing is still a failure.
+     */
+    private static final int MATCHES_AT_LEAST_ONE = -1;
 
     private final Map<String, Connection> connectionsByUrl = new LinkedHashMap<>();
 
@@ -160,6 +168,87 @@ final class MySqlEndpoints implements Endpoints {
             }
             case DELETE -> execute(
                     connection, "DELETE FROM " + quoted(table) + " ORDER BY id LIMIT " + rows);
+        }
+    }
+
+    /**
+     * Applies each named change in order, as the statement that change is.
+     *
+     * <p>Every value the specification wrote is bound as a parameter rather than written into the SQL:
+     * a column value is data, and a seed that spells a string containing a quote is a specification
+     * being read, not an injection to defend against - but the parameter is also what keeps the value's
+     * type the driver's business rather than a string round trip.
+     *
+     * <p>An update or a delete that matches nothing is a failure, not a no-op. The row a case names is
+     * the row its assertion is about; missing it means the specification and the seed have drifted
+     * apart, and letting it pass produces a run that asserts the absence of a change it never made.
+     */
+    @Override
+    public void cdc(EndpointAddress address, String table, List<CdcChange> changes) {
+        Connection connection = connection(address);
+        if (!exists(connection, address, table)) {
+            throw new EnvelopeException(
+                    "the table " + table + " at " + address.text(HOST)
+                            + " has not been seeded, so there is nothing to change");
+        }
+        for (CdcChange change : changes) {
+            switch (change) {
+                case CdcChange.Insert insert -> apply(connection, insertSql(table, insert.row()),
+                        values(insert.row()), table, "insert", 1);
+                case CdcChange.Update update -> {
+                    List<Object> bound = new ArrayList<>(values(update.set()));
+                    bound.addAll(values(update.where()));
+                    apply(connection, updateSql(table, update.set(), update.where()), bound, table,
+                            "update", MATCHES_AT_LEAST_ONE);
+                }
+                case CdcChange.Delete delete -> apply(connection, deleteSql(table, delete.where()),
+                        values(delete.where()), table, "delete", MATCHES_AT_LEAST_ONE);
+            }
+        }
+    }
+
+    private static String insertSql(String table, Map<String, Object> row) {
+        return "INSERT INTO " + quoted(table) + " (" + columnList(row.keySet()) + ") VALUES ("
+                + String.join(", ", Collections.nCopies(row.size(), "?")) + ")";
+    }
+
+    private static String updateSql(String table, Map<String, Object> set, Map<String, Object> where) {
+        return "UPDATE " + quoted(table) + " SET " + assignments(set.keySet(), ", ")
+                + " WHERE " + assignments(where.keySet(), " AND ");
+    }
+
+    private static String deleteSql(String table, Map<String, Object> where) {
+        return "DELETE FROM " + quoted(table) + " WHERE " + assignments(where.keySet(), " AND ");
+    }
+
+    private static String columnList(Collection<String> columns) {
+        return String.join(", ", columns.stream().map(MySqlEndpoints::quoted).toList());
+    }
+
+    private static String assignments(Collection<String> columns, String separator) {
+        return String.join(separator, columns.stream().map(column -> quoted(column) + " = ?").toList());
+    }
+
+    private static List<Object> values(Map<String, Object> columns) {
+        return List.copyOf(columns.values());
+    }
+
+    /** Runs one change and holds it to the rows it was meant to reach. */
+    private static void apply(Connection connection, String sql, List<Object> bound, String table,
+            String operation, int expected) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < bound.size(); i++) {
+                statement.setObject(i + 1, bound.get(i));
+            }
+            int touched = statement.executeUpdate();
+            if (expected == MATCHES_AT_LEAST_ONE ? touched == 0 : touched != expected) {
+                throw new EnvelopeException(
+                        "the " + operation + " on " + table + " reached " + touched + " rows; the change "
+                                + "names the row its assertion is about, so reaching none means the "
+                                + "specification and what the table holds have drifted apart");
+            }
+        } catch (SQLException e) {
+            throw new EnvelopeException("cannot run " + sql + " on " + table, e);
         }
     }
 

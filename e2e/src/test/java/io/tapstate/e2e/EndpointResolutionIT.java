@@ -166,6 +166,11 @@ class EndpointResolutionIT {
         }
 
         @Override
+        public void cdc(EndpointAddress address, String table, java.util.List<CdcChange> changes) {
+            dialled = address;
+        }
+
+        @Override
         public long count(EndpointAddress address, String table) {
             dialled = address;
             return 0L;

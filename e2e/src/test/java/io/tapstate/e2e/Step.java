@@ -2,6 +2,8 @@ package io.tapstate.e2e;
 
 import io.tapstate.core.lifecycle.LifecycleVerb;
 
+import java.util.List;
+
 /**
  * One stage of a specification. Steps run in declaration order; the order is the scenario.
  *
@@ -20,6 +22,19 @@ public sealed interface Step {
 
     /** Produces changes against a seeded table while the pipeline is running. */
     record Cdc(TableAlias table, CdcOp op, long rows) implements Step {}
+
+    /**
+     * Produces named changes against a seeded table, in the order they are written.
+     *
+     * <p>Separate from {@link Cdc} rather than a wider version of it: that one says how many rows
+     * change and lets the driver pick them, this one says which rows and what they become. A single
+     * record holding both would have every reader ask which half is in play, and every driver check.
+     */
+    record CdcChanges(TableAlias table, List<CdcChange> changes) implements Step {
+        public CdcChanges {
+            changes = List.copyOf(changes);
+        }
+    }
 
     /** Polls a matcher until it holds or the bound expires. */
     record Await(Matcher matcher) implements Step {}
