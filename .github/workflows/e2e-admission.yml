@@ -43,8 +43,9 @@ jobs:
       - name: The gate still decides the way it is supposed to
         run: |
           shellcheck .github/scripts/e2e-admission.sh .github/scripts/e2e-admission-smoke.sh \
-            .github/scripts/witness-gate.sh
+            .github/scripts/witness-gate.sh .github/scripts/witness-gate-smoke.sh
           bash .github/scripts/e2e-admission-smoke.sh
+          bash .github/scripts/witness-gate-smoke.sh
 
       # The release contract's two file-level halves, which need no database and therefore no nightly:
       # every published example is listed, and every listed one exists. Checked here so an example that
