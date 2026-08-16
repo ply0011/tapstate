@@ -21,6 +21,13 @@
 #   scalar fields were dropped on the way through is a document nobody can use, and no assertion about
 #   the array would notice it.
 #
+# The array is awaited rather than asserted. Reaching two documents does not mean the children are on
+# them yet: the roots are written when they arrive and the arrays fill as the child rows are placed, so
+# a count of two is true strictly before the assembly is. Asserting on the instant the count holds
+# passed while this example ran alone and failed once a second real-connector example ran beside it,
+# which is load deciding a result rather than the product. Awaiting keeps every discrimination - an
+# implementation that never assembles still runs the bound out and fails on the array.
+#
 # The order of elements inside the array is deliberately not asserted. A snapshot read is free to return
 # the child rows in any order, so an assertion on element positions would fail for a reason that has
 # nothing to do with what this example is for; what an assembled array holds is this example's subject,
@@ -58,5 +65,5 @@ seed:
 steps:
   - start
   - await: { count: { warehouse.order_state: 2 } }
-  - assert: { doc: { warehouse.order_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
-  - assert: { doc: { warehouse.order_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
+  - await:  { doc: { warehouse.order_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
+  - await:  { doc: { warehouse.order_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
