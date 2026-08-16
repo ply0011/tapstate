@@ -1,5 +1,6 @@
 package io.tapstate.archtests;
 
+import io.tapstate.adapters.pdk.ConnectorArtifactRegistrar;
 import io.tapstate.app.ConnectorPluginProperties;
 
 import org.junit.jupiter.api.DisplayName;
@@ -159,6 +160,45 @@ class ConnectorAcceptanceGatesTest {
                 .as("the skipped file is skipped because it declares the setting - if it no longer does, "
                         + "the exception is stale and something else is being let through under it")
                 .contains("alsoAcceptIds");
+    }
+
+    /**
+     * The three engines the release actually exercises. Held separately from the full set so that this
+     * gate can state the layering it is guarding: everything else accepted is a managed variant of one
+     * of these, admitted on the strength of being the same engine underneath rather than on having been
+     * run.
+     */
+    private static final List<String> VERIFIED_ENGINES = List.of("mysql", "postgres", "mongodb");
+
+    /** Every id a shipped deployment accepts out of the box, in refusal-message order. */
+    private static final List<String> ACCEPTED_OUT_OF_THE_BOX = List.of(
+            "mysql", "aliyun-rds-mysql", "aws-rds-mysql", "polar-db-mysql", "mysql-pxc",
+            "postgres", "aliyun-rds-postgres", "aliyun-adb-postgres", "polar-db-postgres",
+            "tencent-db-postgres",
+            "mongodb", "mongodb-atlas", "mongodb3", "aliyun-db-mongodb", "tencent-db-mongodb");
+
+    @Test
+    @DisplayName("what a shipped deployment accepts out of the box is exactly this set")
+    void whatAShippedDeploymentAcceptsIsExactlyThisSet() {
+        // Two facts make the claim, and neither is enough alone: this is the set the register path is
+        // built with, and nothing a release carries adds to it (the two tests above). Stating it here,
+        // outside every module, is the only place both are in view - the module that owns the list
+        // cannot see the deployment assets, and the assets are not compiled by anything.
+        //
+        // Written out a second time on purpose. The module test pins the field against the field; this
+        // pins it against a list maintained apart from it, so widening the set means saying so twice, in
+        // two modules, which is the smallest amount of friction that still makes a support promise
+        // deliberate. A test that read the same constant it asserts would agree with any value it held.
+        assertThat(ConnectorArtifactRegistrar.officialConnectorIds())
+                .as("adding an id here is a promise that the product accepts that connector - it is made "
+                        + "in two places so that it cannot be made absent-mindedly in one")
+                .containsExactlyElementsOf(ACCEPTED_OUT_OF_THE_BOX);
+
+        // The layering the set encodes: three engines are verified, the rest ride on being the same
+        // engine. Asserting the count rather than listing the variants again keeps this from being a
+        // third copy, while still failing if a fourth engine is slipped in as though it were a variant.
+        assertThat(ACCEPTED_OUT_OF_THE_BOX).containsAll(VERIFIED_ENGINES);
+        assertThat(ACCEPTED_OUT_OF_THE_BOX).hasSize(VERIFIED_ENGINES.size() * 5);
     }
 
     @Test

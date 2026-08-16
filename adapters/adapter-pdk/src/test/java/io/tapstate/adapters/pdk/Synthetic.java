@@ -606,6 +606,24 @@ final class Synthetic {
     }
 
     /**
+     * A registrable connector declaring whichever id the caller names — for driving the acceptance
+     * guard across a set of ids rather than one representative.
+     *
+     * <p>The entry class name is the id with everything that cannot appear in a Java identifier removed,
+     * so that ids carrying dashes still compile. That mangling is invisible to the guard, which reads
+     * the id from the spec and never from the class.
+     */
+    static Path seedableConnector(Path dir, String connectorId) {
+        String type = "Seed" + connectorId.replaceAll("[^A-Za-z0-9]", "");
+        String src = SELF_SCAN_IMPORTS
+                + "@TapConnectorClass(\"" + connectorId + "-spec.json\")"
+                + "public class " + type + " implements TapConnector {" + INERT_CONNECTOR_BODY + "}";
+        return SyntheticJar.compileToJar(dir, "synthetic." + type, src,
+                Map.of(connectorId + "-spec.json", "{\"properties\":{\"id\":\"" + connectorId + "\"}}"),
+                Map.of("PDK-API-Version", "1.3.5"));
+    }
+
+    /**
      * A registrable connector declaring an officially supported id, so it passes the runtime-register
      * guard. Used wherever a test drives the register path itself rather than the guard — post-guard
      * those paths only ever run for an official connector, so an unofficial fixture would exercise a
