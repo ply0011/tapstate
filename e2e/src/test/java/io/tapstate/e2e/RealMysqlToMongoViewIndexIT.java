@@ -58,6 +58,8 @@ class RealMysqlToMongoViewIndexIT {
     private static final long SEEDED_ROWS = 5;
     private static final String TABLE = "orders";
     private static final String KEY_COLUMN = "id";
+    /** Declared under storage.warm.indexes, so the store should carry it and it should not be unique. */
+    private static final String DECLARED_INDEX_COLUMN = "name";
     /** The view's id, which is also the collection it materializes into when it declares no storage. */
     private static final String VIEW_ID = "order_state";
     private static final String PIPELINE_ID = "mysql2view";
@@ -110,6 +112,20 @@ class RealMysqlToMongoViewIndexIT {
                             assertThat(index.getBoolean("unique", false))
                                     .as("the key index must be unique, or it cannot be paged by")
                                     .isTrue();
+                        });
+
+                // The declared index, held to the same standard as the key one: read from what Mongo
+                // reports, not from what the product recorded. Until this ran, storage.warm.indexes was
+                // covered only by a unit test of the resolver - which says what the product intends to
+                // ask for, and would keep saying it if nothing ever asked.
+                assertThat(indexes)
+                        .as("the index declared under storage.warm.indexes, as Mongo reports it")
+                        .anySatisfy(index -> {
+                            assertThat(index.get("key", Document.class)).containsKey(DECLARED_INDEX_COLUMN);
+                            assertThat(index.getBoolean("unique", false))
+                                    .as("a declared index is an index, not a uniqueness constraint - "
+                                            + "making it unique would refuse rows the source allows")
+                                    .isFalse();
                         });
             }
         }
@@ -201,6 +217,10 @@ class RealMysqlToMongoViewIndexIT {
                   id: order_state
                   from: snapshot_rows
                   primary_key: id
+                  storage:
+                    warm:
+                      collection: order_state
+                      indexes: [ name ]
                 """;
     }
 
