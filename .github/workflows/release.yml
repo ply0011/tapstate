@@ -286,8 +286,9 @@ jobs:
 
             ### Known limits in this preview
 
-            These are disclosed rather than fixed, and no shipped scenario covers either one. Delivery is
-            at-least-once; exactly-once is not claimed anywhere.
+            These are disclosed rather than fixed, and no shipped scenario covers either one. For a change
+            the connector has read, delivery is at-least-once — never exactly-once. The second limit below
+            is a change the connector never reads at all, which no delivery guarantee can cover.
 
             * **Duplicate rows on an insert-only target.** Where the target does not upsert, the snapshot
               read and the change-data-capture read overlap, and a row seen by both is written twice.
