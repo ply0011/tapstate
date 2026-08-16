@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static java.util.Map.entry;
@@ -53,6 +52,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * cost more false alarms than the sleeps it would catch, and the honest position is that this gate
  * raises the price of a settle rather than making one impossible. A wait belongs on an observable
  * condition whether or not a gate can see it.
+ *
+ * <p><b>The other direction is a defect, not a boundary.</b> Reddening over a sleep that is not there
+ * blocks work that is not wrong, and teaches people to route around the gate - which costs more than
+ * the settles it was built to catch. One such was found and fixed: a call named in a comment after code
+ * counted as a call, so a file could fail this gate with nothing in it to fix. Comments are now removed
+ * before anything is matched, block comments included. Report any other false alarm as a bug in here.
  */
 class FixedSleepGateTest {
 
@@ -151,6 +156,34 @@ class FixedSleepGateTest {
     }
 
     /**
+     * A sleep the gate only read about is not a sleep, wherever the comment sits on the line.
+     *
+     * <p>Comments used to be dropped a whole line at a time, and only when the line began with one, so a
+     * comment after code survived and was matched: a file whose one mention of the call sat in a trailing
+     * comment failed this gate with nothing to fix. That direction matters as much as the misses. A gate
+     * that reddens over prose blocks work that is not wrong, and the way people deal with one of those is
+     * to stop writing the comment - or to stop trusting the gate, which costs more than the sleeps it was
+     * built to catch. This class's own comments discuss the call throughout, and were safe only by the
+     * accident of starting their lines with a star.
+     *
+     * <p>Code that resumes after a block comment closes is code again, so the last file here is counted.
+     */
+    @Test
+    void aSleepOnlyMentionedInACommentIsNotCounted(@TempDir Path root) throws IOException {
+        // Spelled in pieces for the reason above: written whole, these would be counted by the walk.
+        String call = "Thread." + "sleep(";
+        Files.writeString(root.resolve("Trailing.java"),
+                "class Trailing { void a() { int x = 1; // a settle such as " + call + "500) is banned\n } }");
+        Files.writeString(root.resolve("Block.java"),
+                "class Block {\n/* prose about " + call + "500)\n   and more prose */\n void a() { } }");
+        Files.writeString(root.resolve("Resumed.java"),
+                "class Resumed { void a() throws Exception { /* about it */ " + call + "1); } }");
+
+        assertThat(sleepsUnder(root)).containsExactlyInAnyOrderEntriesOf(
+                java.util.Map.of("Resumed.java", 1L));
+    }
+
+    /**
      * Every source under the root that holds a sleep, keyed by its path under that root.
      *
      * <p>The path is the identity because a file name is not one. Two packages may hold a
@@ -183,12 +216,49 @@ class FixedSleepGateTest {
         } catch (IOException e) {
             throw new UncheckedIOException("cannot read " + source, e);
         }
-        // Comments drop out line-wise, then the rest is matched as one text rather than line by line:
-        // a call split before its dot spans two lines and no single line holds it, and two calls
-        // sharing a line are two calls. What is counted is the matches, not the lines carrying them.
-        String code = lines.stream()
-                .filter(line -> !line.trim().startsWith("//") && !line.trim().startsWith("*"))
-                .collect(Collectors.joining("\n"));
-        return SLEEP.matcher(code).results().count();
+        // Comments come out first, then what is left is matched as one text rather than line by line: a
+        // call split before its dot spans two lines and no single line holds it, and two calls sharing a
+        // line are two calls. What is counted is the matches, not the lines carrying them.
+        return SLEEP.matcher(withoutComments(lines)).results().count();
+    }
+
+    /**
+     * The source with its comments taken out, so the gate counts calls rather than mentions of one.
+     *
+     * <p>Dropping whole lines that begin with a comment marker is not enough and was not: a comment after
+     * code stayed, and a file whose only mention of the call sat there failed the gate over prose. Block
+     * comments are tracked across lines for the same reason, and code resuming after one closes is code.
+     *
+     * <p>Not a Java lexer, and the remaining gap is a string holding {@code //} - a URL, say - which ends
+     * the line early here and would hide a call written after it on that same line. Worth knowing and not
+     * worth a parser: this reads test sources, where that line has never existed. A string holding the
+     * call itself is still counted, which is why the fixtures in this file spell theirs in pieces.
+     */
+    private static String withoutComments(List<String> lines) {
+        StringBuilder code = new StringBuilder();
+        boolean inBlock = false;
+        for (String line : lines) {
+            int index = 0;
+            while (index < line.length()) {
+                if (inBlock) {
+                    int close = line.indexOf("*/", index);
+                    if (close < 0) {
+                        break;
+                    }
+                    inBlock = false;
+                    index = close + 2;
+                } else if (line.startsWith("//", index)) {
+                    break;
+                } else if (line.startsWith("/*", index)) {
+                    inBlock = true;
+                    index += 2;
+                } else {
+                    code.append(line.charAt(index));
+                    index++;
+                }
+            }
+            code.append('\n');
+        }
+        return code.toString();
     }
 }
