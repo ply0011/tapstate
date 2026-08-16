@@ -8,6 +8,7 @@ import io.tapstate.core.dsl.DslParser;
 import io.tapstate.core.dsl.DiscoveredTable;
 import io.tapstate.core.dsl.RowExpressionTypeRules;
 import io.tapstate.core.dsl.Workspace;
+import io.tapstate.core.dsl.WriteKeyRules;
 import io.tapstate.core.model.PipelineResource;
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceResource;
@@ -125,6 +126,7 @@ public final class ApplyService {
         // advises on the same reading rather than paying a second round trip for a possibly different one.
         Map<String, List<DiscoveredTable>> discovered = discoveredTables(resources);
         RowExpressionTypeRules.validate(resources, discovered);
+        WriteKeyRules.validate(resources, discovered);
         List<Resource> validated = List.copyOf(workspace.resources());
         List<PreparedArtifact> prepared = new ArrayList<>();
         for (Resource resource : validated) {

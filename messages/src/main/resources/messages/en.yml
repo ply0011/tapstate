@@ -113,6 +113,9 @@ dsl.row-expression-type-unsupported:
 dsl.row-expression-type-unknown:
   message: "Expression `{expr}` at {path} reads column `{column}` of table `{table}`, which nothing resolved a type for."
   solution: "Whether this expression can run is unknown; drop the reference to `{column}`, or read a column whose type the source declares."
+dsl.upsert-needs-key:
+  message: "The sync at {path} upserts table `{table}` of source `{source}`, but that table declares no key, so no write can be matched to the row it belongs to."
+  solution: "Give `{table}` a primary key (or a unique index on non-null columns) and discover `{source}` again, or write with `write_mode: append`, which adds rows instead of matching them."
 dsl.composition:
   message: "Composition rule broken at {path}: {detail}."
   solution: "Review how the resources are wired together."
