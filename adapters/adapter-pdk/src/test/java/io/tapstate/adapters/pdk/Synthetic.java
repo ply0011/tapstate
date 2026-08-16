@@ -193,6 +193,20 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.ThrowingWrite", source("ThrowingWrite", "", register));
     }
 
+    /**
+     * A sink connector that refuses the write and says which identifier it refused, the way a real
+     * store does when a name breaks its rules (MongoDB answers an illegal collection name with
+     * "Invalid collection name: &lt;name&gt;"). What matters for the test is that the name is only in
+     * the connector's own message: nothing else in the chain knows it.
+     */
+    static Path identifierRejectingSink(Path dir) {
+        String register = "functions.supportWriteRecord((context, events, table, consumer) -> {"
+                + "  throw new RuntimeException(\"Invalid collection name: ord$ers\");"
+                + "});";
+        return SyntheticJar.compileToJar(
+                dir, "synthetic.IdentifierRejecting", source("IdentifierRejecting", "", register));
+    }
+
     /** A sink connector whose writeRecord reports each batch in two flushes — proves count accumulation. */
     static Path multiFlushSink(Path dir) {
         String register = "functions.supportWriteRecord((context, events, table, consumer) -> {"

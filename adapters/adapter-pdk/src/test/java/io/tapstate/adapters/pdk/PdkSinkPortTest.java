@@ -120,6 +120,31 @@ class PdkSinkPortTest {
         }
     }
 
+    /**
+     * When a store refuses a name, the only thing that knows which name it was is the store's own
+     * message. Tapstate cannot reconstruct it - a batch names a table, but the rule that rejected it
+     * belongs to the target - so carrying that message through verbatim is the whole of what makes
+     * the failure diagnosable. A detail that summarised or replaced it would leave the user with
+     * "the write failed" and no way to find out which identifier caused it.
+     */
+    @Test
+    void aRefusedIdentifierSurvivesIntoTheFailureDetail(@TempDir Path dir) throws Exception {
+        Path jar = Synthetic.identifierRejectingSink(dir);
+        PdkSinkPort port = new PdkSinkPort(provisioner(jar, "synthetic.IdentifierRejecting"));
+        try (SinkWriter writer = port.open(config(WriteMode.UPSERT, DdlPolicy.IGNORE),
+                Map.of("t1", target()))) {
+            assertThatThrownBy(() -> await(writer, List.of(Envelope.insert(1L, "t1", Map.of("id", 1), null))))
+                    .isInstanceOf(ExecutionException.class)
+                    .hasCauseInstanceOf(TapstateException.class)
+                    .satisfies(e -> {
+                        TapstateException failure = (TapstateException) e.getCause();
+                        assertThat(failure.code()).isEqualTo(ConnectorError.WRITE_FAILED);
+                        assertThat(failure.args()).extracting("detail").asString()
+                                .contains("ord$ers");
+                    });
+        }
+    }
+
     @Test
     void upsertModePassesRowEventsThroughUnchanged(@TempDir Path dir) throws Exception {
         // In upsert mode an update stays an update; the inserts-only sink rejects it, proving no reforge.
