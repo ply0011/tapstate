@@ -57,7 +57,8 @@
                 "description": "What sort of store, which settles provisioning, address shape and driver.",
                 "enum": [
                   "mongo",
-                  "mysql"
+                  "mysql",
+                  "postgres"
                 ]
               }
             }

@@ -126,6 +126,15 @@ final class ProvisionedStores implements AutoCloseable {
                         environment.put(prefix + "_" + setting.toUpperCase(Locale.ROOT), String.valueOf(value)));
                 storesByName.put(name, new Store(database, driver, new EndpointAddress(name, settings)));
             }
+            // Same five settings as MySQL and published the same way: both are JDBC stores a resource
+            // addresses by host, port, database and credentials, so a specification that swaps one engine
+            // for the other changes the kind and nothing else.
+            case POSTGRES -> {
+                Map<String, Object> settings = SharedPostgres.settings(database);
+                settings.forEach((setting, value) ->
+                        environment.put(prefix + "_" + setting.toUpperCase(Locale.ROOT), String.valueOf(value)));
+                storesByName.put(name, new Store(database, driver, new EndpointAddress(name, settings)));
+            }
             case MONGO -> {
                 String url = SharedMongo.replicaSetUrl(database);
                 environment.put(prefix + "_URI", url);
@@ -137,6 +146,7 @@ final class ProvisionedStores implements AutoCloseable {
     private static Endpoints newDriver(DatabaseKind kind) {
         return switch (kind) {
             case MYSQL -> new MySqlEndpoints();
+            case POSTGRES -> new PostgresEndpoints();
             case MONGO -> new MongoEndpoints();
         };
     }
