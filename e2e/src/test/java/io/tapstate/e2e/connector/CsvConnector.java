@@ -12,16 +12,21 @@ import io.tapdata.pdk.apis.TapConnector;
 import io.tapdata.pdk.apis.annotations.TapConnectorClass;
 import io.tapdata.pdk.apis.consumer.StreamReadConsumer;
 import io.tapdata.pdk.apis.context.TapConnectionContext;
+import io.tapdata.pdk.apis.context.TapConnectorContext;
 import io.tapdata.pdk.apis.entity.ConnectionOptions;
+import io.tapdata.pdk.apis.entity.ExecuteResult;
+import io.tapdata.pdk.apis.entity.TapExecuteCommand;
 import io.tapdata.pdk.apis.entity.TestItem;
 import io.tapdata.pdk.apis.entity.WriteListResult;
 import io.tapdata.pdk.apis.functions.ConnectorFunctions;
+import io.tapdata.pdk.apis.functions.connection.TableInfo;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -88,6 +93,13 @@ public class CsvConnector implements TapConnector {
 
     private static final String SUFFIX = ".csv";
 
+    /**
+     * The one command the read face dispatches. It is pinned on both sides on purpose: the caller sends
+     * only this name and this connector answers only this name, so the command channel cannot become a
+     * way to reach anything else the connector can do.
+     */
+    private static final String QUERY_COMMAND = "executeQuery";
+
     /** Every column is text: a comma-separated file declares no types, so inventing one would be a lie. */
     private static final String COLUMN_TYPE = "string";
 
@@ -107,7 +119,15 @@ public class CsvConnector implements TapConnector {
                 .supportStreamRead((context, tables, offset, size, consumer) ->
                         tail(context, tables, consumer))
                 .supportWriteRecord((context, events, table, consumer) ->
-                        consumer.accept(write(context, events, table)));
+                        consumer.accept(write(context, events, table)))
+                // The three the read face drives. Registering them is what lets a specification exercise
+                // the browse chain without a real database at the far end; a connector missing any one of
+                // them is refused by name before the read starts.
+                .supportGetTableNamesFunction((context, batchSize, consumer) ->
+                        consumer.accept(tableNames(context)))
+                .supportGetTableInfoFunction(CsvConnector::tableInfo)
+                .supportExecuteCommandFunction((context, command, consumer) ->
+                        consumer.accept(execute(context, command)));
     }
 
     @Override
@@ -334,6 +354,127 @@ public class CsvConnector implements TapConnector {
             value.append(String.valueOf(row.get(column))).append('\0');
         }
         return value.toString();
+    }
+
+    // ---- the read face ---------------------------------------------------------------------------
+
+    /**
+     * What one table measures. Counted and measured off the file rather than estimated: a directory is
+     * small enough that an exact answer costs nothing, and a specification asserting a total wants the
+     * number the collection actually holds.
+     */
+    private static TableInfo tableInfo(TapConnectionContext context, String table) {
+        Path file = file(context, table);
+        long rows = rows(file).size();
+        long bytes = sizeOf(file);
+        return TableInfo.create()
+                .numOfRows(rows)
+                .storageSize(bytes)
+                .avgObjSize(rows == 0 ? 0L : bytes / rows);
+    }
+
+    private static long sizeOf(Path file) {
+        if (!Files.isRegularFile(file)) {
+            return 0L;
+        }
+        try {
+            return Files.size(file);
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot measure the table at " + file, e);
+        }
+    }
+
+    /**
+     * One read of the browse face, answered whole.
+     *
+     * <p>A failure travels back inside the result rather than out of the call, because that is the
+     * contract the caller reads: it inspects the result for an error and raises it afterwards. Throwing
+     * from here would arrive as a broken connector instead of as a query that failed.
+     */
+    private static ExecuteResult<List<Map<String, Object>>> execute(
+            TapConnectorContext context, TapExecuteCommand command) {
+        ExecuteResult<List<Map<String, Object>>> result = new ExecuteResult<>();
+        try {
+            return result.result(query(context, command));
+        } catch (Throwable failure) {
+            return result.error(failure);
+        }
+    }
+
+    /** The rows one read asks for: the named table, ordered if an order was asked for, cut to the bound. */
+    private static List<Map<String, Object>> query(TapConnectorContext context, TapExecuteCommand command) {
+        if (!QUERY_COMMAND.equals(command.getCommand())) {
+            // The face pins the command name rather than forwarding one, so anything else reaching here
+            // is the read having been widened into a general dispatch.
+            throw new IllegalArgumentException(
+                    "this connector answers '" + QUERY_COMMAND + "', not '" + command.getCommand() + "'");
+        }
+        Map<String, Object> params = command.getParams() == null ? Map.of() : command.getParams();
+        requireEveryRow(params.get("filter"));
+        List<Map<String, Object>> rows = new ArrayList<>(rows(file(context, table(params))));
+        order(rows, params.get("sort"));
+        int bound = bound(params);
+        return rows.size() <= bound ? rows : new ArrayList<>(rows.subList(0, bound));
+    }
+
+    private static String table(Map<String, Object> params) {
+        Object collection = params.get("collection");
+        if (collection == null || String.valueOf(collection).isBlank()) {
+            throw new IllegalArgumentException("a read names the collection it reads");
+        }
+        return String.valueOf(collection);
+    }
+
+    /**
+     * Accepts the filter meaning "every row" and refuses every other one, by design.
+     *
+     * <p>This connector could evaluate the operators over its own rows, and deliberately does not. Every
+     * column here is text, so its comparisons would order and match differently from a real backend's
+     * typed ones — and a specification that passed on those semantics would be asserting this class's
+     * reading of a filter rather than the product's. Refusing keeps that impossible: a specification
+     * needing a filter witnessed end to end fails here, loudly, instead of passing on a second truth.
+     */
+    private static void requireEveryRow(Object filter) {
+        if (filter instanceof Map<?, ?> document && document.isEmpty()) {
+            return;
+        }
+        throw new UnsupportedOperationException(
+                "this connector answers unfiltered reads only, and was sent the filter " + filter
+                        + "; evaluating one here would assert this connector's semantics, not the product's");
+    }
+
+    /**
+     * Puts the rows in the asked-for order, or leaves them in the one the file has.
+     *
+     * <p>Lexicographic, because every column this connector reports is text and there is nothing else it
+     * could honestly sort on. A specification ordering by a field must therefore seed values that order
+     * the same way as strings.
+     */
+    private static void order(List<Map<String, Object>> rows, Object sort) {
+        if (sort == null) {
+            return;
+        }
+        if (!(sort instanceof Map<?, ?> ordering) || ordering.size() != 1) {
+            throw new IllegalArgumentException("a read orders by exactly one field, and was sent " + sort);
+        }
+        Map.Entry<?, ?> only = ordering.entrySet().iterator().next();
+        String field = String.valueOf(only.getKey());
+        Comparator<Map<String, Object>> byField = Comparator.comparing(row -> text(row.get(field)));
+        boolean descending = only.getValue() instanceof Number direction && direction.intValue() < 0;
+        rows.sort(descending ? byField.reversed() : byField);
+    }
+
+    /** The number of rows the caller will take. Absent is not a reading: an unbounded read is not asked for. */
+    private static int bound(Map<String, Object> params) {
+        if (!(params.get("limit") instanceof Number limit)) {
+            throw new IllegalArgumentException(
+                    "a read carries the number of rows it wants, and was sent " + params.get("limit"));
+        }
+        return Math.max(0, limit.intValue());
+    }
+
+    private static String text(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     // ---- the format ------------------------------------------------------------------------------

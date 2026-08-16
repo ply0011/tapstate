@@ -14,7 +14,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -180,6 +182,97 @@ final class ControlPlane {
         String body = JsonWriter.write(
                 Map.of("id", resourceId, "connectorId", connectorId, "settings", settings));
         expect(send(authed("/api/connections:discover-schema", body)), 200, "discover the model of " + resourceId);
+    }
+
+    /**
+     * The collections the read face lists for a declared source, each as the object it came down as.
+     *
+     * <p>Entries stay maps rather than becoming a record, and that is the point rather than laziness: what
+     * this face promises about a thing nobody could answer is that the key is <em>absent</em>, not that it
+     * carries an empty value. Decoding into a typed shape would give every absent key a null and erase
+     * exactly the distinction a caller reads.
+     */
+    List<Map<String, Object>> collections(String sourceId) {
+        HttpResponse<String> response = send(authedGet("/api/sources/" + sourceId + "/collections"));
+        expect(response, 200, "list the collections of " + sourceId);
+        return entriesOf(response.body(), "collections");
+    }
+
+    /** The refusal a listing was expected to be met with, read on the same terms every other one is. */
+    Refusal collectionsExpectingRefusal(String sourceId) {
+        HttpResponse<String> response = send(authedGet("/api/sources/" + sourceId + "/collections"));
+        return interpretRefusal(response.statusCode(), response.body(), "listing the collections of " + sourceId);
+    }
+
+    /**
+     * One preview read, answered whole: the rows, and whatever the face says around them.
+     *
+     * <p>The request travels as the caller wrote it rather than through named parameters, because several
+     * of these specifications exist to send a field the shape does not have and watch it change nothing.
+     * A typed argument list could not express that request at all.
+     */
+    Map<String, Object> find(String sourceId, String collection, Map<String, Object> request) {
+        HttpResponse<String> response = send(authed(findPath(sourceId, collection), JsonWriter.write(request)));
+        expect(response, 200, "read " + collection + " of " + sourceId);
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> map)) {
+            throw new AssertionError("a preview answer was not an object: " + response.body());
+        }
+        return asObject(map);
+    }
+
+    /** The refusal a read was expected to be met with, carrying the code the product named. */
+    Refusal findExpectingRefusal(String sourceId, String collection, Map<String, Object> request) {
+        HttpResponse<String> response = send(authed(findPath(sourceId, collection), JsonWriter.write(request)));
+        return interpretRefusal(
+                response.statusCode(), response.body(), "reading " + collection + " of " + sourceId);
+    }
+
+    /** What the face reports about one collection's size. */
+    Map<String, Object> stats(String sourceId, String collection) {
+        HttpResponse<String> response =
+                send(authedGet("/api/sources/" + sourceId + "/collections/" + collection + "/stats"));
+        expect(response, 200, "read the stats of " + collection + " of " + sourceId);
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> map)) {
+            throw new AssertionError("a stats answer was not an object: " + response.body());
+        }
+        return asObject(map);
+    }
+
+    /** The refusal a stats read was expected to be met with. */
+    Refusal statsExpectingRefusal(String sourceId, String collection) {
+        HttpResponse<String> response =
+                send(authedGet("/api/sources/" + sourceId + "/collections/" + collection + "/stats"));
+        return interpretRefusal(
+                response.statusCode(), response.body(), "reading the stats of " + collection + " of " + sourceId);
+    }
+
+    private static String findPath(String sourceId, String collection) {
+        return "/api/sources/" + sourceId + "/collections/" + collection + ":find";
+    }
+
+    /** The list under one key of an answer, each element kept as the object it arrived as. */
+    private static List<Map<String, Object>> entriesOf(String body, String key) {
+        if (!(JsonReader.parse(body) instanceof Map<?, ?> map) || !(map.get(key) instanceof List<?> entries)) {
+            throw new AssertionError("an answer carried no " + key + ": " + body);
+        }
+        List<Map<String, Object>> out = new ArrayList<>(entries.size());
+        for (Object entry : entries) {
+            if (!(entry instanceof Map<?, ?> row)) {
+                throw new AssertionError("a " + key + " entry was not an object: " + body);
+            }
+            out.add(asObject(row));
+        }
+        return out;
+    }
+
+    /**
+     * A decoded object as a map keyed by string. Keys absent on the wire stay absent here - nothing is
+     * filled in - so a caller may assert that the product left a key out.
+     */
+    private static Map<String, Object> asObject(Map<?, ?> decoded) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        decoded.forEach((key, value) -> out.put(String.valueOf(key), value));
+        return out;
     }
 
     /**
