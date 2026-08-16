@@ -331,7 +331,7 @@ public class CsvConnector implements TapConnector {
     private static String keyOf(Map<String, Object> row, List<String> key) {
         StringBuilder value = new StringBuilder();
         for (String column : key) {
-            value.append(String.valueOf(row.get(column))).append(' ');
+            value.append(String.valueOf(row.get(column))).append('\0');
         }
         return value.toString();
     }
