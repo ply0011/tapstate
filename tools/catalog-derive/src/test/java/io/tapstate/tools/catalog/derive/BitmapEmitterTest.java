@@ -17,9 +17,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The bitmap emitter is catalog-derive's worklist loop: for each manifest entry it resolves the
  * module's jar and probes the named class, keying the registered capabilities by connector id. Two
  * gaps are expected and survived rather than fatal — a connector with no built jar (not in the OSS
- * dist) and a connector whose jar will not classload (a platform-excluded build, e.g. postgres on
- * macOS) — both recorded with a reason and left out of the bitmap, so the refresh completes and the
- * gaps are visible. Jar resolution and probing are injected, so the loop runs without a real checkout.
+ * dist) and a connector whose jar cannot be opened or classloaded at all, which happens when a module
+ * encrypts its own shaded jar during packaging so the result is not a zip — both recorded with a
+ * reason and left out of the bitmap, so the refresh completes and the gaps are visible. Jar resolution and probing are injected, so the loop runs without a real checkout.
  */
 class BitmapEmitterTest {
 
