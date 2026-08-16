@@ -260,8 +260,12 @@ public final class ApplyService {
                             }
                             // The row count travels with the columns, absence and all: a table nobody
                             // counted has to stay distinguishable from one counted and found empty.
+                            // The declared key travels the same way, and for the same reason a rule
+                            // about writes needs it: whether a write can be matched to an existing
+                            // row is a property of the table, decided where the table is described.
                             tables.add(new DiscoveredTable(
-                                    table.name(), columns, table.approximateRowCount()));
+                                    table.name(), columns, table.primaryKey(),
+                                    table.approximateRowCount()));
                         }
                         bySource.put(source.id(), tables);
                     });

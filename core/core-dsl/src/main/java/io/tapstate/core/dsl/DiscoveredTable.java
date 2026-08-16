@@ -4,6 +4,7 @@ import io.tapstate.core.common.TapstateType;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -19,12 +20,25 @@ import java.util.Objects;
  * reads, and where it genuinely reads several, against each of them in turn.
  */
 public record DiscoveredTable(
-        String name, Map<String, TapstateType> columns, Long approximateRowCount) {
+        String name, Map<String, TapstateType> columns, List<String> primaryKey,
+        Long approximateRowCount) {
 
     public DiscoveredTable {
         Objects.requireNonNull(name, "name");
         columns = columns == null ? Map.of()
                 : Collections.unmodifiableMap(new LinkedHashMap<>(columns));
+        primaryKey = primaryKey == null ? List.of() : List.copyOf(primaryKey);
+    }
+
+    /**
+     * A table discovered without a key, which is not the same thing as a table nobody discovered. The
+     * second is absent from the tables a source resolves to and so is a table nothing can be said
+     * about; this one is present and known to declare no key, which is a fact a rule can act on. A
+     * reader that cannot tell the two apart would report "this table has no key" about a table it
+     * never saw.
+     */
+    public DiscoveredTable(String name, Map<String, TapstateType> columns, Long approximateRowCount) {
+        this(name, columns, List.of(), approximateRowCount);
     }
 
     /**
