@@ -1803,16 +1803,39 @@ final class Repl {
         out.flush();
     }
 
-    /** The human summary: an outcome header naming the connection + connector, then one line per check. */
+    /**
+     * The human summary: an outcome header naming the connection + connector, then one line per check,
+     * and under a check that carried them, the connector's own reason and remedy.
+     *
+     * <p>Those two are printed here rather than left to the machine surfaces because they are the
+     * reason a check is worth running. A connector that can say "wal_level is replica" and "set it to
+     * logical" has answered the question the person is about to ask, and reaching that answer only by
+     * knowing to re-run with {@code -o json} asks them to already know what they are looking for. The
+     * connector's own code is printed alongside, since it is what an operator quotes when they go
+     * looking for the connector's documentation.
+     */
     private static void renderReportText(PrintWriter out, ConnectionReport report) {
         out.println(report.outcome() + "  " + report.connectionId() + " (" + report.connectorId() + ")");
         for (ConnectionReport.Check check : report.checks()) {
             StringBuilder line = new StringBuilder(String.format("  %-7s %s", check.status(), check.name()));
-            if (check.message() != null && !check.message().isBlank()) {
+            if (present(check.message())) {
                 line.append("  ").append(check.message());
             }
+            if (present(check.connectorErrorCode())) {
+                line.append("  [").append(check.connectorErrorCode()).append(']');
+            }
             out.println(line);
+            if (present(check.reason())) {
+                out.println("          " + check.reason());
+            }
+            if (present(check.solution())) {
+                out.println("          " + check.solution());
+            }
         }
+    }
+
+    private static boolean present(String value) {
+        return value != null && !value.isBlank();
     }
 
     /** The report as an ordered tree for the machine surfaces, omitting the optional check fields left null. */

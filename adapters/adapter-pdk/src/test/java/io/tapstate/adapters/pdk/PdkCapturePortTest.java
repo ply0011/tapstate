@@ -146,6 +146,21 @@ class PdkCapturePortTest {
     }
 
     @Test
+    void testConnectionHandsTheConnectorItsDiscoveredTableNotABareName(@TempDir Path dir) throws Exception {
+        // The same property as the snapshot case above, on the verb a stranger reaches first. The probe
+        // reads a small sample as proof of life, and a connector builds that read from the table's own
+        // columns; handed a bare name it reads nothing, or asks the descriptor for a column map that was
+        // never created and dies inside the connector. Discovery has already run by this point and the
+        // table is in hand, so there is nothing to look up - only a bare name to stop manufacturing.
+        Path jar = Synthetic.tableAwareSource(dir);
+        PdkCapturePort port = new PdkCapturePort(provisioner(jar, "synthetic.TableAware", null));
+
+        ConnectionReport report = port.testConnection(config("t1"));
+
+        assertThat(report.sample()).hasSize(1);
+    }
+
+    @Test
     void snapshotWithoutExplicitStreamsInitsTheConnectorExactlyOnce(@TempDir Path dir) throws Exception {
         // Empty streams means "every stream": the drive discovers the stream names and reads them. It
         // must init the connector once, not once for discovery and again for the read — the connector

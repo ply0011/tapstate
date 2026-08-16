@@ -1529,6 +1529,34 @@ class ReplTest {
                 "jwt-tok@http://node1:7900/my-mongo[mongodb {host=db.internal, username=cdc}]");
     }
 
+    /**
+     * A connector that can say why a check failed and what to do about it says so through reason and
+     * solution, and until now the plain-text surface printed neither - they were reachable only by
+     * knowing to pass -o json, which is knowledge the person who needs them least likely has. The
+     * remedy the connector already wrote is the whole value of the check having run.
+     */
+    @Test
+    void testRendersTheReasonAndSolutionOnThePlainTextSurface() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Cdc cannot start",
+                        "wal_level is replica, logical decoding needs logical",
+                        "Set wal_level=logical and restart the server", "CREATE_SLOT_FAILED")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Cdc cannot start");
+        assertThat(out).contains("wal_level is replica");
+        assertThat(out).contains("Set wal_level=logical");
+        assertThat(out).contains("CREATE_SLOT_FAILED");
+    }
+
     @Test
     void testRendersTheReportAsJsonWithTheOutputFlag() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
