@@ -12,6 +12,8 @@ a-cdc-failure-is-observable on IN_PROCESS
 a-cdc-failure-is-observable on REAL_PROCESS
 a-declared-view-materializes-with-no-serve-block on IN_PROCESS
 a-declared-view-materializes-with-no-serve-block on REAL_PROCESS
+a-parent-column-change-reaches-the-assembled-document on IN_PROCESS
+a-parent-column-change-reaches-the-assembled-document on REAL_PROCESS
 a-real-change-stream-carries-rows-written-after-start on IN_PROCESS
 a-real-change-stream-carries-rows-written-after-start on REAL_PROCESS
 a-row-keeps-its-sequence-across-the-crossing on IN_PROCESS

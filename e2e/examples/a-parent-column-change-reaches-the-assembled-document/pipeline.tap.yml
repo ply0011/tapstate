@@ -1,0 +1,18 @@
+version: tapstate/v1
+kind: pipeline
+id: rippled_orders
+source: [ src_ripple_orders, src_ripple_items ]
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: ripple_doc
+    type: nest
+    from: { o: ripple_orders, i: ripple_items }
+    root:
+      from: o
+      key: [ id ]
+      embed:
+        - { from: i, on: { order_id: id }, as: array, path: items, arrayKey: [ id ] }
+view:
+  id: ripple_state
+  from: ripple_doc
+  primary_key: id
