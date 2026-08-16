@@ -39,6 +39,14 @@ final class ControlPlane {
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
 
     /**
+     * The bound for uploading a connector, which is the one request whose body is tens of megabytes -
+     * base64 of a shaded jar. The ordinary bound is about a server that has stopped answering; this one
+     * is about how long bytes take to move, and the largest connector this harness registers takes
+     * longer than that on a busy machine.
+     */
+    private static final Duration UPLOAD_TIMEOUT = Duration.ofMinutes(3);
+
+    /**
      * What every per-namespace count of unassemblable changes is named with, before the namespace itself.
      * Written here rather than shared with the runtime that publishes it: this side is a reader of the
      * product's metrics face, and a name it imported from the publisher would agree with the publisher by
@@ -241,7 +249,8 @@ final class ControlPlane {
     /** Registers a connector's runtime jar; the product makes this idempotent by content hash. */
     void registerConnector(String connectorId, byte[] jar) {
         String body = JsonWriter.write(Map.of("artifact", Base64.getEncoder().encodeToString(jar)));
-        expect(send(authed("/api/connectors:register", body)), 200, "register the " + connectorId + " connector");
+        expect(send(authed("/api/connectors:register", body, UPLOAD_TIMEOUT)), 200,
+                "register the " + connectorId + " connector");
     }
 
     /**
@@ -701,8 +710,13 @@ final class ControlPlane {
     }
 
     private HttpRequest authed(String path, String body) {
+        return authed(path, body, TIMEOUT);
+    }
+
+    /** The same request with a bound of the caller's own, for a body large enough to need one. */
+    private HttpRequest authed(String path, String body, Duration timeout) {
         return HttpRequest.newBuilder(baseUrl.resolve(path))
-                .timeout(TIMEOUT)
+                .timeout(timeout)
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + requireCredential())
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
