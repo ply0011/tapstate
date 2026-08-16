@@ -33,8 +33,8 @@ readonly SOURCE_REPOSITORY="https://github.com/tapdata/tapdata-connectors.git"
 
 # Connector ids as the specifications name them, paired with the module that builds each one. The id
 # is also the file-name prefix the witnesses resolve by, so it cannot be chosen freely here.
-readonly CONNECTOR_IDS=(mysql mongodb)
-readonly CONNECTOR_MODULES=(connectors/mysql-connector connectors/mongodb-connector)
+readonly CONNECTOR_IDS=(mysql mongodb postgres)
+readonly CONNECTOR_MODULES=(connectors/mysql-connector connectors/mongodb-connector connectors/postgres-connector)
 
 destination="${1:?usage: build-real-connectors.sh <destination-directory>}"
 workspace="${2:-$(mktemp -d)}"
@@ -47,7 +47,20 @@ git clone --depth 1 --quiet "$SOURCE_REPOSITORY" "$workspace/tapdata-connectors"
 
 modules="$(IFS=,; echo "${CONNECTOR_MODULES[*]}")"
 echo "Building $modules"
-mvn -B -f "$workspace/tapdata-connectors/pom.xml" -pl "$modules" -am -DskipTests package
+# exec.skip turns off one upstream build step: the postgres connector, alone among every module in
+# that repository, runs an encryptor over its own shaded jar at package time. The result is not a zip
+# - it has no end-of-central-directory record - and this product opens a connector artifact with
+# java.util.jar.JarFile to read its specification before anything else happens. So a stock postgres
+# jar cannot be registered at all: it fails at the first read, long before reaching the PDK runtime
+# that knows how to decrypt it. Building it unencrypted produces the same shape the other connectors
+# already ship in, which is the shape this product reads.
+#
+# Scoped by luck rather than by design, so it is worth stating: this flag turns off exec-plugin
+# executions across the whole build, and the only active one in this module set is that encryptor
+# (mysql declares the plugin but its execution is commented out upstream). If a future connector
+# joins this lane with a real exec step, this becomes too blunt and has to move to a postgres-only
+# invocation.
+mvn -B -f "$workspace/tapdata-connectors/pom.xml" -pl "$modules" -am -DskipTests -Dexec.skip=true package
 
 # Stage one jar per connector, and insist on exactly one.
 #

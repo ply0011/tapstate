@@ -41,10 +41,12 @@ for p in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do make_cli "$p"; done
 # Serving the real files means the smoke also proves the script fetches assets that actually exist at the
 # paths it expects, and that the generated demo matches the real seed schema.
 QS_STUB="$(mktemp -d)"
-mkdir -p "$QS_STUB/install" "$QS_STUB/deploy/quickstart/mysql-init" "$QS_STUB/connectors-preview"
+mkdir -p "$QS_STUB/install" "$QS_STUB/deploy/quickstart/mysql-init" \
+         "$QS_STUB/deploy/quickstart/postgres-init" "$QS_STUB/connectors-preview"
 cp "$REPO/install/install.sh"                              "$QS_STUB/install/install.sh"
 cp "$REPO/deploy/quickstart/docker-compose.yml"           "$QS_STUB/deploy/quickstart/docker-compose.yml"
 cp "$REPO/deploy/quickstart/mysql-init/01-orders.sql"     "$QS_STUB/deploy/quickstart/mysql-init/01-orders.sql"
+cp "$REPO/deploy/quickstart/postgres-init/01-shipments.sql" "$QS_STUB/deploy/quickstart/postgres-init/01-shipments.sql"
 printf 'fake-mysql-connector-jar\n'   > "$QS_STUB/connectors-preview/mysql-connector.jar"
 printf 'fake-mongodb-connector-jar\n' > "$QS_STUB/connectors-preview/mongodb-connector.jar"
 
@@ -112,6 +114,10 @@ have() { if [ -e "$PREP/$1" ]; then ok "$2"; else bad "$2 — missing $1"; fi; }
 if [ -x "$PREP/tapstate" ]; then ok "installs the CLI in place as ./tapstate"; else bad "./tapstate not installed/executable: $OUT"; fi
 have docker-compose.yml               "fetches the compose file into the demo dir"
 have mysql-init/01-orders.sql         "fetches the demo seed SQL"
+# Both seed dirs, because compose mounts both. A missing mount source is not an error Docker reports:
+# it creates an empty directory and starts a database with no demo data, which surfaces much later as
+# a pipeline that reads nothing.
+have postgres-init/01-shipments.sql   "fetches the second engine's seed SQL"
 have mysql-connector.jar              "fetches the mysql connector jar"
 have mongodb-connector.jar            "fetches the mongodb connector jar"
 # The connector seed dir must exist (compose bind-mounts it) but stay empty: registration goes through

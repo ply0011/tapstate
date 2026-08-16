@@ -180,9 +180,15 @@ main() {
     # verified asset nor overwrites an edit the user made to it. The seed dir is created empty on purpose:
     # a registered jar's bytes live in the store, and the demo registers over the CLI upload path, so the
     # seed stays the documented empty convenience rather than the route registration depends on.
-    mkdir -p mysql-init connectors
-    [ -f ./docker-compose.yml ]           || fetch "${qbase}/deploy/quickstart/docker-compose.yml" ./docker-compose.yml
-    [ -f ./mysql-init/01-orders.sql ]     || fetch "${qbase}/deploy/quickstart/mysql-init/01-orders.sql" ./mysql-init/01-orders.sql
+    #
+    # Both seed directories are fetched, not just the one the demo pipeline reads. The compose file
+    # mounts each of them, and a missing mount source is not an error Docker reports - it creates an
+    # empty directory and starts a database with no demo data in it, which then fails much later as a
+    # pipeline that reads nothing.
+    mkdir -p mysql-init postgres-init connectors
+    [ -f ./docker-compose.yml ]              || fetch "${qbase}/deploy/quickstart/docker-compose.yml" ./docker-compose.yml
+    [ -f ./mysql-init/01-orders.sql ]        || fetch "${qbase}/deploy/quickstart/mysql-init/01-orders.sql" ./mysql-init/01-orders.sql
+    [ -f ./postgres-init/01-shipments.sql ]  || fetch "${qbase}/deploy/quickstart/postgres-init/01-shipments.sql" ./postgres-init/01-shipments.sql
 
     # Install the CLI in place as ./tapstate, reusing install.sh wholesale (download, checksum, atomic
     # place). TAPSTATE_INSTALL_DIR here is the seam that keeps it out of PATH: `rm -rf` of this directory
