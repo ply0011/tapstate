@@ -131,6 +131,65 @@ final class MySqlEndpoints implements Endpoints {
         }
     }
 
+    @Override
+    public void update(
+            EndpointAddress address, String table, Map<String, Object> where, Map<String, Object> set) {
+        List<String> columns = List.copyOf(set.keySet());
+        List<String> settings = List.copyOf(where.keySet());
+        String sql = "UPDATE " + quoted(table)
+                + " SET " + String.join(", ", columns.stream().map(c -> quoted(c) + " = ?").toList())
+                + " WHERE " + String.join(" AND ", settings.stream().map(s -> quoted(s) + " = ?").toList());
+        List<Object> values = new ArrayList<>();
+        columns.forEach(column -> values.add(set.get(column)));
+        settings.forEach(setting -> values.add(where.get(setting)));
+        change(address, table, sql, values, where, "update");
+    }
+
+    @Override
+    public void delete(EndpointAddress address, String table, Map<String, Object> where) {
+        List<String> settings = List.copyOf(where.keySet());
+        String sql = "DELETE FROM " + quoted(table) + " WHERE "
+                + String.join(" AND ", settings.stream().map(s -> quoted(s) + " = ?").toList());
+        List<Object> values = settings.stream().map(where::get).toList();
+        change(address, table, sql, values, where, "delete");
+    }
+
+    /**
+     * Runs one valued change and holds it to having moved exactly one row.
+     *
+     * <p>Zero rows is refused rather than passed over: the case that wrote the change is about to wait
+     * for its effect downstream, and a silent no-op turns that wait into a timeout that reads like the
+     * product dropped a change. More than one row is refused for the same reason a document read
+     * refuses it - the specification named a row, and moving several is not what it asked for.
+     */
+    private void change(
+            EndpointAddress address,
+            String table,
+            String sql,
+            List<Object> values,
+            Map<String, Object> where,
+            String what) {
+        Connection connection = connection(address);
+        if (!exists(connection, address, table)) {
+            throw new EnvelopeException(
+                    "cannot " + what + " a row of " + table + ": the table does not exist");
+        }
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < values.size(); i++) {
+                statement.setObject(i + 1, values.get(i));
+            }
+            int moved = statement.executeUpdate();
+            if (moved != 1) {
+                throw new EnvelopeException(
+                        "a " + what + " of " + table + " matching " + where + " moved " + moved
+                                + " rows; a valued change names exactly one");
+            }
+        } catch (SQLException e) {
+            throw new EnvelopeException(
+                    "cannot " + what + " the row of " + table + " matching " + where, e);
+        }
+    }
+
     private static Map<String, Object> rowOf(ResultSet results) throws SQLException {
         Map<String, Object> row = new LinkedHashMap<>();
         var metadata = results.getMetaData();

@@ -63,6 +63,27 @@ final class Vocabulary {
     /** The keys a doc matcher body carries: how to find the document, and what to hold it to. */
     static final Set<String> DOC_KEYS = Set.of("where", "expect", "size");
 
+    /**
+     * The keys a valued cdc change carries, per operation. Both locate a row the same way the doc
+     * matcher locates a document - one {@code where} spelling across the surface, not one per word -
+     * and only an update also says what to write.
+     *
+     * <p>An operation with no valued form is absent here rather than mapped to an empty set: absent
+     * makes the parser say so by name, where empty would report every key the author wrote as unknown
+     * and never mention that the shape itself is the problem.
+     */
+    static Set<String> valuedChangeKeys(CdcOp op) {
+        return switch (op) {
+            case UPDATE -> Set.of("where", "set");
+            case DELETE -> Set.of("where");
+            case INSERT -> Set.of();
+        };
+    }
+
+    static String lowerName(CdcOp op) {
+        return lowerName((Enum<?>) op);
+    }
+
     private Vocabulary() {
     }
 

@@ -123,7 +123,13 @@ public final class E2eExecutor {
         switch (step) {
             case Step.Lifecycle lifecycle -> binding.drive(pipelineId, lifecycle.verb());
             case Step.Cdc cdc -> {
-                binding.cdc(cdc.table(), cdc.op(), cdc.rows());
+                switch (cdc.change()) {
+                    case Step.Change.Generated generated ->
+                            binding.cdc(cdc.table(), generated.op(), generated.rows());
+                    case Step.Change.Update update ->
+                            binding.update(cdc.table(), update.where(), update.set());
+                    case Step.Change.Delete delete -> binding.delete(cdc.table(), delete.where());
+                }
                 lastChanged = cdc.table();
             }
             case Step.Assertion assertion -> check(assertion.matcher(), pipelineId);

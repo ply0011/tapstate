@@ -90,6 +90,42 @@ final class MongoEndpoints implements Endpoints {
     }
 
     @Override
+    public void update(
+            EndpointAddress address, String table, Map<String, Object> where, Map<String, Object> set) {
+        Document values = new Document();
+        set.forEach((column, value) -> values.append(column, normalized(value)));
+        long moved = collection(address, table)
+                .updateOne(filterOf(where), new Document("$set", values))
+                .getMatchedCount();
+        requireOne(moved, table, where, "update");
+    }
+
+    @Override
+    public void delete(EndpointAddress address, String table, Map<String, Object> where) {
+        long moved = collection(address, table).deleteOne(filterOf(where)).getDeletedCount();
+        requireOne(moved, table, where, "delete");
+    }
+
+    private static Document filterOf(Map<String, Object> where) {
+        Document filter = new Document();
+        where.forEach((setting, value) -> filter.append(setting, normalized(value)));
+        return filter;
+    }
+
+    /**
+     * Holds a valued change to having moved exactly one document. Zero is refused rather than passed
+     * over: the case is about to wait for the change downstream, and a silent no-op turns that wait
+     * into a timeout that reads like the product lost a change nobody made.
+     */
+    private static void requireOne(long moved, String table, Map<String, Object> where, String what) {
+        if (moved != 1) {
+            throw new EnvelopeException(
+                    "a " + what + " of " + table + " matching " + where + " moved " + moved
+                            + " documents; a valued change names exactly one");
+        }
+    }
+
+    @Override
     public void cdc(EndpointAddress address, String table, CdcOp op, long rows) {
         MongoCollection<Document> collection = collection(address, table);
         switch (op) {

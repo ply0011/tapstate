@@ -61,6 +61,20 @@ public interface TierBinding {
     void cdc(TableAlias table, CdcOp op, long rows);
 
     /**
+     * Sets columns on the one row the settings locate, while the pipeline runs.
+     *
+     * <p>Separate from {@link #cdc} because the two answer different questions. A generated change
+     * moves some rows and satisfies a case about a count arriving; this one moves a row the
+     * specification chose and writes a value the specification chose, which is what a case has to do
+     * before it can read that value back out of an assembled document. Locating is spelled the way
+     * {@link #fetch} spells it - identity is {@code id} whatever the store calls it.
+     */
+    void update(TableAlias table, Map<String, Object> where, Map<String, Object> set);
+
+    /** Removes the one row the settings locate, while the pipeline runs. Located like {@link #fetch}. */
+    void delete(TableAlias table, Map<String, Object> where);
+
+    /**
      * Re-emits a table's current rows as fresh change events, row keys unchanged.
      *
      * <p>This exists for one seam: a change written to a real source right after its change stream is

@@ -128,6 +128,68 @@ final class FileEndpoints implements Endpoints {
     }
 
     /**
+     * Sets columns on the one row the settings locate. This driver's rows carry {@code id} and
+     * {@code seq} and nothing else, so a column outside that pair is refused by name rather than
+     * written and silently dropped on the next read.
+     */
+    @Override
+    public void update(
+            EndpointAddress address, String table, Map<String, Object> where, Map<String, Object> set) {
+        List<Row> current = seeded(address, table);
+        Row located = locate(current, table, where, "update");
+        long id = located.id();
+        long seq = located.seq();
+        for (Map.Entry<String, Object> column : set.entrySet()) {
+            if (!(column.getValue() instanceof Number value)) {
+                throw new EnvelopeException(
+                        "the table " + table + " holds whole numbers, so " + column.getKey()
+                                + " cannot be set to " + column.getValue());
+            }
+            switch (column.getKey()) {
+                case SeedRows.ID -> id = value.longValue();
+                case SeedRows.SEQ -> seq = value.longValue();
+                default -> throw new EnvelopeException(
+                        "the table " + table + " has no column " + column.getKey()
+                                + "; its rows carry " + SeedRows.ID + " and " + SeedRows.SEQ);
+            }
+        }
+        Row replacement = new Row(id, seq);
+        write(file(address, table), current.stream().map(row -> row == located ? replacement : row).toList());
+    }
+
+    @Override
+    public void delete(EndpointAddress address, String table, Map<String, Object> where) {
+        List<Row> current = seeded(address, table);
+        Row located = locate(current, table, where, "delete");
+        write(file(address, table), current.stream().filter(row -> row != located).toList());
+    }
+
+    private List<Row> seeded(EndpointAddress address, String table) {
+        Path file = file(address, table);
+        if (!Files.exists(file)) {
+            throw new EnvelopeException(
+                    "the table " + table + " at " + address.text(DIRECTORY)
+                            + " has not been seeded, so there is nothing to change");
+        }
+        return read(file);
+    }
+
+    /**
+     * The one row the settings locate. Matching none is refused rather than passed over: the case is
+     * about to wait for the change downstream, and a silent no-op turns that wait into a timeout that
+     * reads like the product lost a change nobody made.
+     */
+    private static Row locate(List<Row> rows, String table, Map<String, Object> where, String what) {
+        List<Row> matches = rows.stream().filter(row -> matches(row, where)).toList();
+        if (matches.size() != 1) {
+            throw new EnvelopeException(
+                    "a " + what + " of " + table + " matching " + where + " moved " + matches.size()
+                            + " rows; a valued change names exactly one");
+        }
+        return matches.getFirst();
+    }
+
+    /**
      * The rows the table holds now, or none when the table is not there. A table the product has not
      * written yet is absent rather than empty, and the honest count of it is zero: a specification that
      * waits for a first write is waiting for exactly this reading to move.

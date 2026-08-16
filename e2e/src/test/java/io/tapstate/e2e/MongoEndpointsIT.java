@@ -91,6 +91,43 @@ class MongoEndpointsIT {
     }
 
     /**
+     * The generated update rewrites whichever documents the driver picks; this one rewrites the document
+     * the specification named. Reading the whole collection back is what separates them - an
+     * implementation that changed the lowest ids would satisfy an assertion that the value is present.
+     */
+    @Test
+    void updatingWritesTheNamedFieldOnTheNamedDocumentAndLeavesTheRestAlone() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        endpoints.update(at(), TABLE, Map.of("id", 2), Map.of("seq", 99));
+
+        assertThat(rowsReadBackIndependently()).containsExactly("1,1", "2,99", "3,3");
+    }
+
+    @Test
+    void deletingRemovesTheNamedDocumentRatherThanTheLowestId() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        endpoints.delete(at(), TABLE, Map.of("id", 2));
+
+        assertThat(rowsReadBackIndependently()).containsExactly("1,1", "3,3");
+    }
+
+    /**
+     * A change matching nothing is refused rather than passed over: the specification that wrote it is
+     * about to wait for the effect downstream, and a silent no-op turns that wait into a timeout that
+     * reads like the product lost a change nobody ever made.
+     */
+    @Test
+    void aValuedChangeMatchingNoDocumentRefusesInsteadOfDoingNothing() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        assertThatThrownBy(() -> endpoints.delete(at(), TABLE, Map.of("id", 99)))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("moved 0 documents");
+    }
+
+    /**
      * "The lowest ids" stops meaning "the low numbers" the moment a document is deleted.
      *
      * <p>Every other case here seeds ids 1..N and changes them straight away, so a driver reading

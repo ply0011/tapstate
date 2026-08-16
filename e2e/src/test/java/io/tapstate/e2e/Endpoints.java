@@ -39,6 +39,20 @@ interface Endpoints extends AutoCloseable {
     void cdc(EndpointAddress address, String table, CdcOp op, long rows);
 
     /**
+     * Sets the given columns on the one row the equality settings locate, leaving its other columns
+     * alone. Locating is spelled the way {@link #fetch} spells it - identity is {@code id} whatever the
+     * store calls it, and the translation is the driver's.
+     *
+     * <p>Matching no row is an error rather than a no-op. A case that updates a row it has already
+     * seeded and then waits for the new value to arrive downstream would otherwise fail much later, at
+     * the await, reading as though the product never propagated a change nobody actually made.
+     */
+    void update(EndpointAddress address, String table, Map<String, Object> where, Map<String, Object> set);
+
+    /** Removes the one row the settings locate. Matching no row is an error, for the same reason. */
+    void delete(EndpointAddress address, String table, Map<String, Object> where);
+
+    /**
      * The one document the equality settings locate, or empty when none matches. Identity is spelled
      * {@code id} in the settings and in the returned document whatever the store calls it; the
      * translation is the driver's. More than one match is an error - a matcher that silently read the
