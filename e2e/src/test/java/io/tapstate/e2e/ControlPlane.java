@@ -321,6 +321,19 @@ final class ControlPlane {
     }
 
     /**
+     * Drives a connection test and returns the report body. The verb probes the connection for real -
+     * it inits the connector, discovers, and reads a small sample - so it exercises paths no other
+     * verb reaches, which is why a witness that only applies and discovers cannot stand in for it.
+     */
+    String testConnection(String resourceId, String connectorId, Map<String, Object> settings) {
+        String body = JsonWriter.write(
+                Map.of("id", resourceId, "connectorId", connectorId, "settings", settings));
+        HttpResponse<String> response = send(authed("/api/connections:test", body));
+        expect(response, 200, "test the connection of " + resourceId);
+        return response.body();
+    }
+
+    /**
      * Records a lifecycle intent. The verb's own spelling comes from the product's enum, so the wire
      * word cannot drift from the word the product accepts.
      */

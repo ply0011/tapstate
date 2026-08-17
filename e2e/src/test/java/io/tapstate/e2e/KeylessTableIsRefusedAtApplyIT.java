@@ -118,6 +118,39 @@ class KeylessTableIsRefusedAtApplyIT {
         }
     }
 
+    /**
+     * Testing a connection against a real MySQL comes back with a report rather than a crash.
+     *
+     * <p>The probe is the verb a stranger reaches first, and it takes a path no other verb does: it
+     * inits the connector, discovers, then reads a small sample as proof of life. That last step used
+     * to hand the connector a table descriptor carrying no columns, which a connector reading the
+     * columns off it answers by throwing - inside the connector, where the failure reads as a broken
+     * connection rather than as a descriptor we failed to pass. Nothing about that is visible without
+     * a real connector, so it is asserted here rather than inferred from the synthetic case.
+     */
+    @Test
+    @DisplayName("testing a connection against a real MySQL returns a report, not a crash")
+    void testingAConnectionAgainstARealMySqlReturnsAReport() throws Exception {
+        try (MySQLContainer<?> mysql = new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))) {
+            mysql.start();
+            seed(mysql);
+
+            try (ServerHandle server = Tiers.IN_PROCESS.launch(SharedMongo.replicaSetUrl("keyless_probe"))) {
+                ControlPlane control = NumericSource.connected(server);
+
+                String report = control.testConnection(SOURCE_ID, "mysql", NumericSource.config(mysql));
+
+                assertThat(report)
+                        .as("the report names the connection it tested and carries the connector's checks")
+                        .contains(SOURCE_ID)
+                        .contains("checks");
+                assertThat(report)
+                        .as("a report is what comes back - not a stack trace laundered into a message")
+                        .doesNotContain("NullPointerException");
+            }
+        }
+    }
+
     /** Both shapes in one database, so a single discovery reports them together. */
     private static void seed(MySQLContainer<?> mysql) throws Exception {
         try (Connection connection =
