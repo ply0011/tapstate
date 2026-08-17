@@ -395,6 +395,36 @@ final class ControlPlane {
     }
 
     /** The published metrics body verbatim, for the same diagnostic use and on the same terms as {@link #logs}. */
+    /**
+     * Runs the product's own connection test and answers the overall outcome with each check's status.
+     *
+     * <p>Both halves are returned because the interesting question about this verb is the relationship
+     * between them: a check can report a warning while the overall outcome still passes, and a caller
+     * that saw only one of the two could not tell that had happened.
+     */
+    ConnectionTest testConnection(String connectionId, String connectorId, Map<String, Object> settings) {
+        String body = JsonWriter.write(
+                Map.of("id", connectionId, "connectorId", connectorId, "settings", settings));
+        HttpResponse<String> response = send(authed("/api/connections:test", body));
+        expect(response, 200, "test the connection " + connectionId);
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> report)) {
+            throw new AssertionError("the connection test answered no report: " + response.body());
+        }
+        Map<String, String> statusByCheck = new LinkedHashMap<>();
+        if (report.get("checks") instanceof List<?> checks) {
+            for (Object each : checks) {
+                if (each instanceof Map<?, ?> check) {
+                    statusByCheck.put(String.valueOf(check.get("name")), String.valueOf(check.get("status")));
+                }
+            }
+        }
+        return new ConnectionTest(String.valueOf(report.get("outcome")), statusByCheck);
+    }
+
+    /** A connection test's overall outcome, and the status each individual check reported. */
+    record ConnectionTest(String outcome, Map<String, String> statusByCheck) {
+    }
+
     String metrics(String pipelineId) {
         HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
         return response.statusCode() + " " + response.body();
