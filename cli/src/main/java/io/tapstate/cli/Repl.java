@@ -1835,7 +1835,42 @@ final class Repl {
                 out.println("          " + solution);
             }
         }
+        if (changeCaptureUnavailable(report)) {
+            out.println();
+            out.println("  Change capture will not work on this connection until the check above passes.");
+            out.println("  A snapshot will; a pipeline reading changes will start and never see any.");
+        }
     }
+
+    /**
+     * Whether this connection cannot carry change capture, despite the test as a whole passing.
+     *
+     * <p>Connectors report the change-stream check as a warning rather than a failure, and a warning
+     * does not fail the overall outcome — so a database with change capture switched off answers
+     * PASSED. That is not wrong: the connection is genuinely usable, and a snapshot over it works. It
+     * is only wrong as the whole answer, because the person reads PASSED, builds a pipeline that
+     * reads changes, and is told nothing when its capture half never produces a row.
+     *
+     * <p>The outcome is left as the connector reported it — {@code test} asks about a connection, not
+     * about a pipeline, and failing it would refuse connections that snapshot-only work needs. What
+     * changes is that the consequence is stated instead of left to be discovered later.
+     */
+    private static boolean changeCaptureUnavailable(ConnectionReport report) {
+        for (ConnectionReport.Check check : report.checks()) {
+            if (CHANGE_STREAM_CHECK.equalsIgnoreCase(check.name())
+                    && !"PASSED".equalsIgnoreCase(check.status())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The connector API's own name for the change-stream check. It is a fixed constant of that API,
+     * which is what makes it usable as an identifier: every connector reporting this check reports it
+     * under this name, so recognising it does not depend on any one connector's wording.
+     */
+    private static final String CHANGE_STREAM_CHECK = "Read log";
 
     private static boolean present(String value) {
         return value != null && !value.isBlank();

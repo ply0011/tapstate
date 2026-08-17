@@ -1612,6 +1612,52 @@ class ReplTest {
         assertThat(out).doesNotContain("check.cdc.privilege");
     }
 
+    /**
+     * The change-stream check is the one whose failure is invisible: connectors report it as a warning,
+     * a warning does not fail the overall outcome, and so a database with change capture switched off
+     * answers "PASSED". The person then builds a pipeline whose capture half never runs and is told
+     * nothing, anywhere. The outcome is left alone - it is a connection verb, and the connection is
+     * genuinely usable for a snapshot - but the consequence is spelled out where it cannot be missed.
+     */
+    @Test
+    void testSaysPlainlyWhenChangeCaptureWillNotWorkEvenThoughTheTestPassed() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("ping", "PASSED", null, null, null, null),
+                        new ConnectionReport.Check("Read log", "WARNING",
+                                "SELECT pg_create_logical_replication_slot('t','pgoutput')",
+                                null, null, "410003")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("PASSED");
+        assertThat(out).containsIgnoringCase("change capture");
+        assertThat(out).contains("snapshot");
+    }
+
+    /** A connection whose change-stream check passed says nothing of the sort. */
+    @Test
+    void testDoesNotWarnAboutChangeCaptureWhenTheLogCheckPassed() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("Read log", "PASSED", null, null, null, null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).doesNotContainIgnoringCase("change capture");
+    }
+
     @Test
     void testRendersTheReportAsJsonWithTheOutputFlag() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
