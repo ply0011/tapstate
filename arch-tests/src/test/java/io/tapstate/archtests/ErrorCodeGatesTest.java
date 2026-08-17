@@ -39,8 +39,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the enums, then {@code values()} via reflection) — no second scanning library (ADR-0024 D5-6).
  * Production scope only ({@code DO_NOT_INCLUDE_TESTS}), so throwaway test enums never leak in.
  *
- * <p>The connector-code namespace ({@code connector.* / pdk.*}) is deliberately out of scope: those
- * are runtime-loaded jars the build cannot see, guarded at runtime instead (ADR-0024 D6).
+ * <p>Codes belonging to connectors are deliberately out of scope: those arrive in runtime-loaded jars
+ * the build cannot see, and are guarded at runtime instead (ADR-0024 D6).
+ *
+ * <p>What is in scope, and is not a connector code, is the wording this repository ships for the
+ * connector API's own diagnostic keys. Those keys are a fixed part of that API, the connectors carry
+ * them untranslated, and the text is ours; it lives under a reserved prefix so it cannot collide with
+ * a first-party code, and it is gated here because nothing else can see it — a first-party code is
+ * held in place from both directions, while this text answers to an API outside the build.
  */
 class ErrorCodeGatesTest {
 
@@ -207,6 +213,48 @@ class ErrorCodeGatesTest {
 
     /** The reserved namespace connector-supplied diagnostics are given wording under. */
     private static final String PDK_TEST_ITEM_PREFIX = "pdk.testitem.";
+
+    /**
+     * The connector-diagnostic wordings are exactly the set we mean to carry.
+     *
+     * <p>The rest of the catalog is held in place from both directions: a code with no entry fails
+     * one gate, an entry with no code fails another. These entries answer to the connector API
+     * instead, which is outside this build, so neither direction reaches them - and without a list to
+     * check against, a wording deleted by accident, a key misspelled so nothing ever resolves it, or
+     * one quietly added for a diagnostic nobody emits would all pass unnoticed. Naming the set is what
+     * makes those visible; changing it is then a deliberate edit here rather than a silent drift.
+     *
+     * <p>The names come from the typed test exceptions the connector API defines, each of which
+     * carries a reason and a solution. It is a closed set because that API is frozen.
+     */
+    @Test
+    @DisplayName("the connector-diagnostic wordings are exactly the declared set")
+    void connectorDiagnosticWordingsAreExactlyTheDeclaredSet() {
+        Set<String> expected = new TreeSet<>();
+        for (String diagnostic : List.of(
+                "check.cdc.privilege", "read.privilege", "write.privilege", "create.table.privilege",
+                "pdk.version", "pdk.connection", "check.host.port", "time.consistent", "stream.read")) {
+            expected.add(PDK_TEST_ITEM_PREFIX + diagnostic + ".reason");
+            expected.add(PDK_TEST_ITEM_PREFIX + diagnostic + ".solution");
+        }
+
+        Set<String> present = new TreeSet<>();
+        for (String key : catalog.keySet()) {
+            if (key.startsWith(PDK_TEST_ITEM_PREFIX)) {
+                present.add(key);
+            }
+        }
+
+        assertThat(present)
+                .as("catalog wordings under %s; add or remove one here in the same change set",
+                        PDK_TEST_ITEM_PREFIX)
+                .isEqualTo(expected);
+        for (String key : present) {
+            assertThat(catalog.get(key).get("message"))
+                    .as("wording for '%s' must actually say something", key)
+                    .isNotBlank();
+        }
+    }
 
     private static Set<String> placeholdersIn(String template) {
         Set<String> names = new TreeSet<>();
