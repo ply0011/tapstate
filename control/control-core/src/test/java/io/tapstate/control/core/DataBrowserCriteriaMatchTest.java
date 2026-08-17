@@ -105,6 +105,24 @@ class DataBrowserCriteriaMatchTest {
     }
 
     @Test
+    @DisplayName("a step that reaches nothing stays at nothing, even where the name would have matched")
+    void doesNotFallBackToTheLiteralNameWhenTheStepReachesNothing() {
+        // The row above holds both readings, which is what lets it tell them apart -- and is also why it
+        // cannot see this: a step that resolves nowhere never happens in it. Here only the column exists,
+        // so the tempting repair is available -- when the path reaches nothing, try the spelling as a name.
+        // Taking it would make one filter mean two things depending on what the document it meets happens
+        // to hold, and nothing would report the difference. The escape is what asks for the column.
+        Map<String, Object> onlyTheColumn = row("price.usd", 99);
+
+        assertThat(match("price.usd", DataBrowserCriteria.Operator.EQ, 99).matches(onlyTheColumn))
+                .as("the bare spelling steps, finds no `price` to step into, and stays there")
+                .isFalse();
+        assertThat(match("price\\.usd", DataBrowserCriteria.Operator.EQ, 99).matches(onlyTheColumn))
+                .as("the value is right there, so the refusal above is a reading and not an empty row")
+                .isTrue();
+    }
+
+    @Test
     @DisplayName("comparisons order numbers by value, not by how they were spelt")
     void comparesNumbersByValue() {
         Map<String, Object> row = row("total", 12);

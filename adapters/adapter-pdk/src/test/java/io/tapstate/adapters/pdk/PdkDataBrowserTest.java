@@ -315,6 +315,47 @@ class PdkDataBrowserTest {
     }
 
     @Test
+    void asksWhetherAColumnWhoseNameHoldsADotIsThereByTypeBecauseTheExpressionFormHasNoPresenceTest(
+            @TempDir Path dir) {
+        // The expression language carries no twin of the presence test, so the question goes as a question
+        // about type: a field that is not there reports the one type no value has. Both directions are
+        // asked here because which way round it is put is the entire answer -- one document decides both,
+        // and a form that asked the same thing for either would report every absent column as present.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+        Map<String, Object> named = Map.of("$getField", "price.usd");
+
+        DataBrowserPreview there = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("price\\.usd", Operator.EXISTS, true), 10));
+        DataBrowserPreview absent = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("price\\.usd", Operator.EXISTS, false), 10));
+
+        assertThat(echoed(there, "filter")).isEqualTo(Map.of(
+                "$expr", Map.of("$ne", List.of(Map.of("$type", named), "missing"))));
+        assertThat(echoed(absent, "filter")).isEqualTo(Map.of(
+                "$expr", Map.of("$eq", List.of(Map.of("$type", named), "missing"))));
+    }
+
+    @Test
+    void asksATypeBeforeAPatternOnAColumnWhoseNameHoldsADotSoOneWrongTypedRowCannotFailTheRead(
+            @TempDir Path dir) {
+        // The two languages disagree about a pattern meeting a value that is not text: the query language
+        // declines that row, the expression language fails the whole read. Since only the field's spelling
+        // decides which language a term travels in, an unguarded pattern would give the same request two
+        // different answers -- and the harsher one is not a stricter match but an error where there were
+        // rows. Asking the type first keeps the answer the one every other field already gives.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+        Map<String, Object> named = Map.of("$getField", "price.usd");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("price\\.usd", Operator.CONTAINS, "Fed.x"), 10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of("$expr", Map.of("$cond", List.of(
+                Map.of("$eq", List.of(Map.of("$type", named), "string")),
+                Map.of("$regexMatch", Map.of("input", named, "regex", "\\QFed.x\\E")),
+                false))));
+    }
+
+    @Test
     void findTranslatesACombinationIntoTheConnectorsOwnConjunction(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 
