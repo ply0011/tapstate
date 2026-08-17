@@ -65,7 +65,9 @@ class DataBrowserFindShapeIT {
 
     @BeforeEach
     void publishTheConnectorJar() {
-        E2eConnectorJar.buildInto(connectorJars);
+        // Packaged under the browsable connector's id: the product serves row reads only to
+        // connectors it knows speak the shape it asks in, and that set names real ones.
+        E2eConnectorJar.buildInto(connectorJars, E2eConnectorJar.BROWSABLE_CONNECTOR_ID);
         previousConnectorsDir = System.setProperty("tapstate.e2e.connectors-dir", connectorJars.toString());
     }
 
@@ -88,8 +90,8 @@ class DataBrowserFindShapeIT {
             ControlPlane control = new ControlPlane(server.baseUrl());
             control.bootstrapAndLogin("e2e", "e2e-password");
             HttpTierBinding binding = new HttpTierBinding(
-                    control, workspace, Map.of(E2eConnectorJar.CONNECTOR_ID, files), env());
-            binding.registerConnector(E2eConnectorJar.CONNECTOR_ID);
+                    control, workspace, Map.of(E2eConnectorJar.BROWSABLE_CONNECTOR_ID, files), env());
+            binding.registerConnector(E2eConnectorJar.BROWSABLE_CONNECTOR_ID);
             binding.applyResources(List.of("src_file.tap.yml"));
 
             // (1) Nothing asked for: the control plane's own bound, the size of what it came from, and the
@@ -175,7 +177,7 @@ class DataBrowserFindShapeIT {
                 version: tapstate/v1
                 kind: source
                 id: src_file
-                connector: e2e_file
+                connector: mongodb
                 config: { uri: "${SRC_DIR}" }
                 """);
     }

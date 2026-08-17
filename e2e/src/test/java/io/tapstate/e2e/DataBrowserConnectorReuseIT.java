@@ -67,7 +67,9 @@ class DataBrowserConnectorReuseIT {
 
     @BeforeEach
     void publishTheConnectorJar() {
-        E2eConnectorJar.buildInto(connectorJars);
+        // Packaged under the browsable connector's id: the product serves row reads only to
+        // connectors it knows speak the shape it asks in, and that set names real ones.
+        E2eConnectorJar.buildInto(connectorJars, E2eConnectorJar.BROWSABLE_CONNECTOR_ID);
         previousConnectorsDir = System.setProperty("tapstate.e2e.connectors-dir", connectorJars.toString());
     }
 
@@ -88,8 +90,8 @@ class DataBrowserConnectorReuseIT {
         try (ServerHandle server = InProcessServer.start(SharedMongo.replicaSetUrl("e2e_browser_reuse"))) {
             ControlPlane control = new ControlPlane(server.baseUrl());
             control.bootstrapAndLogin("e2e", "e2e-password");
-            control.registerConnector(
-                    E2eConnectorJar.CONNECTOR_ID, ConnectorJars.bytesFor(E2eConnectorJar.CONNECTOR_ID));
+            String connector = E2eConnectorJar.BROWSABLE_CONNECTOR_ID;
+            control.registerConnector(connector, ConnectorJars.bytesFor(connector));
 
             // The first read is what makes the second one a test of anything: it is what opens an
             // instance against these settings and leaves it where a later read could be handed it.
@@ -132,7 +134,7 @@ class DataBrowserConnectorReuseIT {
                 version: tapstate/v1
                 kind: source
                 id: src_file
-                connector: e2e_file
+                connector: mongodb
                 config: { uri: "%s" }
                 """
                 .formatted(directory);
