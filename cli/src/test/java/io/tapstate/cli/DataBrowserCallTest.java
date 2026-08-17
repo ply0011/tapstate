@@ -67,6 +67,41 @@ class DataBrowserCallTest {
     }
 
     @Test
+    void keepsAnEscapeTheLiteralReaderDoesNotDefineForWhoeverDoes() {
+        // `\.` is how a field name says the dot is part of it rather than a step into a document. That
+        // spelling has to survive being typed: the reader in between defines escapes of its own, and one
+        // it does not define is not addressed to it. Dropping the backslash here hands on the other
+        // spelling -- a step -- which is a filter that matches nothing and says nothing about why.
+        assertThat(((Find) DataBrowserCall.parse("v.c.find({\"price\\.usd\": 100})")).filter())
+                .isEqualTo(Map.of("field", "price\\.usd", "op", "eq", "value", 100L));
+    }
+
+    @Test
+    void keepsThatEscapeInAnOrderToo() {
+        // The same spelling, where losing it is worse: an order on such a field is refused with a code,
+        // but only if the refusal is given the name that was typed. Downgraded to a step on the way, it
+        // reaches a name nothing objects to and sorts every row equal.
+        Find find = (Find) DataBrowserCall.parse(
+                "views.orders.find().sort({field:'price\\.usd', dir:'desc'})");
+
+        assertThat(find.sort()).isEqualTo(new DataBrowserCall.Order("price\\.usd", "desc"));
+    }
+
+    @Test
+    void stillReadsTheEscapesItDoesDefine() {
+        // The half that keeps the above from becoming "stop reading escapes". These are this reader's
+        // own, and a line that writes one means the character, not the two that spell it.
+        assertThat(((Find) DataBrowserCall.parse("v.c.find({note: \"first\\nsecond\"})")).filter())
+                .isEqualTo(Map.of("field", "note", "op", "eq", "value", "first\nsecond"));
+        assertThat(((Find) DataBrowserCall.parse("v.c.find({note: \"a\\\\b\"})")).filter())
+                .isEqualTo(Map.of("field", "note", "op", "eq", "value", "a\\b"));
+        // The quotes especially: one whose backslash survived would close the value it was written to
+        // keep open, so passing an undefined escape through cannot be written as a blanket rule.
+        assertThat(((Find) DataBrowserCall.parse("v.c.find({note: \"say \\\"hi\\\"\"})")).filter())
+                .isEqualTo(Map.of("field", "note", "op", "eq", "value", "say \"hi\""));
+    }
+
+    @Test
     void readsAListLiteralAsAList() {
         assertThat(((Find) DataBrowserCall.parse("v.c.find({status: {$in: ['Paid', 'Shipped']}})")).filter())
                 .isEqualTo(Map.of("field", "status", "op", "in", "value", List.of("Paid", "Shipped")));

@@ -345,7 +345,8 @@ sealed interface DataBrowserCall {
             while (at < source.length() && source.charAt(at) != quote) {
                 char character = source.charAt(at++);
                 if (character == '\\' && at < source.length()) {
-                    character = escaped(source.charAt(at++));
+                    appendEscaped(read, source.charAt(at++));
+                    continue;
                 }
                 read.append(character);
             }
@@ -356,13 +357,29 @@ sealed interface DataBrowserCall {
             return read.toString();
         }
 
-        private static char escaped(char character) {
-            return switch (character) {
-                case 'n' -> '\n';
-                case 't' -> '\t';
-                case 'r' -> '\r';
-                default -> character;
-            };
+        /**
+         * The escapes this reader defines, plus what to do with one it does not.
+         *
+         * <p>An escape it does not define is not addressed to it. A field name says a dot belongs to
+         * the name rather than stepping into a document by writing {@code \.}, and that spelling is
+         * read further on, by whoever turns a name into the steps it is made of. Dropping the
+         * backslash here hands that reader the other spelling instead -- a step -- which is a filter
+         * that matches nothing and reports nothing wrong, and an order that sorts every row equal.
+         * Passing the pair through leaves the question where it can be answered.
+         *
+         * <p>The three that end a run of text are therefore listed rather than left to fall through:
+         * a quote whose backslash survived would close the value it was written to keep open.
+         */
+        private static void appendEscaped(StringBuilder read, char character) {
+            switch (character) {
+                case 'n' -> read.append('\n');
+                case 't' -> read.append('\t');
+                case 'r' -> read.append('\r');
+                case '\\' -> read.append('\\');
+                case '"' -> read.append('"');
+                case '\'' -> read.append('\'');
+                default -> read.append('\\').append(character);
+            }
         }
 
         private Object number() {
