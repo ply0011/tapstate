@@ -125,6 +125,51 @@ final class ControlPlane {
                 .toList();
     }
 
+    /**
+     * Mints a standing credential at the given scope and answers with it.
+     *
+     * <p>What a machine is given, as opposed to the session token a person's login returns. A
+     * specification that launches something outside this JVM and points it at the product needs one of
+     * these: handing over the session token instead would work, and would quietly make that
+     * specification a test of a credential nothing in production issues to a peer.
+     */
+    String mintToken(String scope) {
+        HttpResponse<String> response = send(authed("/api/tokens", JsonWriter.write(Map.of("scope", scope))));
+        expect(response, 201, "mint a " + scope + " token");
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> map)
+                || !(map.get("token") instanceof String token)) {
+            throw new AssertionError("minting a token returned no token: " + response.body());
+        }
+        return token;
+    }
+
+    /**
+     * Removes a declared source, so what is derived from the registry can be watched losing it.
+     *
+     * <p>Deleting the source rather than the artifact, which is the verb this branch has. The property
+     * a caller is watching is that a derived answer follows the registry rather than being snapshotted,
+     * and either verb takes the same thing out of it.
+     */
+    void deleteSource(String sourceId) {
+        // Read it first for its ETag: the delete is refused without one, so that a caller working from
+        // a stale view of a source cannot remove the version somebody else has since replaced.
+        HttpResponse<String> current = send(authedGet("/api/sources/" + sourceId));
+        expect(current, 200, "read the source " + sourceId + " before deleting it");
+        String tag = current.headers().firstValue("ETag")
+                .orElseThrow(() -> new AssertionError("the source " + sourceId + " came back with no ETag"));
+        HttpRequest request = HttpRequest.newBuilder(baseUrl.resolve("/api/sources/" + sourceId))
+                .timeout(TIMEOUT)
+                .header("Authorization", "Bearer " + requireCredential())
+                .header("If-Match", tag)
+                .DELETE()
+                .build();
+        HttpResponse<String> response = send(request);
+        if (response.statusCode() != 204 && response.statusCode() != 200) {
+            throw new AssertionError("could not delete the source " + sourceId + ": HTTP "
+                    + response.statusCode() + " - " + response.body());
+        }
+    }
+
     /** Registers a connector's runtime jar; the product makes this idempotent by content hash. */
     void registerConnector(String connectorId, byte[] jar) {
         String body = JsonWriter.write(Map.of("artifact", Base64.getEncoder().encodeToString(jar)));
