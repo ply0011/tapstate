@@ -49,11 +49,11 @@ jobs:
         run: e2e/build-real-connectors.sh "${{ runner.temp }}/connectors"
       - name: Real-connector witnesses on both tiers
         # Docker 29 rejects the API version testcontainers negotiates by default, so pin it. The surefire
-        # selector matches nothing, so only the two failsafe witnesses run.
+        # selector matches nothing, so only the failsafe witnesses named below run.
         run: >
           mvn -B -pl e2e -am verify
           -Dapi.version=1.44
           -Dtapstate.e2e.connectors-dir="${{ runner.temp }}/connectors"
           -Dtest=ZzzNoSuchSurefireSelector -Dsurefire.failIfNoSpecifiedTests=false
-          -Dit.test=RealMysqlToMongoSnapshotIT,RealMysqlToMongoCdcIT,DataBrowserDottedFieldIT
+          -Dit.test=RealMysqlToMongoSnapshotIT,RealMysqlToMongoCdcIT,DataBrowserDottedFieldIT,DataBrowserUnsupportedBackendIT
           -Dfailsafe.failIfNoSpecifiedTests=false
