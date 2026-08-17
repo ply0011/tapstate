@@ -1,8 +1,9 @@
 # Running the server and CLI from an IDE
 
 The [online quickstart](../../quickstart-online.md) runs a released image out of compose. This page
-runs **the code you are editing**: two JVM processes started from IntelliJ IDEA, against a MongoDB you
-supply yourself, so a change to a source file is one click away from a running server.
+runs **the code you are editing**: the server started from IntelliJ IDEA, and the CLI driving it from
+a terminal, against a MongoDB you supply yourself - so a change to a source file is one click away
+from a running server.
 
 It stops at the point where the CLI is connected and authenticated. That is deliberately short of
 doing anything with data - from there any tutorial applies, and
@@ -17,8 +18,8 @@ Time: about 20 minutes. You need a checkout, JDK 21, Docker, and IntelliJ IDEA.
 | server | `app` | `io.tapstate.app.Bootstrap` | The Spring Boot service. Embeds Hazelcast (5701) and Tomcat (8080). Connectors run inside it. |
 | CLI | `cli` | `io.tapstate.cli.Cli` | picocli and JLine. Authors YAML offline; drives the server once connected. |
 
-The CLI's native binary (`-Pnative`) matters only when cutting a release. For development run the main
-class and skip native-image entirely.
+The CLI's native binary (`-Pnative`) matters only when cutting a release. For development, run the thin
+jar from a terminal or the main class from the IDE, and skip native-image entirely.
 
 **One database is required and one is not.** MongoDB is the server's own state store - schemas, users,
 operator state, checkpoints - and the server does not start without it. A *source* database is a
@@ -183,9 +184,28 @@ so the server itself is unaffected.
 
 The health path is `/healthz`. `/actuator/health` returns 404.
 
-## 7. The CLI run configuration
+## 7. Run the CLI
 
-*Run -> Edit Configurations -> + -> **Application*** again:
+The CLI is an ordinary command-line program, and **a terminal is the better place to run it**. The
+install in step 2 already left a runnable thin jar behind - the pom calls it exactly that, a *runnable
+thin jar for manual verification* - with its dependencies in `target/lib` beside it:
+
+```sh
+cd <your-checkout>/tapstate
+java -jar cli/target/cli-0.2.0.jar --version        # -> tapstate 0.2.0
+java -jar cli/target/cli-0.2.0.jar -w ./work -c 127.0.0.1:8080 -u admin -p admin
+```
+
+With no subcommand it opens a REPL - one session holding a workspace and a connection. With a
+subcommand it runs that verb and exits, which is the form for scripts. The verbs are identical in both.
+
+A terminal hands it a real TTY, so **Tab completion works with nothing to configure** - and completion
+is the best part of this CLI, covering verbs, field paths and file paths.
+
+### Running it from the IDE instead, and what that costs
+
+Worth a run configuration when you want to step through CLI code in a debugger, and not otherwise.
+*Run -> Edit Configurations -> + -> **Application***:
 
 | Field | Value |
 |---|---|
@@ -194,15 +214,12 @@ The health path is `/healthz`. `/actuator/health` returns 404.
 | Main class | `io.tapstate.cli.Cli` |
 | Program arguments | `-w ./work -c 127.0.0.1:8080 -u admin -p admin` |
 | Working directory | the parent of the directory holding your `.tap.yml` files |
-| Modify options | enable **Emulate terminal in output console** |
 
-With no subcommand it opens a REPL - one session holding a workspace and a connection. With a
-subcommand it runs that verb and exits, which is the form for scripts. The verbs are identical in both.
-
-**Enable Emulate terminal.** Without it JLine falls back to a dumb terminal: commands still run, but
-Tab completion is gone, and completion is the best part of this CLI - it covers verbs, field paths and
-file paths. If you cannot find the option, check the configuration *type*: it exists for an
-**Application** configuration and not for a Maven or Shell Script one.
+The IDE console is not a TTY, so JLine falls back to a dumb terminal and Tab completion is gone.
+*Modify options -> Emulate terminal in output console* is what restores it **where that option is
+offered** - it is not present on every configuration type or IDE version, and it is not worth hunting
+for: if it is not there, run the CLI in a terminal and keep the IDE for the server. Nothing else about
+the CLI behaves differently between the two.
 
 ### There are three rules for giving a workspace, and `--help` describes one
 
@@ -248,7 +265,7 @@ The prompt names who and where: `tapstate(admin@127.0.0.1:8080)>`. Two things wo
 | Port 27017 already in use | Something else already serves it. Publish another port rather than stopping it, and connect directly. |
 | Tomcat fails to start on 8080 | Occupied, and Tomcat does not move by itself. Set `SERVER_PORT`. |
 | `apply` reports `unknown option '-w'` | Connected verbs take a positional path: `apply ./work`, or set `TAPSTATE_WORKDIR`. |
-| Tab completion does nothing in the IDE | *Emulate terminal in output console* is not enabled on the run configuration. |
+| Tab completion does nothing in the IDE console | The IDE console is not a TTY. *Emulate terminal in output console* restores it where that option is offered; where it is not, run the CLI in a terminal, which needs no configuration for it. |
 | `curl` to 127.0.0.1 returns 503 or an implausible success | An HTTP proxy answered instead. Add `--noproxy '*'`. |
 
 ## Tearing down

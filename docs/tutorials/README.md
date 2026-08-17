@@ -8,7 +8,7 @@ instead says so, and is where to start if you are working on Tapstate itself rat
 | Tutorial | What you build | Time |
 |---|---|---|
 | [Assembling one document out of many tables](nest-document-assembly/) | Three live documents - order, customer and product - assembled from the same nine relational tables with a `nest` transform and kept current by change data capture. Includes the rule that decides which document shapes a nest can express. | ~30 min |
-| [Running the server and CLI from an IDE](running-from-an-ide/) | The server and the CLI as two processes started from IntelliJ IDEA against a MongoDB you supply, ending at a connected and authenticated CLI. Carries no sample data: it stops before anything moves, and hands over to the tutorial above. | ~20 min |
+| [Running the server and CLI from an IDE](running-from-an-ide/) | The server out of IntelliJ IDEA against a MongoDB you supply, and the CLI driving it from a terminal, ending at a connected and authenticated CLI. Carries no sample data: it stops before anything moves, and hands over to the tutorial above. | ~20 min |
 
 ## Adding a tutorial
 
