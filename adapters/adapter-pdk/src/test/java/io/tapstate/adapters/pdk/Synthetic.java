@@ -31,6 +31,7 @@ final class Synthetic {
                 + "import io.tapdata.entity.event.dml.TapInsertRecordEvent;"
                 + "import io.tapdata.entity.event.dml.TapUpdateRecordEvent;"
                 + "import io.tapdata.entity.event.dml.TapDeleteRecordEvent;"
+                + "import io.tapdata.entity.event.ddl.TapDDLUnknownEvent;"
                 + "import java.util.ArrayList;"
                 + "import java.util.LinkedHashMap;"
                 + "import java.util.List;"
@@ -61,6 +62,34 @@ final class Synthetic {
     /** A row map {@code {id: value}} as a Java expression string. */
     private static String row(String var, int id) {
         return "Map<String,Object> " + var + " = new LinkedHashMap<>(); " + var + ".put(\"id\", " + id + ");";
+    }
+
+    /**
+     * Streams an insert, then a schema change, then another insert. A source really does interleave the
+     * two, and the schema change is the one a view of rows has nowhere to put — so a follow driven by
+     * this connector is what tells "left out" apart from "passed along as nothing".
+     */
+    static Path ddlEmittingSource(Path dir) {
+        String register = ""
+                + "functions.supportStreamRead((context, tables, offset, size, consumer) -> {"
+                + "  consumer.streamReadStarted();"
+                + row("first", 1)
+                + "  List<TapEvent> one = new ArrayList<>();"
+                + "  one.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(first));"
+                + "  consumer.accept(one, null);"
+                + "  List<TapEvent> ddl = new ArrayList<>();"
+                + "  TapDDLUnknownEvent schemaChange = new TapDDLUnknownEvent();"
+                + "  schemaChange.setTableId(\"t1\"); schemaChange.setReferenceTime(2L);"
+                + "  ddl.add(schemaChange);"
+                + "  consumer.accept(ddl, null);"
+                + row("second", 2)
+                + "  List<TapEvent> two = new ArrayList<>();"
+                + "  two.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(3L).after(second));"
+                + "  consumer.accept(two, null);"
+                + "  consumer.streamReadEnded();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.DdlEmittingSource",
+                source("DdlEmittingSource", "", register));
     }
 
     /** Batch-reads two snapshot rows and streams an insert / update / delete; a full source connector. */

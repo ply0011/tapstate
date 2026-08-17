@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.spi.store.ConnectionConfig;
+import io.tapstate.spi.store.DataBrowserChange;
 import io.tapstate.spi.store.DataBrowserFilter.All;
 import io.tapstate.spi.store.DataBrowserFilter.Any;
 import io.tapstate.spi.store.DataBrowserFilter.Match;
@@ -14,7 +15,9 @@ import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSort;
 import io.tapstate.spi.store.DataBrowserSort.Direction;
+import io.tapstate.spi.store.DataBrowserSubscription;
 import io.tapstate.spi.store.DataBrowserTableInfo;
+import io.tapstate.spi.store.DataBrowserTailRequest;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,6 +26,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +47,35 @@ class PdkDataBrowserTest {
     void closeReaders() {
         readers.forEach(PdkDataBrowser::close);
         System.clearProperty("synthetic.marker");
+    }
+
+    @Test
+    void followLeavesOutASchemaChangeRatherThanPassingItAlongAsNothing(@TempDir Path dir) throws Exception {
+        // A stream carries schema changes as well as rows, and a view of rows has nowhere to put one. It
+        // is left out here, which is invisible from the outside unless something asks: passing it along
+        // as the nothing it projects to reads the same way at this seam, and only breaks further on, in
+        // whoever unpacks the change. So the case counts what the follower is handed, not what it shows.
+        PdkDataBrowser reader = reader(Synthetic.ddlEmittingSource(dir), "synthetic.DdlEmittingSource");
+        List<DataBrowserChange> handed = java.util.Collections.synchronizedList(new ArrayList<>());
+        // Counts every delivery, not every row: a delivery that carries nothing has to open the latch
+        // too, or the assertion below would be waiting for a row that a broken seam never sends.
+        CountDownLatch twoDeliveries = new CountDownLatch(2);
+
+        try (DataBrowserSubscription following = reader.tail(config(),
+                new DataBrowserTailRequest("t1"), change -> {
+                    handed.add(change);
+                    twoDeliveries.countDown();
+                })) {
+            assertThat(twoDeliveries.await(5, TimeUnit.SECONDS))
+                    .as("two deliveries reached the follower")
+                    .isTrue();
+        }
+
+        assertThat(handed)
+                .as("the schema change between them was left out, not handed over as nothing")
+                .doesNotContainNull();
+        assertThat(handed).extracting(DataBrowserChange::kind)
+                .containsExactly(DataBrowserChange.Kind.INSERT, DataBrowserChange.Kind.INSERT);
     }
 
     /** A reader over a provisioner that hands back one fixed connector ref, whatever id is asked for. */
