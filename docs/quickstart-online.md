@@ -218,10 +218,10 @@ transforms:
     fields:
       customer_name: $customer
       label: "=after.customer + ' <' + src + '>'"
-serve:
+view:
+  id: order_state
   from: shape_orders
-  sync:
-    - source: warehouse
+  primary_key: id
 ```
 
 One `map` step reshapes the stream, and it carries every change through — insert, update
@@ -250,8 +250,15 @@ the row (`after.<field>`) and the change envelope (`src`, plus `op` and `ts`).
 > envelope fields for now; type conversion is not yet usable. (This is why the demo's
 > `amount` decimal is only ever passed through, never named in an expression.)
 
-> `serve.from` must name the **last** step you want served — `shape_orders` here. It
-> takes a transform `id` or a concrete resource, **not** a regex such as `/.*/`.
+> Declaring a `view` is the whole instruction to materialize it: the rows land in the
+> managed state store as the collection the view names — `warehouse.order_state` here —
+> and no `serve` block is needed. `view.from` names the **last** step you want
+> materialized (`shape_orders` here); it takes a transform `id` or a concrete resource,
+> **not** a regex such as `/.*/`. `primary_key` is the column documents are addressed
+> by, and the collection is indexed uniquely on it.
+>
+> A `serve` block still exists, and is what you write to deliver to a system outside
+> Tapstate. The two are independent: a pipeline may carry either, or both.
 
 Validate offline before going online (no server needed):
 
@@ -271,8 +278,9 @@ tapstate(127.0.0.1:8080)> login admin
 Password:                       # the admin password from step 2 (not echoed)
 tapstate(admin@127.0.0.1:8080)> register ../mysql-connector.jar
 tapstate(admin@127.0.0.1:8080)> register ../mongodb-connector.jar
-tapstate(admin@127.0.0.1:8080)> apply
+tapstate(admin@127.0.0.1:8080)> apply source/db_src.tap.yml
 tapstate(admin@127.0.0.1:8080)> discover-schema db_src
+tapstate(admin@127.0.0.1:8080)> apply
 tapstate(admin@127.0.0.1:8080)> start sync_orders
 ```
 
@@ -284,8 +292,16 @@ tapstate(admin@127.0.0.1:8080)> start sync_orders
 - **`apply`** with no argument applies the whole workspace as one batch. The batch is
   the reference closure — a pipeline and the sources it names must be applied
   together, so apply the workspace, not one file at a time.
+- **The source is applied on its own first**, which is the one exception to that. This
+  pipeline's `label` reads a row field, and an expression that reads row fields is
+  refused until the source it reads has a discovered schema — while the discovery, in
+  turn, needs the source to exist on the server. A single batch carrying both can
+  therefore not succeed in either order: it is refused whole, leaving the source
+  unapplied and the discovery with nothing to look at. Applying the source twice costs
+  nothing; the second apply reports it unchanged.
 - **`discover-schema db_src`** reads the source schema and derives the target model
-  and primary key. Run it **before** `start`.
+  and primary key. Run it **after** the source is applied and **before** the apply that
+  carries the pipeline.
 - **`start sync_orders`** submits the pipeline: it reads the current rows (snapshot),
   then tails changes (CDC).
 
@@ -387,7 +403,7 @@ container, so no client is needed on the host:
 ```sh
 docker compose exec mongo mongosh --quiet \
   "mongodb://mongo:27017/warehouse?directConnection=true" \
-  --eval "db.orders.countDocuments()"    # should reach 5
+  --eval "db.order_state.countDocuments()"    # should reach 5
 ```
 
 ## 8. Exercise change-data-capture
@@ -401,17 +417,17 @@ than guessing:
 # insert a row, then wait for it to appear in the target (the sink upserts on the
 # discovered key, so the snapshot->CDC overlap never doubles a row)
 docker compose exec mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit(db.orders.countDocuments({id:6})?0:1)'; do sleep 1; done
-docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'db.orders.find({id:6}).pretty()'   # customer_name: 'frank', label: 'frank <orders>'
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit(db.order_state.countDocuments({id:6})?0:1)'; do sleep 1; done
+docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'db.order_state.find({id:6}).pretty()'   # customer_name: 'frank', label: 'frank <orders>'
 
 # update it, and watch the mapped label follow the change
 docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit((db.orders.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
-docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'db.orders.find({id:6}).pretty()'
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit((db.order_state.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
+docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'db.order_state.find({id:6}).pretty()'
 
 # delete it, and watch it leave the target too
 docker compose exec mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit(db.orders.countDocuments({id:6})?1:0)'; do sleep 1; done
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
 echo "row 6 is gone from MongoDB, too"
 ```
 
