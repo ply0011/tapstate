@@ -478,7 +478,9 @@ the server and databases are hosted changes.
      --tapstate.connectors.plugins-dir=./plugins
    ```
 
-   It listens on port **8080**. A Hazelcast `--add-opens` warning at startup is harmless.
+   It listens on port **8080**; set `SERVER_PORT` to bind another (for example
+   `SERVER_PORT=8081`) if 8080 is already taken on your machine. A Hazelcast
+   `--add-opens` warning at startup is harmless.
 
 4. **First admin.** There is no bootstrap sidecar here, so create the first user with
    a one-time, localhost-only `curl` (a `204 No Content` means success):
