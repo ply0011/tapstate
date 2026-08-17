@@ -154,6 +154,17 @@ final class MySqlEndpoints implements Endpoints {
         change(address, table, sql, values, where, "delete");
     }
 
+    @Override
+    public void insert(EndpointAddress address, String table, List<Map<String, Object>> rows) {
+        Connection connection = connection(address);
+        if (!exists(connection, address, table)) {
+            throw new EnvelopeException(
+                    "the table " + table + " at " + address.text(HOST)
+                            + " has not been seeded, so there is nothing to add to");
+        }
+        insertRows(connection, table, rows);
+    }
+
     /**
      * Runs one valued change and holds it to having moved exactly one row.
      *

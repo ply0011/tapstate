@@ -2,6 +2,7 @@ package io.tapstate.e2e;
 
 import io.tapstate.core.lifecycle.LifecycleVerb;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -33,9 +34,10 @@ public sealed interface Step {
      * because the thing it has to read back is a field, not a total. A count is satisfied by changing
      * any row; only a named row and a named value can hold an implementation to changing the right one.
      *
-     * <p>There is deliberately no valued insert. The generated form already inserts, and no case here
-     * needs an inserted row to carry chosen values; adding one would widen the surface without a
-     * witness behind it. It is an addition, not an omission to be tidied up later.
+     * <p>{@link Insert} arrived later than the other two, when a witness needed it: an assembly has to be
+     * seeded by value, because a child row without its join key belongs to no parent, and a table seeded
+     * that way refuses a generated insert - that form writes the {@code (id, seq)} shape. Adding a row
+     * upstream of an assembly was therefore not expressible at all until this existed.
      */
     sealed interface Change {
 
@@ -56,6 +58,14 @@ public sealed interface Step {
 
             public Delete {
                 where = Map.copyOf(where);
+            }
+        }
+
+        /** Adds the given rows, spelled the way a seed spells them: columns and values, nothing derived. */
+        record Insert(List<Map<String, Object>> values) implements Change {
+
+            public Insert {
+                values = List.copyOf(values);
             }
         }
     }

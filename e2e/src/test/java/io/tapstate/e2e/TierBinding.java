@@ -74,6 +74,9 @@ public interface TierBinding {
     /** Removes the one row the settings locate, while the pipeline runs. Located like {@link #fetch}. */
     void delete(TableAlias table, Map<String, Object> where);
 
+    /** Adds the given rows while the pipeline runs, leaving what the table held alone. */
+    void insert(TableAlias table, List<Map<String, Object>> rows);
+
     /**
      * Re-emits a table's current rows as fresh change events, row keys unchanged.
      *

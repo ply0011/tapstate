@@ -682,6 +682,11 @@ class E2eExecutorTest {
             calls.add("delete:" + table + " where=" + where);
         }
 
+        @Override
+        public void insert(TableAlias table, List<Map<String, Object>> rows) {
+            calls.add("insert:" + table + " rows=" + rows);
+        }
+
         private TableAlias redeliverMovesTable;
         private long redeliverMovesTo;
 

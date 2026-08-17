@@ -252,17 +252,18 @@ final class SpecGenerator {
             if (keys.isEmpty()) {
                 continue;
             }
-            Map<String, Object> where = new LinkedHashMap<>();
-            where.put("type", "object");
-            where.put("description", "Equality settings locating exactly one row. Identity is spelled id "
-                    + "whatever the store calls it.");
-            where.put("minProperties", 1);
-            where.put("additionalProperties", scalarValue());
-
             // LinkedHashMap on purpose, for the reason docBody gives: a salted key order would make the
             // generated artifact differ from its checked-in copy between runs.
             Map<String, Object> properties = new LinkedHashMap<>();
-            properties.put("where", where);
+            if (keys.contains("where")) {
+                Map<String, Object> where = new LinkedHashMap<>();
+                where.put("type", "object");
+                where.put("description", "Equality settings locating exactly one row. Identity is spelled "
+                        + "id whatever the store calls it.");
+                where.put("minProperties", 1);
+                where.put("additionalProperties", scalarValue());
+                properties.put("where", where);
+            }
             if (keys.contains("set")) {
                 Map<String, Object> set = new LinkedHashMap<>();
                 set.put("type", "object");
@@ -270,6 +271,20 @@ final class SpecGenerator {
                 set.put("minProperties", 1);
                 set.put("additionalProperties", scalarValue());
                 properties.put("set", set);
+            }
+            if (keys.contains("values")) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("type", "object");
+                row.put("description", "One row: its columns and their values, carrying id.");
+                row.put("minProperties", 1);
+                row.put("additionalProperties", scalarValue());
+
+                Map<String, Object> values = new LinkedHashMap<>();
+                values.put("type", "array");
+                values.put("description", "The rows to add, spelled the way a seed spells them.");
+                values.put("minItems", 1);
+                values.put("items", row);
+                properties.put("values", values);
             }
 
             Map<String, Object> body = new LinkedHashMap<>();

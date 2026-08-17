@@ -68,15 +68,14 @@ final class Vocabulary {
      * matcher locates a document - one {@code where} spelling across the surface, not one per word -
      * and only an update also says what to write.
      *
-     * <p>An operation with no valued form is absent here rather than mapped to an empty set: absent
-     * makes the parser say so by name, where empty would report every key the author wrote as unknown
-     * and never mention that the shape itself is the problem.
+     * <p>An insert names rows rather than locating one, so it carries {@code values} and no
+     * {@code where} - the same spelling a seed uses, so an author who can seed a table can add to it.
      */
     static Set<String> valuedChangeKeys(CdcOp op) {
         return switch (op) {
             case UPDATE -> Set.of("where", "set");
             case DELETE -> Set.of("where");
-            case INSERT -> Set.of();
+            case INSERT -> Set.of("values");
         };
     }
 

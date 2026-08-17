@@ -164,6 +164,31 @@ final class FileEndpoints implements Endpoints {
         write(file(address, table), current.stream().filter(row -> row != located).toList());
     }
 
+    /**
+     * Adds rows to a seeded table. This driver's rows carry id and seq and nothing else, so a row naming
+     * other columns is refused by name rather than written and silently dropped on the next read.
+     */
+    @Override
+    public void insert(EndpointAddress address, String table, List<Map<String, Object>> rows) {
+        List<Row> current = new ArrayList<>(seeded(address, table));
+        for (Map<String, Object> row : rows) {
+            if (!row.keySet().equals(Set.of(SeedRows.ID, SeedRows.SEQ))) {
+                throw new EnvelopeException(
+                        "the table " + table + " holds " + SeedRows.ID + " and " + SeedRows.SEQ
+                                + ", and this row carries " + row.keySet());
+            }
+            current.add(new Row(number(row.get(SeedRows.ID)), number(row.get(SeedRows.SEQ))));
+        }
+        write(file(address, table), current);
+    }
+
+    private static long number(Object value) {
+        if (!(value instanceof Number number)) {
+            throw new EnvelopeException("the table holds whole numbers, so " + value + " cannot be written");
+        }
+        return number.longValue();
+    }
+
     private List<Row> seeded(EndpointAddress address, String table) {
         Path file = file(address, table);
         if (!Files.exists(file)) {

@@ -219,6 +219,41 @@
                         "type": "object",
                         "additionalProperties": false,
                         "required": [
+                          "insert"
+                        ],
+                        "properties": {
+                          "insert": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "values"
+                            ],
+                            "properties": {
+                              "values": {
+                                "type": "array",
+                                "description": "The rows to add, spelled the way a seed spells them.",
+                                "minItems": 1,
+                                "items": {
+                                  "type": "object",
+                                  "description": "One row: its columns and their values, carrying id.",
+                                  "minProperties": 1,
+                                  "additionalProperties": {
+                                    "type": [
+                                      "integer",
+                                      "string"
+                                    ],
+                                    "description": "An integer or a string; wider value types are a widening of the vocabulary."
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
                           "update"
                         ],
                         "properties": {

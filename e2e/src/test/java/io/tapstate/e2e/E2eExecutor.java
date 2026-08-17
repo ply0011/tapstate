@@ -129,6 +129,7 @@ public final class E2eExecutor {
                     case Step.Change.Update update ->
                             binding.update(cdc.table(), update.where(), update.set());
                     case Step.Change.Delete delete -> binding.delete(cdc.table(), delete.where());
+                    case Step.Change.Insert insert -> binding.insert(cdc.table(), insert.values());
                 }
                 lastChanged = cdc.table();
             }

@@ -177,6 +177,11 @@ class EndpointResolutionIT {
         }
 
         @Override
+        public void insert(EndpointAddress address, String table, java.util.List<Map<String, Object>> rows) {
+            dialled = address;
+        }
+
+        @Override
         public long count(EndpointAddress address, String table) {
             dialled = address;
             return 0L;

@@ -106,6 +106,17 @@ final class MongoEndpoints implements Endpoints {
         requireOne(moved, table, where, "delete");
     }
 
+    @Override
+    public void insert(EndpointAddress address, String table, List<Map<String, Object>> rows) {
+        List<Document> documents = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Document document = new Document();
+            row.forEach((column, value) -> document.append(column, normalized(value)));
+            documents.add(document);
+        }
+        collection(address, table).insertMany(documents);
+    }
+
     private static Document filterOf(Map<String, Object> where) {
         Document filter = new Document();
         where.forEach((setting, value) -> filter.append(setting, normalized(value)));

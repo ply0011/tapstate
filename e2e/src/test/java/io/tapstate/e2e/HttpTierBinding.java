@@ -137,6 +137,12 @@ final class HttpTierBinding implements TierBinding {
     }
 
     @Override
+    public void insert(TableAlias table, List<Map<String, Object>> rows) {
+        Endpoint endpoint = endpoint(table);
+        endpoint.driver().insert(endpoint.address(), table.table(), rows);
+    }
+
+    @Override
     public void redeliver(TableAlias table) {
         Endpoint endpoint = endpoint(table);
         endpoint.driver().redeliver(endpoint.address(), table.table());

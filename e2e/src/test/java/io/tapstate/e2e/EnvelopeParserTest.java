@@ -4,6 +4,7 @@ import io.tapstate.core.lifecycle.LifecycleVerb;
 import io.tapstate.core.lifecycle.PipelineState;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -361,14 +362,30 @@ class EnvelopeParserTest {
     }
 
     @Test
-    void refusesAValuedInsertBecauseTheVocabularyDoesNotCarryOne() {
+    void readsAnInsertThatNamesTheRowsItAdds() {
+        Envelope envelope = EnvelopeParser.parse(minimal(
+                "steps:\n  - cdc: { t.o: { insert: { values: [ { id: 9, customer: ada } ] } } }\n"));
+
+        assertThat(envelope.steps())
+                .containsExactly(
+                        new Step.Cdc(
+                                new TableAlias("t", "o"),
+                                new Step.Change.Insert(List.of(Map.of("id", 9, "customer", "ada")))));
+    }
+
+    /**
+     * A nest example has to seed by value, because a child row without its join key belongs to no parent -
+     * and a table seeded that way cannot take a generated insert, which is the {@code (id, seq)} shape.
+     * Without a valued insert there is therefore no way at all to add a row upstream of an assembly.
+     */
+    @Test
+    void refusesAnInsertThatNamesNoRows() {
         assertThatThrownBy(
                         () ->
                                 EnvelopeParser.parse(
-                                        minimal(
-                                                "steps:\n  - cdc: { t.o: { insert: { values: [ { id: 9 } ] } } }\n")))
+                                        minimal("steps:\n  - cdc: { t.o: { insert: { values: [] } } }\n")))
                 .isInstanceOf(EnvelopeException.class)
-                .hasMessageContaining("insert");
+                .hasMessageContaining("values");
     }
 
     @Test

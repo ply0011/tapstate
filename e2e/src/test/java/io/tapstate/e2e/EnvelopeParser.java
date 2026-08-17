@@ -324,15 +324,16 @@ public final class EnvelopeParser {
         Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
         CdcOp op = cdcOp(only.getKey());
         String opAt = at + "." + only.getKey();
-        // Before the keys are read, or an operation with no valued form reports every key the author
-        // wrote as unknown and never mentions that the shape itself is what it cannot take.
-        if (Vocabulary.valuedChangeKeys(op).isEmpty()) {
-            throw new EnvelopeException(
-                    opAt + ": " + Vocabulary.lowerName(op) + " has no valued form; write it as '"
-                            + Vocabulary.lowerName(op) + " <rows>'");
-        }
         Map<String, Object> body = mapping(only.getValue(), opAt);
         rejectUnknownKeys(body.keySet(), Vocabulary.valuedChangeKeys(op), opAt);
+
+        // An insert names rows; the other two locate one. Read it before the where below, which it has not
+        // got and does not need.
+        if (op == CdcOp.INSERT) {
+            // The same reader the seed uses: one id per row, one shape across rows, scalars only. An
+            // author who can seed a table can add to it, and the two cannot drift into different rules.
+            return new Step.Change.Insert(valueRows(body.get("values"), opAt + ".values"));
+        }
 
         Map<String, Object> where = mapping(body.get("where"), opAt + ".where");
         if (where.isEmpty()) {
@@ -351,8 +352,8 @@ public final class EnvelopeParser {
                 yield new Step.Change.Update(where, set);
             }
             case DELETE -> new Step.Change.Delete(where);
-            // Unreachable: refused above, where the message can name the shape rather than the keys.
-            case INSERT -> throw new IllegalStateException("insert carries no valued form");
+            // Unreachable: returned above, before the where this operation does not carry is read.
+            case INSERT -> throw new IllegalStateException("insert is read before this point");
         };
     }
 

@@ -53,6 +53,12 @@ interface Endpoints extends AutoCloseable {
     void delete(EndpointAddress address, String table, Map<String, Object> where);
 
     /**
+     * Adds the given rows to a table that is already seeded, leaving what it held alone - unlike
+     * {@link #seed}, which replaces. Rows arrive explicit, the same shape a seed lays down.
+     */
+    void insert(EndpointAddress address, String table, List<Map<String, Object>> rows);
+
+    /**
      * The one document the equality settings locate, or empty when none matches. Identity is spelled
      * {@code id} in the settings and in the returned document whatever the store calls it; the
      * translation is the driver's. More than one match is an error - a matcher that silently read the
