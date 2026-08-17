@@ -366,6 +366,27 @@ final class ControlPlane {
         }
 
         /**
+         * Waits for the product to end this follow, and answers with what it said when it did.
+         *
+         * <p>A follow can be refused after its handshake has already succeeded: the upgrade completes,
+         * then the read is attempted and may not be servable. The refusal therefore arrives as a close
+         * carrying the code, not as a failure to connect - so a caller witnessing one has to wait for
+         * the close rather than expect the open to throw.
+         */
+        String awaitClose(Duration within, String what) {
+            long deadline = System.nanoTime() + within.toNanos();
+            while (System.nanoTime() - deadline < 0) {
+                String closed = ended.get();
+                if (closed != null) {
+                    return closed;
+                }
+                sleep();
+            }
+            throw new AssertionError("waited " + within + " for " + what + " on " + address
+                    + ", and the follow was still open, having been sent " + frames());
+        }
+
+        /**
          * Waits until a change satisfying the predicate has arrived, and answers with everything delivered
          * up to and including it.
          *
