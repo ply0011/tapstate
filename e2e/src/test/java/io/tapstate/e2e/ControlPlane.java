@@ -9,17 +9,24 @@ import io.tapstate.core.lifecycle.PipelineState;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 
 /**
  * The product's HTTP surface, as a caller sees it.
@@ -36,6 +43,9 @@ import java.util.Optional;
 final class ControlPlane {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
+
+    /** How often a caller waiting on a pushed change looks again; a follow is told, never asked. */
+    private static final Duration POLL = Duration.ofMillis(100);
 
     private final URI baseUrl;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
@@ -248,6 +258,154 @@ final class ControlPlane {
 
     private static String findPath(String sourceId, String collection) {
         return "/api/sources/" + sourceId + "/collections/" + collection + ":find";
+    }
+
+    /**
+     * Opens a follow of a collection and collects the changes the product pushes down it.
+     *
+     * <p>Driven over the websocket rather than through the CLI, for the same reason every other read verb
+     * here is: what is under test is the face, and a client in the middle would put its own reading of a
+     * request between the caller and the answer. The filter travels in the handshake query as the very
+     * JSON a one-shot read sends in its body, so "the same filter reached both faces" is a literal claim
+     * rather than an approximate one.
+     *
+     * <p>The caller closes it. A follow holds a connector instance for as long as it is open, so one left
+     * behind counts against the host's ceiling for the rest of the JVM.
+     */
+    Follow follow(String sourceId, String collection, Map<String, Object> filter) {
+        String path = "/api/data-browser/" + sourceId + "/" + collection + "/tail";
+        String query = filter == null
+                ? ""
+                : "?filter=" + URLEncoder.encode(JsonWriter.write(filter), StandardCharsets.UTF_8);
+        URI address = URI.create(
+                baseUrl.toString().replaceFirst("^http", "ws") + path + query);
+        Follow follow = new Follow(address);
+        try {
+            http.newWebSocketBuilder()
+                    .connectTimeout(TIMEOUT)
+                    .header("Authorization", "Bearer " + requireCredential())
+                    .buildAsync(address, follow)
+                    .join();
+        } catch (CompletionException refused) {
+            throw new AssertionError("could not follow " + collection + " of " + sourceId, refused.getCause());
+        }
+        return follow;
+    }
+
+    /**
+     * One open follow, and every change it has been sent.
+     *
+     * <p>Frames are kept whole and in arrival order. Order is what lets a caller assert that something was
+     * <em>not</em> sent: within one follow the store's stream is ordered and skips nothing, so a change
+     * the caller knows came last arriving is proof that every earlier one has already been delivered or
+     * filtered out. Without that a "it never arrived" assertion is only ever "it had not arrived yet".
+     */
+    static final class Follow implements AutoCloseable, WebSocket.Listener {
+
+        private final URI address;
+        private final List<Map<String, Object>> frames = Collections.synchronizedList(new ArrayList<>());
+        private final StringBuilder partial = new StringBuilder();
+        private final AtomicReference<String> ended = new AtomicReference<>();
+
+        private volatile WebSocket socket;
+
+        private Follow(URI address) {
+            this.address = address;
+        }
+
+        /** Every change delivered so far, oldest first. */
+        List<Map<String, Object>> frames() {
+            synchronized (frames) {
+                return List.copyOf(frames);
+            }
+        }
+
+        /**
+         * Waits until a change satisfying the predicate has arrived, and answers with everything delivered
+         * up to and including it.
+         *
+         * <p>Fails rather than returns short on timeout, and says what did arrive: a follow that is not
+         * running at all and one that is running and filtering everything out look identical from here,
+         * and only the frames that did come tell them apart.
+         */
+        List<Map<String, Object>> awaitFrame(Predicate<Map<String, Object>> wanted, Duration within, String what) {
+            long deadline = System.nanoTime() + within.toNanos();
+            while (System.nanoTime() - deadline < 0) {
+                List<Map<String, Object>> delivered = frames();
+                if (delivered.stream().anyMatch(wanted)) {
+                    return delivered;
+                }
+                String closed = ended.get();
+                if (closed != null) {
+                    throw new AssertionError("the follow of " + address + " ended (" + closed
+                            + ") before " + what + "; it had been sent " + delivered);
+                }
+                sleep();
+            }
+            throw new AssertionError("waited " + within + " for " + what + " on " + address
+                    + ", and was sent " + frames());
+        }
+
+        @Override
+        public void onOpen(WebSocket webSocket) {
+            socket = webSocket;
+            webSocket.request(1);
+        }
+
+        @Override
+        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            partial.append(data);
+            if (last) {
+                String text = partial.toString();
+                partial.setLength(0);
+                if (!(JsonReader.parse(text) instanceof Map<?, ?> frame)) {
+                    throw new AssertionError("a followed change was not an object: " + text);
+                }
+                frames.add(asObject(frame));
+            }
+            webSocket.request(1);
+            return null;
+        }
+
+        @Override
+        public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+            ended.compareAndSet(null, statusCode + " " + reason);
+            return null;
+        }
+
+        @Override
+        public void onError(WebSocket webSocket, Throwable error) {
+            ended.compareAndSet(null, String.valueOf(error));
+        }
+
+        /**
+         * Closes the follow, and never throws doing it.
+         *
+         * <p>This runs from a try-with-resources, so anything it threw would be added to whatever the
+         * body was already failing with - and a peer that has gone away is the ordinary case here, not
+         * a finding. The interesting failure is the assertion; this must not stand in front of it.
+         */
+        @Override
+        public void close() {
+            WebSocket open = socket;
+            if (open == null) {
+                return;
+            }
+            try {
+                open.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+            } catch (RuntimeException alreadyGone) {
+                open.abort();
+            }
+        }
+
+        private static void sleep() {
+            try {
+                Thread.sleep(POLL.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while following", e);
+            }
+        }
     }
 
     /** The list under one key of an answer, each element kept as the object it arrived as. */

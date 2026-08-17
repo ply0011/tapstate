@@ -57,6 +57,18 @@ final class MongoEndpoints implements Endpoints {
         return collection(uri, table).find().into(new ArrayList<>());
     }
 
+    /**
+     * Puts one document in exactly as written, from outside the product.
+     *
+     * <p>Beside {@link #seed} rather than folded into it, because the two answer different needs. Seeding
+     * says how many rows, and deliberately does not say what is in them. This says what is in one and
+     * nothing about how many - for a specification whose subject is a shape no write path of the
+     * product's could have produced, so no route through the product could put it there.
+     */
+    public void insert(String uri, String table, Document document) {
+        collection(uri, table).insertOne(document);
+    }
+
     @Override
     public long count(String uri, String table) {
         return collection(uri, table).countDocuments();
