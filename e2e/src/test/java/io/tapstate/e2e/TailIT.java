@@ -57,6 +57,13 @@ class TailIT {
      */
     private static final int CEILING = 16;
 
+    /**
+     * Cursor movement up over the lines already drawn - what the in-place view writes to put its next
+     * frame over the last one. A pattern rather than a literal because the count is the height of the
+     * frame before it, which is a fact about the row rather than about redrawing.
+     */
+    private static final String CURSOR_UP = "\\[\\d+A";
+
     @TempDir
     private Path connectorJars;
 
@@ -118,8 +125,13 @@ class TailIT {
             try (CliProcess watch = CliProcess.onATerminal(
                     "-c", server.baseUrl().toString(), "-u", USER, "-p", PASSWORD,
                     "watch", SOURCE_ID + "." + COLLECTION)) {
-                watch.awaitOutput(seen -> seen.contains("row-1"), TIMEOUT,
+                String firstFrame = watch.awaitOutput(seen -> seen.contains("row-1"), TIMEOUT,
                         "watch to draw the row it was asked to hold");
+                // The first frame is drawn where the prompt left off, so it carries no cursor movement.
+                // Asserted so that the one below is read off a frame that really did replace this one.
+                assertThat(firstFrame)
+                        .as("the first frame this command draws")
+                        .doesNotContainPattern(CURSOR_UP);
 
                 change(CHANGED_ROW);
                 // Then change the row it *is* holding. Its arrival is what makes the absence above a
@@ -132,6 +144,14 @@ class TailIT {
                 assertThat(shown)
                         .as("what watch drew while a row it was not holding changed")
                         .doesNotContain(marker(CHANGED_ROW));
+                // It redrew rather than appended. This is the one place that says so on the lane every
+                // change runs through: the witness that drives this command against a pipeline needs real
+                // connector jars, so on an ordinary run it does not execute at all - and the bytes being
+                // asserted here are the whole of drawing in place, and the reason this command refuses to
+                // run down a pipe.
+                assertThat(shown)
+                        .as("what watch wrote to put the new frame over the old one")
+                        .containsPattern(CURSOR_UP);
             }
 
             // (3) The place it held is given back. Taking every place, releasing them, and asking again
