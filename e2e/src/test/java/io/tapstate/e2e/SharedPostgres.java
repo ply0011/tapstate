@@ -89,12 +89,12 @@ final class SharedPostgres {
     /**
      * Creates the database if it is not already there.
      *
-     * <p>Not {@code CREATE DATABASE IF NOT EXISTS}, which PostgreSQL does not have: the existence check
-     * is a separate query, and losing a race with another thread is caught by name rather than allowed
-     * to fail the run. Both callers are already serialized by {@link #settings}, so the race is only
-     * possible across JVMs sharing a server, which is not an arrangement this makes - but a duplicate
-     * database is the one failure here that is entirely harmless, and treating it as fatal would turn a
-     * harmless coincidence into a red run.
+     * <p>Two queries rather than one, because PostgreSQL has no {@code CREATE DATABASE IF NOT EXISTS}.
+     * Nothing guards the gap between them and nothing needs to: the container is one per JVM and the
+     * only caller is synchronized, so there is no second writer to lose a race with. A tolerance for
+     * "already exists" was written here first and taken out again - it could not be reached, and
+     * untested code for an unreachable case is worse than no code, because the next reader has to work
+     * out whether the case is real.
      */
     private static void provision(PostgreSQLContainer<?> server, String database) {
         try (Connection admin = asAdmin(server); Statement statement = admin.createStatement()) {
@@ -106,16 +106,8 @@ final class SharedPostgres {
             }
             statement.execute("CREATE DATABASE \"" + database + "\"");
         } catch (SQLException e) {
-            if (isDuplicateDatabase(e)) {
-                return;
-            }
             throw new IllegalStateException("cannot provision the database " + database, e);
         }
-    }
-
-    /** 42P04 is "database already exists", the one outcome of the race above that is not a problem. */
-    private static boolean isDuplicateDatabase(SQLException e) {
-        return "42P04".equals(e.getSQLState());
     }
 
     private static Connection asAdmin(PostgreSQLContainer<?> server) throws SQLException {
