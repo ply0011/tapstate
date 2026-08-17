@@ -1826,11 +1826,13 @@ final class Repl {
                 line.append("  [").append(check.connectorErrorCode()).append(']');
             }
             out.println(line);
-            if (readable(check.reason())) {
-                out.println("          " + check.reason());
+            String reason = readable(check.reason());
+            if (reason != null) {
+                out.println("          " + reason);
             }
-            if (readable(check.solution())) {
-                out.println("          " + check.solution());
+            String solution = readable(check.solution());
+            if (solution != null) {
+                out.println("          " + solution);
             }
         }
     }
@@ -1840,18 +1842,35 @@ final class Repl {
     }
 
     /**
-     * Whether a diagnostic is something to show a person, as opposed to an unresolved translation key.
+     * The diagnostic to show a person, or null when there is none worth showing.
      *
-     * <p>The connector API's typed test exceptions are constructed with keys rather than sentences —
-     * a privilege check carries {@code check.cdc.privilege.reason} — and nothing resolves them on the
-     * way here: they are plain string fields, and the bundle that would translate them belongs to the
-     * platform those connectors were written for. Printing one puts a line that reads like a defect
-     * exactly where a person is looking for guidance, which is worse than printing nothing. A key is
-     * recognised by its shape: dotted lowercase segments with no whitespace, which no sentence has.
+     * <p>The connector API's typed test exceptions are constructed with translation keys rather than
+     * sentences — a privilege check carries {@code check.cdc.privilege.reason} — and nothing resolves
+     * them on the way here: they are plain string fields, no connector sets them to text, and the
+     * bundle that would translate them belongs to the platform those connectors were written for. A
+     * key is recognised by its shape: dotted lowercase segments with no whitespace, which no sentence
+     * has.
+     *
+     * <p>For the keys the connector API defines, the catalog supplies the wording, under a reserved
+     * prefix that cannot collide with a first-party code. A key with no entry is dropped rather than
+     * printed: it would put a line that reads like a defect exactly where a person is looking for
+     * guidance, which is worse than printing nothing. Anything already a sentence is shown as it is.
      */
-    private static boolean readable(String value) {
-        return present(value) && !TRANSLATION_KEY.matcher(value.trim()).matches();
+    private static String readable(String value) {
+        if (!present(value)) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (!TRANSLATION_KEY.matcher(trimmed).matches()) {
+            return trimmed;
+        }
+        String key = PDK_TEST_ITEM_PREFIX + trimmed;
+        String rendered = MessageCatalog.bundled().render(key, Map.of()).message();
+        return rendered.equals(key) ? null : rendered;
     }
+
+    /** The reserved catalog namespace the connector API's test-item keys are given wording under. */
+    private static final String PDK_TEST_ITEM_PREFIX = "pdk.testitem.";
 
     private static final Pattern TRANSLATION_KEY =
             Pattern.compile("[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*(?:\\.[a-z0-9-]+)+");

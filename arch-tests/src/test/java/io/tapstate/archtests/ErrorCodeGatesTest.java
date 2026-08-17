@@ -175,18 +175,38 @@ class ErrorCodeGatesTest {
         }
         for (Map.Entry<String, Map<String, String>> entry : catalog.entrySet()) {
             String code = entry.getKey();
-            assertThat(declared)
-                    .as("catalog entry '%s' has no matching first-party error code (orphan template)", code)
-                    .containsKey(code);
             Set<String> used = new TreeSet<>();
             used.addAll(placeholdersIn(entry.getValue().get("message")));
             used.addAll(placeholdersIn(entry.getValue().get("solution")));
+            // Wording for a connector-supplied diagnostic, which is not a first-party code and so has
+            // no placeholders() to match. The connector API defines these keys and constructs its test
+            // exceptions with them rather than with sentences, and nothing resolves them on the way in;
+            // the catalog supplies the wording instead. They live under a reserved prefix that no
+            // <domain>.<symbol> code can occupy, so they cannot shadow a first-party entry.
+            //
+            // The orphan check does not apply, but the reason behind it does: an entry nothing can fill
+            // is dead text. Nothing passes arguments for these, so the standing rule is stricter than
+            // matching a contract - they must carry no placeholders at all, or they would render with a
+            // {name} still in them.
+            if (code.startsWith(PDK_TEST_ITEM_PREFIX)) {
+                assertThat(used)
+                        .as("connector-diagnostic wording '%s' is rendered with no arguments, so its "
+                                + "template must carry no placeholders", code)
+                        .isEmpty();
+                continue;
+            }
+            assertThat(declared)
+                    .as("catalog entry '%s' has no matching first-party error code (orphan template)", code)
+                    .containsKey(code);
             assertThat(used)
                     .as("placeholders in the catalog templates for '%s' must equal its declared "
                             + "placeholders() (gate D5-4)", code)
                     .isEqualTo(declared.get(code));
         }
     }
+
+    /** The reserved namespace connector-supplied diagnostics are given wording under. */
+    private static final String PDK_TEST_ITEM_PREFIX = "pdk.testitem.";
 
     private static Set<String> placeholdersIn(String template) {
         Set<String> names = new TreeSet<>();

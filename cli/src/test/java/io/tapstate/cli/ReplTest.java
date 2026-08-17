@@ -1574,7 +1574,7 @@ class ReplTest {
                 "my-mongo", "mongodb", "PASSED",
                 List.of(new ConnectionReport.Check("read log", "WARNING",
                         "Access denied for user 'cdc'@'%'",
-                        "check.cdc.privilege.reason", "check.cdc.privilege.solution",
+                        "some.connector.invented.reason", "some.connector.invented.solution",
                         "CDC_PRIVILEGE")),
                 1752000000000L));
         Harness h = onlineSession(Path.of("tap-work"), client);
@@ -1584,6 +1584,31 @@ class ReplTest {
 
         String out = h.sink().toString().substring(mark);
         assertThat(out).contains("Access denied for user").contains("CDC_PRIVILEGE");
+        assertThat(out).doesNotContain("some.connector.invented");
+    }
+
+    /**
+     * For the keys the connector API actually defines, the catalog supplies the wording the connector
+     * never carried, so the checks that decide whether a stranger's own database can be read at all
+     * say what to do about it rather than naming a key nobody can resolve.
+     */
+    @Test
+    void testRendersOurOwnWordingForAConnectorApiDiagnosticKey() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Access denied",
+                        "check.cdc.privilege.reason", "check.cdc.privilege.solution", "CDC_PRIVILEGE")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("privileges a change stream needs");
+        assertThat(out).contains("Grant the replication privileges");
         assertThat(out).doesNotContain("check.cdc.privilege");
     }
 
