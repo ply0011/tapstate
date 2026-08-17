@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * The control plane's three data-browser verbs: list a declared source's collections, report one
@@ -190,7 +192,8 @@ public final class DataBrowserService {
                     null);
         }
         requireOrderable(sort);
-        ConnectionConfig config = requireCollection(sourceId, collection);
+        ConnectionConfig config = requireBrowsable(connection(sourceId));
+        requireHolds(config, sourceId, collection);
         DataBrowserQuery query = new DataBrowserQuery(
                 collection,
                 filter == null ? null : filter.toPortRequest(),
@@ -244,7 +247,8 @@ public final class DataBrowserService {
             DataBrowserCriteria filter,
             DataBrowserChangeSink sink) {
         Objects.requireNonNull(sink, "sink");
-        ConnectionConfig config = requireCollection(sourceId, collection);
+        ConnectionConfig config = requireBrowsable(connection(sourceId));
+        requireHolds(config, sourceId, collection);
         DataBrowserSubscription subscription = tailProbe.tail(
                 config, new DataBrowserTailRequest(collection), change -> {
             // Tested against the row as it now is, or as it was when that is all the change carries.
@@ -268,10 +272,45 @@ public final class DataBrowserService {
      */
     private ConnectionConfig requireCollection(String sourceId, String collection) {
         ConnectionConfig config = connection(sourceId);
+        requireHolds(config, sourceId, collection);
+        return config;
+    }
+
+    private void requireHolds(ConnectionConfig config, String sourceId, String collection) {
         if (!collectionsProbe.collections(config).contains(collection)) {
             throw new TapstateException(
                     DataBrowserError.UNKNOWN_COLLECTION,
                     Map.of("source", sourceId, "collection", collection),
+                    null);
+        }
+    }
+
+    /**
+     * The connectors a request for rows may be sent to, and the only place that set is written down.
+     *
+     * <p>A closed set rather than something derived, because there is nothing to derive it from: the
+     * command a row read travels on is registered by most of the catalogue, and registering it says
+     * only that the connector will be handed the request, not that it can read one. Adding a connector
+     * here is therefore a decision somebody makes and a reviewer sees, which is the same shape the
+     * synchronised-operation set takes and for the same reason.
+     */
+    private static final Set<String> BROWSABLE_CONNECTORS = Set.of("mongodb");
+
+    /**
+     * Refuses a row read against a connector this face cannot ask in, before anything is sent.
+     *
+     * <p>Before, not after, and the difference is the whole value: sent anyway, the request reaches a
+     * driver that cannot find a statement in it and fails inside the connector, so what comes back is a
+     * server failure quoting a driver error about the shape of a query nobody wrote. Refused here it is
+     * a judgement about the request, made by the layer that knows the answer, in words that name the
+     * source's connector and what can be browsed instead.
+     */
+    private static ConnectionConfig requireBrowsable(ConnectionConfig config) {
+        if (!BROWSABLE_CONNECTORS.contains(config.connectorId())) {
+            throw new TapstateException(
+                    DataBrowserError.CONNECTOR_NOT_BROWSABLE,
+                    Map.of("connector", config.connectorId(),
+                            "browsable", String.join(", ", new TreeSet<>(BROWSABLE_CONNECTORS))),
                     null);
         }
         return config;

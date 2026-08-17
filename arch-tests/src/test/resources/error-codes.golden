@@ -60,6 +60,7 @@ control.forbidden
 control.malformed-request
 control.unauthenticated
 control.unreachable
+data-browser.connector-not-browsable
 data-browser.invalid-limit
 data-browser.unknown-collection
 data-browser.unorderable-field

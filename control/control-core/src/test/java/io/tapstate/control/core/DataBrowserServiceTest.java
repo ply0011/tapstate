@@ -445,7 +445,86 @@ class DataBrowserServiceTest {
         assertThat(listed.get()).isNull();
     }
 
+    @Test
+    void refusesRowsFromAConnectorThisFaceCannotAskIn() {
+        // Refused on the connector's name, before a listing and before a read - so the request never
+        // reaches a driver that would fail somewhere inside itself over a query nobody wrote.
+        AtomicReference<ConnectionConfig> listed = new AtomicReference<>();
+        AtomicReference<DataBrowserQuery> read = new AtomicReference<>();
+        DataBrowserService service = new DataBrowserService(
+                store(ON_A_CONNECTOR_THAT_IS_NOT_BROWSABLE),
+                new EmptySchemaStore(),
+                config -> {
+                    listed.set(config);
+                    return List.of("orders");
+                },
+                (config, collection) -> null,
+                (config, query) -> {
+                    read.set(query);
+                    return NOTHING;
+                },
+                NO_FOLLOWS);
+
+        assertThatThrownBy(() -> service.find("rows_in_sql", "orders", null, null, null))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(failure -> {
+                    TapstateException coded = (TapstateException) failure;
+                    assertThat(coded.code().code()).isEqualTo("data-browser.connector-not-browsable");
+                    // Both parameters carry their weight: one says which source cannot be read, the
+                    // other says what can, which is the only thing a reader can act on.
+                    assertThat(coded.args())
+                            .containsEntry("connector", "mysql")
+                            .containsEntry("browsable", "mongodb");
+                });
+        assertThat(read.get()).as("a read that was refused must not have been sent").isNull();
+        assertThat(listed.get()).as("nor cost a round trip to find out").isNull();
+    }
+
+    @Test
+    void refusesToFollowTheSameConnectorItRefusesToRead() {
+        // A follow carries rows too. Gating only the bounded read would leave the same request
+        // reachable by asking for it continuously instead of once.
+        DataBrowserService service = service(
+                store(ON_A_CONNECTOR_THAT_IS_NOT_BROWSABLE), config -> List.of("orders"));
+
+        assertThatThrownBy(() -> service.tail("rows_in_sql", "orders", null, change -> { }))
+                .isInstanceOf(TapstateException.class)
+                .extracting(failure -> ((TapstateException) failure).code().code())
+                .isEqualTo("data-browser.connector-not-browsable");
+    }
+
+    @Test
+    void stillListsAndSizesAConnectorItWillNotReadRowsFrom() {
+        // Deliberate, and the reason the refusal above is worth having: these two ask nothing shaped -
+        // they are the connector's own table names and table info, and they answer for any connector
+        // here. Refusing them as well would hide a source a reader can perfectly well see the outline
+        // of, and would make the refusal read as "this source is broken" rather than "not this verb".
+        // The size probe answers what the real one answers when a connector reports nothing about a
+        // collection: an info carrying no numbers. Never null - the port has no such answer, and the
+        // stub the other cases share returns one only because none of them asks for a size.
+        DataBrowserService service = new DataBrowserService(
+                store(ON_A_CONNECTOR_THAT_IS_NOT_BROWSABLE),
+                new EmptySchemaStore(),
+                config -> List.of("orders"),
+                (config, collection) -> new DataBrowserTableInfo(null, null, null),
+                (config, query) -> {
+                    throw new AssertionError("this case must not read rows");
+                },
+                NO_FOLLOWS);
+
+        assertThat(service.collections("rows_in_sql"))
+                .extracting(DataBrowserCollection::name)
+                .containsExactly("orders");
+        assertThat(service.stats("rows_in_sql", "orders")).isNotNull();
+    }
+
     // ---- fixtures --------------------------------------------------------------------------------
+
+    /** A declared source whose connector reads perfectly well, in a shape this face does not ask in. */
+    private static final SourceResource ON_A_CONNECTOR_THAT_IS_NOT_BROWSABLE = new SourceResource(
+            "rows_in_sql", null, "mysql",
+            Map.of("host", "db.local", "database", "shop"),
+            null, null, null, null, null);
 
     /** A service over a source holding one collection, recording the query its find probe is driven with. */
     private static DataBrowserService finding(AtomicReference<DataBrowserQuery> driven) {

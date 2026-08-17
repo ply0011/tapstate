@@ -269,6 +269,9 @@ control.unauthenticated:
 control.unreachable:
   message: "The Tapstate Server is unreachable."
   solution: "Check the Server URL and availability, then retry the tool call."
+data-browser.connector-not-browsable:
+  message: "Connector '{connector}' answers reads in its own shape, and this face asks in documents, so its rows cannot be browsed."
+  solution: "Browse a source on one of: {browsable}. This source can still be listed and sized, and it can still be read by a pipeline."
 data-browser.invalid-limit:
   message: "A read of {limit} rows is not served; ask for between 1 and {max}."
   solution: "Ask for at most {max} rows, or narrow the read with a filter."

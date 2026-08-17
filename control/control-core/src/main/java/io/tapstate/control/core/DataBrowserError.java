@@ -28,7 +28,24 @@ public enum DataBrowserError implements TapstateErrorCode {
      * a path and has no second form. Served anyway it would order by a path resolving nowhere — every
      * row equal, rows back in no particular order, nothing reported.
      */
-    UNORDERABLE_FIELD("data-browser.unorderable-field", Set.of("field"));
+    UNORDERABLE_FIELD("data-browser.unorderable-field", Set.of("field")),
+
+    /**
+     * The source's connector cannot be asked for rows in the shape this face asks in. {@code connector}
+     * is the one declared; {@code browsable} names the ones that can.
+     *
+     * <p>Asked before anything is sent, and that is the whole point of it. Having the command a request
+     * travels on says nothing about whether the request can be understood: most connectors register it
+     * and read it as SQL, so one carrying a document-shaped query reaches a driver that finds no
+     * statement in it and fails somewhere inside itself. What came back then was a server failure
+     * quoting a driver — accurate about the symptom, silent about the cause, and blaming the product
+     * for a source the product simply does not browse.
+     *
+     * <p>Listing and sizing are left alone, deliberately. Those two ask nothing shaped: they are the
+     * connector's own table names and table info, and they answer correctly for every connector here.
+     * Refusing them too would hide a source a reader can perfectly well look at the outline of.
+     */
+    CONNECTOR_NOT_BROWSABLE("data-browser.connector-not-browsable", Set.of("connector", "browsable"));
 
     private final String code;
     private final Set<String> placeholders;
