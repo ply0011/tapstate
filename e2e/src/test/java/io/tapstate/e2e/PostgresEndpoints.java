@@ -36,6 +36,17 @@ final class PostgresEndpoints implements Endpoints {
     private static final String HOST = "host";
     private static final String PORT = "port";
     private static final String DATABASE = "database";
+    /**
+     * The account, under either name it can arrive with.
+     *
+     * <p>This driver is addressed from two places and they do not agree, for good reasons on both
+     * sides. Provisioning hands it the harness's own settings, which spell the account the same way for
+     * every store so that one specification reads the same against any of them. A resource hands it the
+     * connector's settings, and this connector spells the account "user" where MySQL says "username" -
+     * a resource written any other way would not connect. Rather than make one of them lie, the driver
+     * accepts both and says so.
+     */
+    private static final String USER = "user";
     private static final String USERNAME = "username";
     private static final String PASSWORD = "password";
 
@@ -394,11 +405,16 @@ final class PostgresEndpoints implements Endpoints {
                 + address.text(DATABASE);
         return connectionsByUrl.computeIfAbsent(url, key -> {
             try {
-                return DriverManager.getConnection(key, address.text(USERNAME), address.text(PASSWORD));
+                return DriverManager.getConnection(key, account(address), address.text(PASSWORD));
             } catch (SQLException e) {
                 throw new EnvelopeException("cannot reach the endpoint at " + key, e);
             }
         });
+    }
+
+    /** The account this address carries, under whichever of the two names it uses. */
+    private static String account(EndpointAddress address) {
+        return address.settings().containsKey(USER) ? address.text(USER) : address.text(USERNAME);
     }
 
     /**
