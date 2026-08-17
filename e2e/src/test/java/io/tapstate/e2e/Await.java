@@ -50,11 +50,6 @@ final class Await {
         }
     }
 
-    /** One poll interval, for a caller running its own bounded loop. */
-    static void pause() {
-        sleep();
-    }
-
     private static void sleep() {
         try {
             Thread.sleep(POLL.toMillis());
