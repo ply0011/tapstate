@@ -23,6 +23,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -63,18 +65,25 @@ import static org.assertj.core.api.Assertions.assertThat;
  *     -Dit.test=RealCrossEngineFrontierIT -Dfailsafe.failIfNoSpecifiedTests=false
  * </pre>
  */
-@Disabled("Unfinished, and disabled rather than deleted because what it already establishes is worth "
-        + "keeping. What works: two engines are provisioned, all three connectors register, both "
-        + "sources discover, and BOTH snapshot halves cross to the target - the first time any witness "
-        + "has done that across two engines. What does not: no change written after start ever reaches "
-        + "the target, so no chain record is ever given a sourceReadOffset and the frontier phases below "
-        + "never run. Measured with one source as well as two, so it is NOT a cross-source problem and "
-        + "not a product finding - the checked-in declarative example a-real-change-stream-carries-rows-"
-        + "written-after-start drives real CDC successfully today. The difference between that example "
-        + "and this is how the change is made: it goes through the harness's own endpoint driver, this "
-        + "writes to the container over JDBC. Isolate that before re-enabling. Chain record seen at the "
-        + "point of failure: snapshotCompletedTables=[orders], cdcStartPosition=cdc-start-0, "
-        + "consumerOffsets acked at the 5 snapshot rows, and no sourceReadOffset field at all.")
+@Disabled("Unfinished. Disabled rather than deleted: what it establishes is real, and a disabled test "
+        + "advertises a gap where a passing-looking one would hide it.\n"
+        + "WORKS: two engines provisioned, all three connectors registered (postgres included), both "
+        + "sources discovered, and on the real-process tier both snapshot halves crossed to one target - "
+        + "no witness here had crossed two engines before.\n"
+        + "FAILS: no change written after start ever reaches the target, so no chain record is given a "
+        + "sourceReadOffset and the frontier phases never run.\n"
+        + "WHAT HAS BEEN RULED OUT, each by measurement rather than argument: it is not cross-source "
+        + "(one source fails identically); not the connector jars or the lane (all 18 published "
+        + "examples, the real change-stream one included, pass green against the very same "
+        + "connectors-dir); not the stream's positioning window (re-emitting on a stalled reading, which "
+        + "is how the specification runner survives that, does not rescue it); not the two config "
+        + "vocabularies (postgres wants 'user' and 'schema' where MySQL wants 'username' and neither - "
+        + "both are handled, and discovery now succeeds).\n"
+        + "WHAT IS LEFT: this drives the product by hand where the passing examples go through the "
+        + "specification runner, so the difference is somewhere in that wiring - compare against "
+        + "HttpTierBinding and PublishedExamplesIT rather than re-deriving. Chain record at the point of "
+        + "failure: snapshotCompletedTables=[orders], cdcStartPosition=cdc-start-0, consumer acked at "
+        + "the snapshot rows, no sourceReadOffset field.")
 class RealCrossEngineFrontierIT {
 
     /**
@@ -83,6 +92,9 @@ class RealCrossEngineFrontierIT {
      * report itself; it cannot make a broken run pass.
      */
     private static final Duration FRONTIER_BOUND = Duration.ofMinutes(3);
+
+    /** Consecutive identical readings before a stalled wait re-asserts the change, as the runner does. */
+    private static final int STALLED_POLLS = 15;
 
     private static final String ORDERS = "orders";
     private static final String SHIPMENTS = "shipments";
@@ -124,9 +136,7 @@ class RealCrossEngineFrontierIT {
                                 "-c", "max_wal_senders=8", "-c", "max_replication_slots=8")) {
             mysql.start();
             postgres.start();
-            seedMysql(mysql);
             grantReplication(mysql);
-            seedPostgres(postgres);
 
             String suffix = tier.name().toLowerCase(Locale.ROOT);
             String pipelineId = PIPELINE_ID + "_" + suffix;
@@ -134,9 +144,16 @@ class RealCrossEngineFrontierIT {
             String targetUri = SharedMongo.replicaSetUrl("cross_engine_target_" + suffix);
 
             try (ServerHandle server = tier.launch(storeUri);
-                    MongoEndpoints mongo = new MongoEndpoints()) {
+                    MongoEndpoints mongo = new MongoEndpoints();
+                    MySqlEndpoints mysqlRows = new MySqlEndpoints();
+                    PostgresEndpoints postgresRows = new PostgresEndpoints()) {
                 ControlPlane control = new ControlPlane(server.baseUrl());
                 control.bootstrapAndLogin("e2e", "e2e-password");
+
+                EndpointAddress mysqlAt = new EndpointAddress("src_orders", mysqlConfig(mysql));
+                EndpointAddress postgresAt = new EndpointAddress("src_shipments", postgresConfig(postgres));
+                mysqlRows.seed(mysqlAt, ORDERS, SeedRows.generated(SEEDED_ORDERS));
+                postgresRows.seed(postgresAt, SHIPMENTS, SeedRows.generated(SEEDED_SHIPMENTS));
 
                 control.registerConnector("mysql", ConnectorJars.bytesFor("mysql"));
                 control.registerConnector("postgres", ConnectorJars.bytesFor("postgres"));
@@ -152,7 +169,7 @@ class RealCrossEngineFrontierIT {
                 control.apply(resources);
 
                 control.discoverSchema("src_orders", "mysql", mysqlConfig);
-                control.discoverSchema("src_shipments", "postgres", postgresConfig);
+                control.discoverSchema("src_shipments", "postgres", asPostgresConnectorSees(postgresConfig));
 
                 control.lifecycle(pipelineId, LifecycleVerb.START);
 
@@ -169,16 +186,19 @@ class RealCrossEngineFrontierIT {
                         .as("rows from the PostgreSQL half").isEqualTo(SEEDED_SHIPMENTS);
 
                 // Traffic on both, so both chains have an acked consumer and therefore an offset at all.
-                changeMysql(mysql, SEEDED_ORDERS + 1, WARMUP_CHANGES);
-                changePostgres(postgres, SEEDED_SHIPMENTS + 1, WARMUP_CHANGES);
+                mysqlRows.cdc(mysqlAt, ORDERS, CdcOp.INSERT, WARMUP_CHANGES);
+                postgresRows.cdc(postgresAt, SHIPMENTS, CdcOp.INSERT, WARMUP_CHANGES);
                 // Both change streams have to be alive before any question about offsets means anything.
                 // Without this the run below cannot tell "the frontier is pinned" from "no change ever
                 // crossed", and those are different findings.
-                Await.until("changes from both engines to reach the target", FRONTIER_BOUND,
-                        () -> count(mongo, targetUri, ORDERS) == SEEDED_ORDERS + WARMUP_CHANGES
-                                && count(mongo, targetUri, SHIPMENTS) == SEEDED_SHIPMENTS + WARMUP_CHANGES,
-                        () -> ORDERS + "=" + count(mongo, targetUri, ORDERS) + " "
-                                + SHIPMENTS + "=" + count(mongo, targetUri, SHIPMENTS));
+                awaitReEmitting("MySQL's changes to reach the target",
+                        () -> count(mongo, targetUri, ORDERS) == SEEDED_ORDERS + WARMUP_CHANGES,
+                        () -> ORDERS + "=" + count(mongo, targetUri, ORDERS),
+                        mysqlRows, mysqlAt, ORDERS);
+                awaitReEmitting("PostgreSQL's changes to reach the target",
+                        () -> count(mongo, targetUri, SHIPMENTS) == SEEDED_SHIPMENTS + WARMUP_CHANGES,
+                        () -> SHIPMENTS + "=" + count(mongo, targetUri, SHIPMENTS),
+                        postgresRows, postgresAt, SHIPMENTS);
                 Await.until("both chains to carry a durable offset", FRONTIER_BOUND,
                         () -> offsets(mongo, storeUri).size() == 2,
                         () -> "offsets " + offsets(mongo, storeUri) + "; chain records "
@@ -194,10 +214,11 @@ class RealCrossEngineFrontierIT {
                         .hasSize(2);
 
                 // Phase one: only MySQL speaks. PostgreSQL is not touched at all.
-                changeMysql(mysql, SEEDED_ORDERS + WARMUP_CHANGES + 1, DRIVEN_CHANGES);
-                Await.until("the MySQL chain's offset to move while PostgreSQL stays silent", FRONTIER_BOUND,
+                mysqlRows.cdc(mysqlAt, ORDERS, CdcOp.INSERT, DRIVEN_CHANGES);
+                awaitReEmitting("the MySQL chain's offset to move while PostgreSQL stays silent",
                         () -> movedSince(baseline, offsets(mongo, storeUri)).size() == 1,
-                        () -> "baseline " + baseline + " now " + offsets(mongo, storeUri));
+                        () -> "baseline " + baseline + " now " + offsets(mongo, storeUri),
+                        mysqlRows, mysqlAt, ORDERS);
                 Map<String, String> afterMysql = offsets(mongo, storeUri);
                 List<String> movedByMysql = movedSince(baseline, afterMysql);
                 assertThat(movedByMysql)
@@ -210,10 +231,11 @@ class RealCrossEngineFrontierIT {
 
                 // Phase two: only PostgreSQL speaks - and it must move the *other* record. This is what
                 // stops phase one from passing on a chain that happens to move for reasons of its own.
-                changePostgres(postgres, SEEDED_SHIPMENTS + WARMUP_CHANGES + 1, DRIVEN_CHANGES);
-                Await.until("the PostgreSQL chain's offset to move while MySQL stays silent", FRONTIER_BOUND,
+                postgresRows.cdc(postgresAt, SHIPMENTS, CdcOp.INSERT, DRIVEN_CHANGES);
+                awaitReEmitting("the PostgreSQL chain's offset to move while MySQL stays silent",
                         () -> movedSince(afterMysql, offsets(mongo, storeUri)).size() == 1,
-                        () -> "before " + afterMysql + " now " + offsets(mongo, storeUri));
+                        () -> "before " + afterMysql + " now " + offsets(mongo, storeUri),
+                        postgresRows, postgresAt, SHIPMENTS);
                 Map<String, String> afterPostgres = offsets(mongo, storeUri);
                 List<String> movedByPostgres = movedSince(afterMysql, afterPostgres);
                 assertThat(movedByPostgres)
@@ -234,6 +256,39 @@ class RealCrossEngineFrontierIT {
                 assertThat(control.errorCount(pipelineId)).contains(0L);
             }
         }
+    }
+
+    /**
+     * Waits for a condition, re-asserting the change on a reading that has stopped moving.
+     *
+     * <p>This is the one thing a bespoke run cannot leave to the specification runner. A change stream
+     * positions itself some time after it is asked for, nothing observable announces when, and a change
+     * written into that window is never delivered at all - so a run that writes once and waits can wait
+     * for ever on a change that no longer exists anywhere. The runner survives this by watching for the
+     * opposite of readiness, a reading that has stopped moving, and re-emitting; re-emission is
+     * idempotent under existing keys, so mistaking a slow delivery for a lost one costs a duplicate the
+     * target absorbs, while the reverse mistake costs the whole run.
+     */
+    private static void awaitReEmitting(String what, BooleanSupplier condition, Supplier<String> reading,
+            Endpoints driver, EndpointAddress address, String table) {
+        String previous = null;
+        int identical = 0;
+        long deadline = System.nanoTime() + FRONTIER_BOUND.toNanos();
+        while (System.nanoTime() - deadline < 0) {
+            if (condition.getAsBoolean()) {
+                return;
+            }
+            String now = reading.get();
+            identical = now.equals(previous) ? identical + 1 : 1;
+            previous = now;
+            if (identical >= STALLED_POLLS) {
+                driver.redeliver(address, table);
+                identical = 0;
+            }
+            Await.pause();
+        }
+        throw new AssertionError("timed out (bound " + FRONTIER_BOUND + ") waiting for " + what
+                + ", re-emitting " + table + " whenever the reading stalled; last read " + reading.get());
     }
 
     /** The chain records whose offset differs from what it was, named by record id. */
@@ -264,14 +319,6 @@ class RealCrossEngineFrontierIT {
         return mongo.count(EndpointAddress.uri(targetUri), table);
     }
 
-    private static void seedMysql(MySQLContainer<?> mysql) throws SQLException {
-        try (Connection connection = mysqlConnection(mysql); Statement statement = connection.createStatement()) {
-            statement.execute("CREATE TABLE " + ORDERS + " (id BIGINT PRIMARY KEY, seq BIGINT)");
-            for (int id = 1; id <= SEEDED_ORDERS; id++) {
-                statement.execute("INSERT INTO " + ORDERS + " (id, seq) VALUES (" + id + ", " + id + ")");
-            }
-        }
-    }
 
     /** Binlog CDC needs replication privileges the image's default user does not carry. */
     private static void grantReplication(MySQLContainer<?> mysql) throws SQLException {
@@ -283,43 +330,8 @@ class RealCrossEngineFrontierIT {
         }
     }
 
-    private static void seedPostgres(PostgreSQLContainer<?> postgres) throws SQLException {
-        try (Connection connection = postgresConnection(postgres);
-                Statement statement = connection.createStatement()) {
-            statement.execute("CREATE TABLE " + SHIPMENTS + " (id BIGINT PRIMARY KEY, seq BIGINT)");
-            for (int id = 1; id <= SEEDED_SHIPMENTS; id++) {
-                statement.execute("INSERT INTO " + SHIPMENTS + " (id, seq) VALUES (" + id + ", " + id + ")");
-            }
-        }
-    }
 
-    /**
-     * Changes on the MySQL half only; the PostgreSQL container is not touched.
-     *
-     * <p>Inserts rather than updates, so that the change stream being alive is something the target can
-     * be asked about: an update leaves the row count where it was, so a run whose stream never started
-     * looks exactly like one whose stream carried every change.
-     */
-    private static void changeMysql(MySQLContainer<?> mysql, int firstId, int changes) throws SQLException {
-        try (Connection connection = mysqlConnection(mysql); Statement statement = connection.createStatement()) {
-            for (int i = 0; i < changes; i++) {
-                int id = firstId + i;
-                statement.execute("INSERT INTO " + ORDERS + " (id, seq) VALUES (" + id + ", " + id + ")");
-            }
-        }
-    }
 
-    /** Changes on the PostgreSQL half only; the MySQL container is not touched. Inserts, as above. */
-    private static void changePostgres(PostgreSQLContainer<?> postgres, int firstId, int changes)
-            throws SQLException {
-        try (Connection connection = postgresConnection(postgres);
-                Statement statement = connection.createStatement()) {
-            for (int i = 0; i < changes; i++) {
-                int id = firstId + i;
-                statement.execute("INSERT INTO " + SHIPMENTS + " (id, seq) VALUES (" + id + ", " + id + ")");
-            }
-        }
-    }
 
     private static Connection mysqlConnection(MySQLContainer<?> mysql) throws SQLException {
         return DriverManager.getConnection(
@@ -350,12 +362,28 @@ class RealCrossEngineFrontierIT {
         // Required by this connector and by no other here: PostgreSQL addresses a table by schema as
         // well as by database, so leaving it out is refused as dsl.config-required rather than guessed.
         config.put("schema", "public");
-        // "user", not "username": this connector spells the account differently from the MySQL one, and
-        // the difference is silent - the driver falls back to the operating-system account and the
-        // failure arrives much later as a password rejection for a user nobody named.
-        config.put("user", postgres.getUsername());
+        // Held in the harness's own vocabulary, which is "username" for every store: one address shape
+        // is what lets one specification read the same against any of them. The connector's own spelling
+        // is a different matter and is applied where the resource is written, below.
+        config.put("username", postgres.getUsername());
         config.put("password", postgres.getPassword());
         return config;
+    }
+
+    /**
+     * The same settings in the connector's vocabulary rather than the harness's.
+     *
+     * <p>One translation, in one place, because the two are genuinely different contracts: every harness
+     * driver takes an address spelled the same way, which is what lets one specification read the same
+     * against any store, while each connector spells its own settings however it does. Postgres calls the
+     * account "user" where MySQL calls it "username", and passing the wrong one is not refused - the
+     * driver falls back to the operating-system account, and it arrives much later as a rejected
+     * password for a user nobody named.
+     */
+    private static Map<String, Object> asPostgresConnectorSees(Map<String, Object> harnessSettings) {
+        Map<String, Object> forConnector = new LinkedHashMap<>(harnessSettings);
+        forConnector.put("user", forConnector.remove("username"));
+        return forConnector;
     }
 
     private static String mysqlSourceYaml(Map<String, Object> config) {
@@ -379,11 +407,15 @@ class RealCrossEngineFrontierIT {
                 id: src_shipments
                 connector: postgres
                 config: { host: %s, port: %s, database: %s, schema: %s, user: %s, password: %s }
+                # "user" above, not "username": this connector spells the account differently from the
+                # MySQL one, and getting it wrong is silent - the driver falls back to the operating
+                # system account, and it surfaces much later as a rejected password for a user nobody
+                # named. The harness's own address keeps saying "username"; only this line translates.
                 mode: cdc
                 tables: [ %s ]
                 """
                 .formatted(config.get("host"), config.get("port"), config.get("database"),
-                        config.get("schema"), config.get("user"), config.get("password"), SHIPMENTS);
+                        config.get("schema"), config.get("username"), config.get("password"), SHIPMENTS);
     }
 
     private static String targetYaml(String targetUri) {
