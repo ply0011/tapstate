@@ -248,8 +248,16 @@ main() {
     # Drive the online verbs through the REPL, feeding the password on stdin (the login prompt reads the
     # next line) so it is never a process argument or a shell-history entry. Workspace paths resolve
     # against work/, so the jars beside it are ../<jar>.
+    #
+    # The source is applied on its own first, then discovered, then everything is applied. The pipeline
+    # maps a row field, and an expression that reads row fields is refused until the source it reads has
+    # a discovered schema -- while a discovery, in turn, needs the source to exist on the server. One
+    # apply for both therefore cannot succeed in either order: the batch is refused whole, which leaves
+    # the source unapplied and the discovery with nothing to look at.
+    #
+    # Applying the source twice is free; the second apply reports it unchanged.
     admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
-    printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\napply\ndiscover-schema db_src\nstart sync_orders\nexit\n' "$admin_pw" \
+    printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\napply source/db_src.tap.yml\ndiscover-schema db_src\napply\nstart sync_orders\nexit\n' "$admin_pw" \
         | ./tapstate -w work
 
     # Snapshot verification, printed automatically: the demo's payoff is a real row count in the target,
