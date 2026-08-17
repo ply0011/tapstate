@@ -374,6 +374,22 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.FailingTest", connectionTestSource("FailingTest", body));
     }
 
+    /**
+     * A connector reporting a check the way the postgres connector reports a failed replication-slot
+     * probe: a coded exception carrying a bare numeric code and the statements it tried, and no
+     * message, reason or solution at all. Everything a reader could use is in those statements.
+     */
+    static Path codeOnlyTest(Path dir) {
+        String body = ""
+                + "TapTestItemException ex = new TapTestItemException();"
+                + "ex.setErrorCode(\"410003\");"
+                + "ex.setDynamicDescriptionParameters(new String[]{"
+                + "  \"SELECT pg_create_logical_replication_slot('test_tapdata_x','pgoutput')\"});"
+                + "s.accept(new TestItem(\"read log\", ex, TestItem.RESULT_SUCCESSFULLY_WITH_WARN));"
+                + "return ConnectionOptions.create();";
+        return SyntheticJar.compileToJar(dir, "synthetic.CodeOnlyTest", connectionTestSource("CodeOnlyTest", body));
+    }
+
     /** A connector whose connectionTest throws — the test could not be completed, a coded drive failure. */
     static Path throwingTest(Path dir) {
         String body = "throw new RuntimeException(\"test boom\");";
