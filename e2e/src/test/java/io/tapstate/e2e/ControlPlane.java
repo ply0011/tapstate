@@ -425,6 +425,12 @@ final class ControlPlane {
     record ConnectionTest(String outcome, Map<String, String> statusByCheck) {
     }
 
+    /** The status answer verbatim, for a diagnosis that wants the failure's own parameters. */
+    String statusBody(String pipelineId) {
+        HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/status"));
+        return response.statusCode() + " " + response.body();
+    }
+
     String metrics(String pipelineId) {
         HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
         return response.statusCode() + " " + response.body();
