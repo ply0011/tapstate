@@ -11,11 +11,15 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The two live views' rendering rules, which are the whole of what a reader sees and therefore the
- * whole of what can mislead them. Two things are pinned here that no other test can pin: the footer's
- * exact words, because they are the one place the view admits what it cannot promise; and that both
- * views report the same changes, because they are two renderings of one comparison and a second
- * comparison is how they would part ways.
+ * The in-place view's rendering rules, which are the whole of what a reader sees and therefore the
+ * whole of what can mislead them. What is pinned here that no other test pins is the footer's exact
+ * words, because they are the one place the view admits what it cannot promise.
+ *
+ * <p>It once also pinned that both live views reported the same changes, on the reasoning that they
+ * were two renderings of one comparison and that a second comparison is how they would part ways.
+ * That is no longer a thing that can be true: the appended view compares nothing at all now — it
+ * prints the rows a change carried and works nothing out — so there is no one comparison for the two
+ * to render, and nothing for them to part ways over. Its own rules live beside it.
  */
 class LiveViewRenderersTest {
 
