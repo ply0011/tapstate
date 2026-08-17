@@ -43,6 +43,11 @@ public final class TokenService {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /** Whether a presented credential is shaped as a Tapstate machine token. */
+    public static boolean isMachineToken(String presented) {
+        return presented != null && presented.startsWith(TOKEN_PREFIX);
+    }
+
     /**
      * Issues a new scoped machine token and returns the one-time presented token string. That string
      * is the only time the secret is visible — the store keeps only its hash — so a caller that loses
@@ -83,7 +88,7 @@ public final class TokenService {
      * unauthenticatable token is simply absent, mirroring {@link TokenSigner#verify}.
      */
     public Optional<VerifiedToken> authenticate(String presented) {
-        if (presented == null || !presented.startsWith(TOKEN_PREFIX)) {
+        if (!isMachineToken(presented)) {
             return Optional.empty();
         }
         String body = presented.substring(TOKEN_PREFIX.length());

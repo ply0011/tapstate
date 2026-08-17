@@ -1,10 +1,12 @@
 package io.tapstate.control.restapi;
 
 import io.tapstate.control.core.ArtifactQueryService;
+import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.PipelineLogQueryService;
 import io.tapstate.control.core.PipelineObservationQueryService;
+import io.tapstate.control.core.OperationRegistry;
 import io.tapstate.control.core.Scope;
 import io.tapstate.control.core.TokenSecrets;
 import io.tapstate.control.core.TokenService;
@@ -217,7 +219,7 @@ class PipelineStreamApiTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({PipelineStreamConfiguration.class})
+    @Import({RestApiSecurityConfiguration.class, PipelineStreamConfiguration.class})
     static class TestApp {
 
         @Bean
@@ -263,6 +265,11 @@ class PipelineStreamApiTest {
         @Bean
         TokenService tokenService(TokenStore store, TokenSecrets secrets) {
             return new TokenService(store, secrets, java.time.Clock.systemUTC());
+        }
+
+        @Bean
+        OperationRegistry operationRegistry() {
+            return ControlOperations.registry();
         }
 
         @Bean

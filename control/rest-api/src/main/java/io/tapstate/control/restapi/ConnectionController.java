@@ -6,7 +6,6 @@ import io.tapstate.control.core.ConnectionTestService;
 import io.tapstate.control.core.SchemaDiscoveryService;
 import io.tapstate.control.core.SchemaQueryService;
 import io.tapstate.control.core.SchemaReport;
-import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -48,15 +47,14 @@ class ConnectionController {
 
     @Verb("connection.test")
     @PostMapping("/connections:test")
-    ConnectionTestReport test(@RequestBody(required = false) ConnectionTestRequest request, HttpServletRequest http) {
+    ConnectionTestReport test(@RequestBody(required = false) ConnectionTestRequest request) {
         // Refuse a missing / blank-field body at the boundary as a coded 400, rather than letting a null trip
         // the connection-config invariant guard deeper down (a 500).
         ConnectionTestRequest body =
                 MalformedRequest.require(request, "the request must carry a connection to test");
         MalformedRequest.requireText(body.id(), "a connection `id` is required");
         MalformedRequest.requireText(body.connectorId(), "a `connectorId` is required");
-        return testService.test(body.id(), body.connectorId(), body.settings(),
-                AuthInterceptor.authenticatedPrincipal(http));
+        return testService.test(body.id(), body.connectorId(), body.settings(), AuthenticatedCaller.subject());
     }
 
     @Verb("connection.test-result")
@@ -70,16 +68,15 @@ class ConnectionController {
 
     @Verb("connection.discover-schema")
     @PostMapping("/connections:discover-schema")
-    SchemaReport discoverSchema(
-            @RequestBody(required = false) ConnectionDiscoverSchemaRequest request, HttpServletRequest http) {
+    SchemaReport discoverSchema(@RequestBody(required = false) ConnectionDiscoverSchemaRequest request) {
         // Refuse a missing / blank-field body at the boundary as a coded 400, rather than letting a null trip
         // the connection-config invariant guard deeper down (a 500).
         ConnectionDiscoverSchemaRequest body =
                 MalformedRequest.require(request, "the request must carry a connection to discover");
         MalformedRequest.requireText(body.id(), "a connection `id` is required");
         MalformedRequest.requireText(body.connectorId(), "a `connectorId` is required");
-        return schemaDiscoveryService.discover(body.id(), body.connectorId(), body.settings(),
-                AuthInterceptor.authenticatedPrincipal(http));
+        return schemaDiscoveryService.discover(
+                body.id(), body.connectorId(), body.settings(), AuthenticatedCaller.subject());
     }
 
     @Verb("connection.schema")

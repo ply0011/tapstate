@@ -12,6 +12,10 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
@@ -73,6 +77,15 @@ class RestApiWebContextTest {
     @EnableAutoConfiguration
     @Import({RestApiConfiguration.class, ProbeController.class})
     static class TestApp {
+
+        @Bean
+        SecurityFilterChain permitAllSecurity(HttpSecurity http) throws Exception {
+            http.csrf(AbstractHttpConfigurer::disable)
+                    .formLogin(AbstractHttpConfigurer::disable)
+                    .httpBasic(AbstractHttpConfigurer::disable)
+                    .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll());
+            return http.build();
+        }
     }
 
     @RestController
