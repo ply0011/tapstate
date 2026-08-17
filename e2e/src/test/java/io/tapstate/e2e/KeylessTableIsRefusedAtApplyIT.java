@@ -9,6 +9,7 @@ import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,45 +45,59 @@ class KeylessTableIsRefusedAtApplyIT {
     /** No primary key either, but a unique index over a non-null column - upsertable in principle. */
     private static final String UNIQUELY_INDEXED = "accounts";
 
+    /**
+     * One database for all three cases, started once. Each case reads the same two tables and never
+     * writes them, so they do not need one apiece - and a container apiece is not free: this module
+     * runs long, container-heavy witnesses side by side, and the ones that measure behaviour under
+     * memory pressure are sensitive to how much else is running. Three databases where one will do
+     * spends that budget for nothing.
+     */
+    private static MySQLContainer<?> mysql;
+
     @BeforeAll
-    static void requireDockerAndRealConnectors() {
+    static void startTheDatabase() throws Exception {
         DockerGate.require();
         RealConnectorGate.require("mysql", "mongodb");
+        mysql = new MySQLContainer<>(DockerImageName.parse("mysql:8.0"));
+        mysql.start();
+        seed(mysql);
+    }
+
+    @AfterAll
+    static void stopTheDatabase() {
+        if (mysql != null) {
+            mysql.stop();
+        }
     }
 
     @Test
     @DisplayName("a keyless table is refused for upsert, accepted for append, on a real MySQL")
     void aKeylessTableIsRefusedForUpsertAndAcceptedForAppend() throws Exception {
-        try (MySQLContainer<?> mysql = new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))) {
-            mysql.start();
-            seed(mysql);
+        try (ServerHandle server = Tiers.IN_PROCESS.launch(SharedMongo.replicaSetUrl("keyless_refused"))) {
+            ControlPlane control = NumericSource.connected(server);
+            Map<String, Object> config = NumericSource.config(mysql);
+            String target = SharedMongo.replicaSetUrl("keyless_refused_target");
 
-            try (ServerHandle server = Tiers.IN_PROCESS.launch(SharedMongo.replicaSetUrl("keyless_refused"))) {
-                ControlPlane control = NumericSource.connected(server);
-                Map<String, Object> config = NumericSource.config(mysql);
-                String target = SharedMongo.replicaSetUrl("keyless_refused_target");
+            // Discovered first, or the refusal would be the one about a source nobody discovered -
+            // a different rule, and one that would pass this test for the wrong reason.
+            control.discoverSchema(SOURCE_ID, "mysql", config);
 
-                // Discovered first, or the refusal would be the one about a source nobody discovered -
-                // a different rule, and one that would pass this test for the wrong reason.
-                control.discoverSchema(SOURCE_ID, "mysql", config);
+            ControlPlane.Refusal refusal = control.applyExpectingRefusal(
+                    workspace(config, target, KEYLESS, ""));
+            assertThat(refusal.code())
+                    .as("the code refusing an upsert into a table nothing can key a write by")
+                    .isEqualTo(UPSERT_NEEDS_KEY);
+            assertThat(refusal.params()).containsEntry("table", KEYLESS);
+            assertThat(control.artifactIds())
+                    .as("what the server holds after refusing the batch")
+                    .doesNotContain(SOURCE_ID, TARGET_ID, "keyless_pipeline");
 
-                ControlPlane.Refusal refusal = control.applyExpectingRefusal(
-                        workspace(config, target, KEYLESS, ""));
-                assertThat(refusal.code())
-                        .as("the code refusing an upsert into a table nothing can key a write by")
-                        .isEqualTo(UPSERT_NEEDS_KEY);
-                assertThat(refusal.params()).containsEntry("table", KEYLESS);
-                assertThat(control.artifactIds())
-                        .as("what the server holds after refusing the batch")
-                        .doesNotContain(SOURCE_ID, TARGET_ID, "keyless_pipeline");
-
-                // The same table, written a way that never matches rows to keys. Only the write mode
-                // differs, so an implementation that refused this would be refusing the table rather
-                // than the combination.
-                assertThatCode(() -> control.apply(
-                        workspace(config, target, KEYLESS, "\n      write_mode: append")))
-                        .doesNotThrowAnyException();
-            }
+            // The same table, written a way that never matches rows to keys. Only the write mode
+            // differs, so an implementation that refused this would be refusing the table rather
+            // than the combination.
+            assertThatCode(() -> control.apply(
+                    workspace(config, target, KEYLESS, "\n      write_mode: append")))
+                    .doesNotThrowAnyException();
         }
     }
 
@@ -98,23 +113,18 @@ class KeylessTableIsRefusedAtApplyIT {
     @Test
     @DisplayName("a table keyed only by a unique index is refused today, and that is a known limit")
     void aTableKeyedOnlyByAUniqueIndexIsRefusedForNow() throws Exception {
-        try (MySQLContainer<?> mysql = new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))) {
-            mysql.start();
-            seed(mysql);
+        try (ServerHandle server = Tiers.IN_PROCESS.launch(SharedMongo.replicaSetUrl("keyless_unique"))) {
+            ControlPlane control = NumericSource.connected(server);
+            Map<String, Object> config = NumericSource.config(mysql);
+            control.discoverSchema(SOURCE_ID, "mysql", config);
 
-            try (ServerHandle server = Tiers.IN_PROCESS.launch(SharedMongo.replicaSetUrl("keyless_unique"))) {
-                ControlPlane control = NumericSource.connected(server);
-                Map<String, Object> config = NumericSource.config(mysql);
-                control.discoverSchema(SOURCE_ID, "mysql", config);
+            ControlPlane.Refusal refusal = control.applyExpectingRefusal(workspace(
+                    config, SharedMongo.replicaSetUrl("keyless_unique_target"), UNIQUELY_INDEXED, ""));
 
-                ControlPlane.Refusal refusal = control.applyExpectingRefusal(workspace(
-                        config, SharedMongo.replicaSetUrl("keyless_unique_target"), UNIQUELY_INDEXED, ""));
-
-                assertThat(refusal.code()).isEqualTo(UPSERT_NEEDS_KEY);
-                assertThat(refusal.params())
-                        .as("the refusal names the table, which is what makes the limit actionable")
-                        .containsEntry("table", UNIQUELY_INDEXED);
-            }
+            assertThat(refusal.code()).isEqualTo(UPSERT_NEEDS_KEY);
+            assertThat(refusal.params())
+                    .as("the refusal names the table, which is what makes the limit actionable")
+                    .containsEntry("table", UNIQUELY_INDEXED);
         }
     }
 
@@ -131,23 +141,18 @@ class KeylessTableIsRefusedAtApplyIT {
     @Test
     @DisplayName("testing a connection against a real MySQL returns a report, not a crash")
     void testingAConnectionAgainstARealMySqlReturnsAReport() throws Exception {
-        try (MySQLContainer<?> mysql = new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))) {
-            mysql.start();
-            seed(mysql);
+        try (ServerHandle server = Tiers.IN_PROCESS.launch(SharedMongo.replicaSetUrl("keyless_probe"))) {
+            ControlPlane control = NumericSource.connected(server);
 
-            try (ServerHandle server = Tiers.IN_PROCESS.launch(SharedMongo.replicaSetUrl("keyless_probe"))) {
-                ControlPlane control = NumericSource.connected(server);
+            String report = control.testConnection(SOURCE_ID, "mysql", NumericSource.config(mysql));
 
-                String report = control.testConnection(SOURCE_ID, "mysql", NumericSource.config(mysql));
-
-                assertThat(report)
-                        .as("the report names the connection it tested and carries the connector's checks")
-                        .contains(SOURCE_ID)
-                        .contains("checks");
-                assertThat(report)
-                        .as("a report is what comes back - not a stack trace laundered into a message")
-                        .doesNotContain("NullPointerException");
-            }
+            assertThat(report)
+                    .as("the report names the connection it tested and carries the connector's checks")
+                    .contains(SOURCE_ID)
+                    .contains("checks");
+            assertThat(report)
+                    .as("a report is what comes back - not a stack trace laundered into a message")
+                    .doesNotContain("NullPointerException");
         }
     }
 
