@@ -291,6 +291,46 @@ class DataBrowserServiceTest {
     }
 
     @Test
+    void refusesToOrderOnAColumnWhoseNameHoldsADotRatherThanOrderingByNothing() {
+        AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
+        DataBrowserService service = finding(driven);
+
+        // A filter can name such a column, because a query may carry an expression. An order cannot: the
+        // backend takes a sort key as a path and offers no second form, so the request travels as a path
+        // that resolves nowhere, every row sorts equal, and rows come back in no particular order with
+        // nothing reported. Refusing is the only way the reader learns the order they asked for was not
+        // applied.
+        assertThatThrownBy(() -> service.find("views", "order_state", null,
+                new DataBrowserSortOrder("price\\.usd", DataBrowserSortOrder.Direction.DESC), 10))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(thrown -> {
+                    TapstateException coded = (TapstateException) thrown;
+                    assertThat(coded.code().code()).isEqualTo("data-browser.unorderable-field");
+                    assertThat(coded.args())
+                            .as("named as the reader wrote it -- told about `price.usd` they would go "
+                                    + "looking for a different column")
+                            .containsEntry("field", "price\\.usd");
+                });
+        assertThat(driven.get())
+                .as("refused before the read, so the cost of a read that cannot be ordered is never paid")
+                .isNull();
+    }
+
+    @Test
+    void ordersOnANestedFieldAsBefore() {
+        AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
+        DataBrowserService service = finding(driven);
+
+        // The half that keeps the refusal from being a ban on dots. A path through nested documents is
+        // exactly what a sort key already is, and refusing every field with a dot in it would take that
+        // away to fix something else.
+        service.find("views", "order_state", null,
+                new DataBrowserSortOrder("shipping.city", DataBrowserSortOrder.Direction.ASC), 10);
+
+        assertThat(driven.get().sort().field()).isEqualTo("shipping.city");
+    }
+
+    @Test
     void carriesTheRequestedOrderIntoTheQueryTheFindProbeIsDrivenWith() {
         AtomicReference<DataBrowserQuery> driven = new AtomicReference<>();
         DataBrowserService service = finding(driven);

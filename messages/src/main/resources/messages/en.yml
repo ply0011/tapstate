@@ -275,6 +275,9 @@ data-browser.invalid-limit:
 data-browser.unknown-collection:
   message: "Source '{source}' has no collection named '{collection}'."
   solution: "List what the source holds and read one of those names."
+data-browser.unorderable-field:
+  message: "Field '{field}' is named with a dot in it, and results cannot be ordered by such a field."
+  solution: "Order by another field. This one can still be filtered on and still comes back in the rows."
 mcp.connector-spec-unavailable:
   message: "Connector {connector} does not provide a complete live spec."
   solution: "Register the connector runtime and retry connector_get before source_create."

@@ -62,6 +62,7 @@ control.unauthenticated
 control.unreachable
 data-browser.invalid-limit
 data-browser.unknown-collection
+data-browser.unorderable-field
 dsl.ambiguous-reference
 dsl.composition
 dsl.config-required

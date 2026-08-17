@@ -18,6 +18,7 @@ import io.tapstate.spi.store.DataBrowserPreview;
 import io.tapstate.spi.store.DataBrowserChange;
 import io.tapstate.spi.store.DataBrowserChangeListener;
 import io.tapstate.spi.store.DataBrowserQuery;
+import io.tapstate.spi.store.FieldPath;
 import io.tapstate.spi.store.DataBrowserSubscription;
 import io.tapstate.spi.store.DataBrowserTailRequest;
 import io.tapstate.spi.store.DataBrowserSort;
@@ -412,11 +413,46 @@ public final class PdkDataBrowser implements DataBrowser {
      * is itself a document, and the value here comes from a caller.
      */
     private static Map<String, Object> term(Match match) {
+        FieldPath path = FieldPath.of(match.field());
+        if (!path.isPlainPath()) {
+            return namedTerm(path, match);
+        }
         Map<String, Object> test = new LinkedHashMap<>();
         test.put(operator(match.operator()), value(match));
         Map<String, Object> document = new LinkedHashMap<>();
-        document.put(match.field(), test);
+        // The steps as parsed, not the spelling as written: a spelling reaches here still carrying its
+        // escapes, and a backslash sent as part of a key asks for a field nobody named.
+        document.put(String.join(".", path.segments()), test);
         return document;
+    }
+
+    /**
+     * One term on a field whose own name holds a dot. The query language spells a path with dots and has
+     * no escape for one, so such a field cannot be addressed in it at all — the obvious spelling asks for
+     * a nested field, matches nothing, and reports nothing wrong. The expression language can name a field
+     * instead of pathing to it, and a query may carry an expression, so that is the way through.
+     *
+     * <p>Reached only when the plain form cannot express the request. What it costs is real: no index
+     * serves it, and none could — an index key is spelt as a path too, so a field named this way has no
+     * index to miss.
+     */
+    private static Map<String, Object> namedTerm(FieldPath path, Match match) {
+        Map<String, Object> field = Map.of("$getField", String.join(".", path.segments()));
+        Object test = switch (match.operator()) {
+            // The presence test has no expression-language twin. Asking what type the field holds does the
+            // same work: a field that is not there reports the one type no value has.
+            case EXISTS -> Map.of(Boolean.TRUE.equals(match.value()) ? "$ne" : "$eq",
+                    List.of(Map.of("$type", field), "missing"));
+            // Guarded by type because the two languages disagree about a pattern met by a non-string: the
+            // query language does not match it, the expression language fails the whole read. The guard
+            // keeps the answer the one the vocabulary already gives.
+            case CONTAINS -> Map.of("$cond", List.of(
+                    Map.of("$eq", List.of(Map.of("$type", field), "string")),
+                    Map.of("$regexMatch", Map.of("input", field, "regex", value(match))),
+                    false));
+            default -> Map.of(operator(match.operator()), List.of(field, value(match)));
+        };
+        return Map.of("$expr", test);
     }
 
     private static String operator(Operator operator) {

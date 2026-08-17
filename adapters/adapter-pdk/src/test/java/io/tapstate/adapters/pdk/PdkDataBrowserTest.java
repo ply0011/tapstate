@@ -286,6 +286,35 @@ class PdkDataBrowserTest {
     }
 
     @Test
+    void findAsksForAColumnWhoseNameHoldsADotByNameRatherThanAsAPath(@TempDir Path dir) {
+        // The backend's query language spells a path with dots and gives no way to escape one, so a column
+        // actually named `price.usd` cannot be asked for in that language at all: the obvious spelling asks
+        // for a `usd` inside a `price`, matches nothing, and reports nothing wrong. Naming the field
+        // instead of pathing to it is the one form that reaches it.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("price\\.usd", Operator.EQ, 100), 10));
+
+        assertThat(echoed(preview, "filter")).isEqualTo(Map.of(
+                "$expr", Map.of("$eq", List.of(Map.of("$getField", "price.usd"), 100))));
+    }
+
+    @Test
+    void findStillAsksForAPathAsAPathWhenNoNameHoldsADot(@TempDir Path dir) {
+        // The half that keeps the fix from being a regression. Naming every field instead of pathing to it
+        // would answer the same for a nested field and cost a form the backend cannot serve from an index,
+        // so the more expensive shape is reached for only when the cheaper one cannot express the request.
+        PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
+
+        DataBrowserPreview preview = reader.find(config(), new DataBrowserQuery(
+                "orders", new Match("shipping.city", Operator.EQ, "Berlin"), 10));
+
+        assertThat(echoed(preview, "filter"))
+                .isEqualTo(Map.of("shipping.city", Map.of("$eq", "Berlin")));
+    }
+
+    @Test
     void findTranslatesACombinationIntoTheConnectorsOwnConjunction(@TempDir Path dir) {
         PdkDataBrowser reader = reader(Synthetic.readFaceSource(dir), "synthetic.ReadFace");
 

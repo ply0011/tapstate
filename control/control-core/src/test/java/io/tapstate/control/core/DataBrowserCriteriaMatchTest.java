@@ -83,6 +83,28 @@ class DataBrowserCriteriaMatchTest {
     }
 
     @Test
+    @DisplayName("an escaped dot names a column, a bare dot steps into one")
+    void tellsAColumnNamedWithADotFromAPathThroughOne() {
+        // Both readings of one spelling, in one row, so neither assertion can pass by the row only having
+        // the shape it happens to look for. A source may name a column `price.usd`; that name reaches the
+        // store as a top-level key and sits beside a genuinely nested `price`.
+        Map<String, Object> row = row("price.usd", 99, "price", row("usd", 1));
+
+        assertThat(match("price\\.usd", DataBrowserCriteria.Operator.EQ, 99).matches(row))
+                .as("the escaped spelling names the column, so it finds the column's value")
+                .isTrue();
+        assertThat(match("price\\.usd", DataBrowserCriteria.Operator.EQ, 1).matches(row))
+                .as("and not the nested one, which is the reading it was written to exclude")
+                .isFalse();
+        assertThat(match("price.usd", DataBrowserCriteria.Operator.EQ, 1).matches(row))
+                .as("the bare spelling still steps, which is what every path already written means")
+                .isTrue();
+        assertThat(match("price.usd", DataBrowserCriteria.Operator.EQ, 99).matches(row))
+                .as("a step never reaches the column that merely spells like one")
+                .isFalse();
+    }
+
+    @Test
     @DisplayName("comparisons order numbers by value, not by how they were spelt")
     void comparesNumbersByValue() {
         Map<String, Object> row = row("total", 12);

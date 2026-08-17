@@ -19,7 +19,16 @@ public enum DataBrowserError implements TapstateErrorCode {
      * no read to serve either — the answer would be no rows and "there is more", which reads as an
      * empty collection with a contradiction attached.
      */
-    INVALID_LIMIT("data-browser.invalid-limit", Set.of("limit", "max"));
+    INVALID_LIMIT("data-browser.invalid-limit", Set.of("limit", "max")),
+
+    /**
+     * The order asked for names a field whose own name holds a dot, which no order can reach.
+     * {@code field} is the spelling the reader wrote. A filter may name such a field, because a query
+     * can carry an expression and an expression can name a field rather than path to it; a sort key is
+     * a path and has no second form. Served anyway it would order by a path resolving nowhere — every
+     * row equal, rows back in no particular order, nothing reported.
+     */
+    UNORDERABLE_FIELD("data-browser.unorderable-field", Set.of("field"));
 
     private final String code;
     private final Set<String> placeholders;

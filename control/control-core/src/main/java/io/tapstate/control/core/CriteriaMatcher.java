@@ -1,5 +1,7 @@
 package io.tapstate.control.core;
 
+import io.tapstate.spi.store.FieldPath;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -82,14 +84,18 @@ final class CriteriaMatcher {
     }
 
     /**
-     * Every value reachable under a dotted path: one per entry where the path crosses a list, none
-     * when the path does not resolve. A list met at the end of the path resolves to the list itself
-     * as well as to its entries, so a term can be written against either.
+     * Every value reachable under a path: one per entry where the path crosses a list, none when the
+     * path does not resolve. A list met at the end of the path resolves to the list itself as well as
+     * to its entries, so a term can be written against either.
+     *
+     * <p>The steps are read by the shared parser rather than split here. Splitting on every dot cannot
+     * reach a column whose own name holds one, and a second reading of the spelling is how this
+     * evaluator and the one that translates into a backend's dialect come to disagree.
      */
     private static List<Object> resolve(Map<String, Object> row, String path) {
         List<Object> current = new ArrayList<>();
         current.add(row);
-        for (String segment : path.split("\\.")) {
+        for (String segment : FieldPath.of(path).segments()) {
             List<Object> next = new ArrayList<>();
             for (Object holder : current) {
                 for (Object step : flatten(holder)) {

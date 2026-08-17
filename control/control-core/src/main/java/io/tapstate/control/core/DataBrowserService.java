@@ -14,6 +14,7 @@ import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSubscription;
 import io.tapstate.spi.store.DataBrowserTailRequest;
 import io.tapstate.spi.store.DiscoveredSourceModel;
+import io.tapstate.spi.store.FieldPath;
 import io.tapstate.spi.store.SchemaStore;
 import io.tapstate.spi.store.SourceField;
 import io.tapstate.spi.store.SourceTable;
@@ -188,6 +189,7 @@ public final class DataBrowserService {
                     Map.of("limit", String.valueOf(bound), "max", String.valueOf(MAX_LIMIT)),
                     null);
         }
+        requireOrderable(sort);
         ConnectionConfig config = requireCollection(sourceId, collection);
         DataBrowserQuery query = new DataBrowserQuery(
                 collection,
@@ -195,6 +197,30 @@ public final class DataBrowserService {
                 sort == null ? null : sort.toPortRequest(),
                 bound);
         return DataBrowserPreviewReport.from(findProbe.find(config, query));
+    }
+
+    /**
+     * Refuses an order on a field whose own name holds a dot.
+     *
+     * <p>A filter can name such a field, because a query may carry an expression and an expression can
+     * name a field instead of pathing to it. An order has no second form: a sort key is a path and only
+     * a path, so the request would travel as a path resolving nowhere, every row would sort equal, and
+     * the rows would come back in no particular order with nothing reported. That is the same silence
+     * this whole face is built to remove, so it is refused rather than served.
+     *
+     * <p>Before the collection is resolved, for the same reason the row bound is: a request that cannot
+     * be served should not pay for a round trip to the connector first.
+     */
+    private static void requireOrderable(DataBrowserSortOrder sort) {
+        if (sort == null || FieldPath.of(sort.field()).isPlainPath()) {
+            return;
+        }
+        throw new TapstateException(
+                DataBrowserError.UNORDERABLE_FIELD,
+                // As the reader wrote it. Named by its parsed form they would go looking for a different
+                // field, one that may well also exist.
+                Map.of("field", sort.field()),
+                null);
     }
 
     /**
