@@ -27,6 +27,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
@@ -1825,10 +1826,10 @@ final class Repl {
                 line.append("  [").append(check.connectorErrorCode()).append(']');
             }
             out.println(line);
-            if (present(check.reason())) {
+            if (readable(check.reason())) {
                 out.println("          " + check.reason());
             }
-            if (present(check.solution())) {
+            if (readable(check.solution())) {
                 out.println("          " + check.solution());
             }
         }
@@ -1837,6 +1838,23 @@ final class Repl {
     private static boolean present(String value) {
         return value != null && !value.isBlank();
     }
+
+    /**
+     * Whether a diagnostic is something to show a person, as opposed to an unresolved translation key.
+     *
+     * <p>The connector API's typed test exceptions are constructed with keys rather than sentences —
+     * a privilege check carries {@code check.cdc.privilege.reason} — and nothing resolves them on the
+     * way here: they are plain string fields, and the bundle that would translate them belongs to the
+     * platform those connectors were written for. Printing one puts a line that reads like a defect
+     * exactly where a person is looking for guidance, which is worse than printing nothing. A key is
+     * recognised by its shape: dotted lowercase segments with no whitespace, which no sentence has.
+     */
+    private static boolean readable(String value) {
+        return present(value) && !TRANSLATION_KEY.matcher(value.trim()).matches();
+    }
+
+    private static final Pattern TRANSLATION_KEY =
+            Pattern.compile("[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*(?:\\.[a-z0-9-]+)+");
 
     /** The report as an ordered tree for the machine surfaces, omitting the optional check fields left null. */
     private static Map<String, Object> reportMap(ConnectionReport report) {

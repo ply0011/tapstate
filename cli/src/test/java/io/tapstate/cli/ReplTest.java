@@ -1557,6 +1557,36 @@ class ReplTest {
         assertThat(out).contains("CREATE_SLOT_FAILED");
     }
 
+    /**
+     * The PDK's typed test exceptions are built with i18n keys rather than sentences -
+     * TapTestCDCPrivilegeEx passes "check.cdc.privilege.reason" and "check.cdc.privilege.solution" -
+     * and nothing in the chain resolves them: the fields are plain strings, and the bundle that would
+     * translate them ships with the platform those connectors were written for, not with tapstate. So
+     * the reason a check carries is often a key, and printing it puts a line that reads like a defect
+     * where guidance should be. A key is not shown; the message, which is the driver's own sentence,
+     * still is, and so is the connector's code, which is a handle by design.
+     */
+    @Test
+    void testDoesNotPrintADiagnosticThatIsAnUnresolvedTranslationKey() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING",
+                        "Access denied for user 'cdc'@'%'",
+                        "check.cdc.privilege.reason", "check.cdc.privilege.solution",
+                        "CDC_PRIVILEGE")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Access denied for user").contains("CDC_PRIVILEGE");
+        assertThat(out).doesNotContain("check.cdc.privilege");
+    }
+
     @Test
     void testRendersTheReportAsJsonWithTheOutputFlag() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
