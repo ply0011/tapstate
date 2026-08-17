@@ -35,6 +35,25 @@ class MessageCatalogTest {
     }
 
     @Test
+    void theRefusalAboutADottedNameCarriesTheSpellingThatAddressesIt() {
+        // The one refusal that names a field the reader cannot address the obvious way, and so the one
+        // whose hint has to do more than point elsewhere: saying it "can still be filtered on" and
+        // stopping is a dead end, because the spelling that does it appears nowhere a reader would look.
+        // Both forms, because which one they need depends on whether they are typing it or sending it.
+        // Named by its literal code: this module cannot see the enum that declares it, and the golden
+        // in arch-tests pins the string, so it cannot drift here unnoticed.
+        MessageCatalog.Rendered r = EN.render("data-browser.unorderable-field",
+                Map.of("field", "price\\.usd"));
+
+        assertThat(r.solution())
+                .as("the spelling as it is typed into the shell")
+                .contains("price\\.usd");
+        assertThat(r.solution())
+                .as("and as it survives JSON, where a lone backslash is not an escape the format allows")
+                .contains("\"price\\\\.usd\"");
+    }
+
+    @Test
     void unknownCodeFallsBackToTheBareCanonicalCode() {
         TapstateErrorCode absent = new TapstateErrorCode() {
             @Override

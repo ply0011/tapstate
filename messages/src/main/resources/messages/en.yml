@@ -277,7 +277,7 @@ data-browser.unknown-collection:
   solution: "List what the source holds and read one of those names."
 data-browser.unorderable-field:
   message: "Field '{field}' is named with a dot in it, and results cannot be ordered by such a field."
-  solution: "Order by another field. This one can still be filtered on and still comes back in the rows."
+  solution: "Order by another field. This one can still be filtered on, by escaping the dot that belongs to its name: write it price\\.usd in the shell, and \"price\\\\.usd\" in JSON, where a lone backslash is not an escape the format allows."
 mcp.connector-spec-unavailable:
   message: "Connector {connector} does not provide a complete live spec."
   solution: "Register the connector runtime and retry connector_get before source_create."

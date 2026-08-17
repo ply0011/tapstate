@@ -169,7 +169,10 @@ public final class ControlApiSchema {
         findProperties.put("filter", filter());
         findProperties.put("sort", object(
                 List.of("field", "dir"),
-                Map.of("field", string("Field to order by"),
+                Map.of("field", string(
+                                "Field to order by. A nested one is reached by pathing to it. A field "
+                                        + "whose own name holds a dot cannot be ordered by at all and "
+                                        + "is refused rather than served in an order nobody applied."),
                         "dir", enumString("asc", "desc")),
                 false));
         findProperties.put("limit", integer(1, DataBrowserService.MAX_LIMIT,
@@ -244,7 +247,10 @@ public final class ControlApiSchema {
 
     private static Map<String, Object> termProperties() {
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("field", string("Field to test"));
+        properties.put("field", string(
+                "Field to test. A dot steps into a nested document, so a field whose own name holds "
+                        + "one is named by escaping it: `price\\.usd`. Written here that is "
+                        + "\"price\\\\.usd\", because a lone backslash is not an escape JSON allows."));
         properties.put("op", enumString(
                 "eq", "ne", "gt", "gte", "lt", "lte", "in", "exists", "contains"));
         properties.put("value", Map.of("description",
