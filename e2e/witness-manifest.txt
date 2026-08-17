@@ -10,6 +10,8 @@
 # Editing this file is editing the release contract. Removing a line must say why in the commit.
 a-cdc-failure-is-observable on IN_PROCESS
 a-cdc-failure-is-observable on REAL_PROCESS
+a-child-row-is-added-and-the-assembled-document-grows on IN_PROCESS
+a-child-row-is-added-and-the-assembled-document-grows on REAL_PROCESS
 a-child-row-is-deleted-and-the-assembled-document-shrinks on IN_PROCESS
 a-child-row-is-deleted-and-the-assembled-document-shrinks on REAL_PROCESS
 a-declared-view-materializes-with-no-serve-block on IN_PROCESS
