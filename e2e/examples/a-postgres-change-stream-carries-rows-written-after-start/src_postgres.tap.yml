@@ -1,0 +1,10 @@
+version: tapstate/v1
+kind: source
+id: src_postgres
+connector: postgres
+# "user" and "schema" are this connector's own spelling: the account is "user" where MySQL says
+# "username", and a table is addressed by schema as well as by database. The harness publishes the
+# account under its own uniform name, which is why the interpolation reads USERNAME.
+config: { host: ${SRC_HOST}, port: ${SRC_PORT}, database: ${SRC_DATABASE}, schema: public, user: ${SRC_USERNAME}, password: ${SRC_PASSWORD} }
+mode: cdc
+tables: [ orders ]
