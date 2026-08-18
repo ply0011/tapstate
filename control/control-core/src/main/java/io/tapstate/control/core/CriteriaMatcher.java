@@ -49,9 +49,9 @@ final class CriteriaMatcher {
 
     private static boolean holds(DataBrowserCriteria.Operator operator, Object value, Object wanted) {
         return switch (operator) {
-            case EQ -> equal(value, wanted);
-            case NE -> !equal(value, wanted);
-            case IN -> wanted instanceof List<?> set && set.stream().anyMatch(one -> equal(value, one));
+            case EQ -> sameValue(value, wanted);
+            case NE -> !sameValue(value, wanted);
+            case IN -> wanted instanceof List<?> set && set.stream().anyMatch(one -> sameValue(value, one));
             case CONTAINS -> value instanceof String text && wanted instanceof String part && text.contains(part);
             case GT -> compare(value, wanted) > 0;
             case GTE -> compare(value, wanted) >= 0;
@@ -80,7 +80,7 @@ final class CriteriaMatcher {
      * That rule separates a negative zero from a positive one, here as there — exotic, and shared
      * with every other operator rather than being this one's own quirk.
      */
-    private static boolean equal(Object value, Object wanted) {
+    private static boolean sameValue(Object value, Object wanted) {
         if (value instanceof Number left && wanted instanceof Number right) {
             return whole(left) && whole(right)
                     ? new BigInteger(left.toString()).equals(new BigInteger(right.toString()))
