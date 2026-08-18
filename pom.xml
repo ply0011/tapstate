@@ -325,6 +325,53 @@ core artifact.
               <goal>report-integration</goal>
             </goals>
           </execution>
+
+          <!-- The two below are bound to no phase and run only when invoked by id, as a second pass
+               after the reactor has finished. They exist because a per-module report describes that
+               module's own classes against that module's own execution data, and those are two
+               different questions once a type is declared in one ring and exercised from another:
+               the execution happened and was recorded, in the exec file of the module whose tests
+               ran it, which this module's report never opens. Measured on the read face: seven
+               spi-store types reported 0.0% while three other modules' exec files each held
+               hundreds of hits on them.
+
+               A second pass rather than an aggregate module, because aggregation reads the classes
+               to report from a module's compile-scope dependencies - so it needs one module that
+               depends on every other, and that module's dependency graph is the union of graphs
+               that only ever converged apart. The enforcer says so, correctly. Merging execution
+               data asks nothing of the dependency graph at all.
+
+               Nothing runs these during a normal build, so what a developer sees locally is
+               unchanged unless they ask for the second pass. -->
+          <execution>
+            <id>jacoco-merge-reactor</id>
+            <phase>none</phase>
+            <goals>
+              <goal>merge</goal>
+            </goals>
+            <configuration>
+              <fileSets>
+                <fileSet>
+                  <directory>${maven.multiModuleProjectDirectory}</directory>
+                  <includes>
+                    <include>**/target/jacoco.exec</include>
+                    <include>**/target/jacoco-it.exec</include>
+                  </includes>
+                </fileSet>
+              </fileSets>
+              <destFile>${maven.multiModuleProjectDirectory}/target/jacoco-reactor.exec</destFile>
+            </configuration>
+          </execution>
+          <execution>
+            <id>jacoco-report-reactor</id>
+            <phase>none</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+            <configuration>
+              <dataFile>${maven.multiModuleProjectDirectory}/target/jacoco-reactor.exec</dataFile>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
     </plugins>
