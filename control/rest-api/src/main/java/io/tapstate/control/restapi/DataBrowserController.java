@@ -5,6 +5,7 @@ import io.tapstate.control.core.DataBrowserPreviewReport;
 import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.DataBrowserSortOrder;
 import io.tapstate.control.core.DataBrowserStatsReport;
+import io.tapstate.core.common.TapstateException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,6 +17,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 import static java.util.stream.Collectors.joining;
 
@@ -42,6 +44,12 @@ import static java.util.stream.Collectors.joining;
 @RestController
 class DataBrowserController {
 
+    /**
+     * Compared as a string because the ring that owns this code is not on this module's classpath, and a
+     * read face has no business depending on the connector ring to name one refusal.
+     */
+    private static final String CAPABILITY_MISSING = "connector.capability-missing";
+
     private final DataBrowserService browser;
 
     DataBrowserController(DataBrowserService browser) {
@@ -53,14 +61,14 @@ class DataBrowserController {
     CollectionList collections(@PathVariable("sourceId") String sourceId) {
         // The path variable is named explicitly: this build compiles without -parameters, so an inferred
         // name would not resolve at runtime.
-        return CollectionList.of(browser.collections(sourceId));
+        return served(() -> CollectionList.of(browser.collections(sourceId)));
     }
 
     @Verb("data-browser.stats")
     @GetMapping("/sources/{sourceId}/collections/{collection}/stats")
     DataBrowserStatsReport stats(
             @PathVariable("sourceId") String sourceId, @PathVariable("collection") String collection) {
-        return browser.stats(sourceId, collection);
+        return served(() -> browser.stats(sourceId, collection));
     }
 
     @Verb("data-browser.find")
@@ -73,8 +81,30 @@ class DataBrowserController {
         // field is optional and an absent one takes the control plane's own answer.
         DataBrowserFindRequest body =
                 request == null ? new DataBrowserFindRequest(null, null, null) : request;
-        return browser.find(
-                sourceId, collection, criteria(body.filter()), order(body.sort()), body.limit());
+        return served(() -> browser.find(
+                sourceId, collection, criteria(body.filter()), order(body.sort()), body.limit()));
+    }
+
+    /**
+     * Runs a read, attributing a connector that cannot answer it to the request that named the source.
+     *
+     * <p>A capability the connector does not implement is a fact about that source: no retry changes it,
+     * and the caller acts on it by reading a different one. Every other connector failure — a read that
+     * broke part-way, a runtime that would not link — is the server's, and keeps the status the code
+     * table gives it. Deciding it here rather than in that table is what lets the same code stay
+     * server-side on the paths where it really is the server's: resolving a connection, discovering a
+     * schema. Answered as a 500 instead, a caller could not tell their request had been refused from the
+     * product having fallen over, which is the one thing a refusal has to be distinguishable from.
+     */
+    private static <T> T served(Supplier<T> read) {
+        try {
+            return read.get();
+        } catch (TapstateException e) {
+            if (CAPABILITY_MISSING.equals(e.code().code())) {
+                throw new BadRequestCodedException(e);
+            }
+            throw e;
+        }
     }
 
     /**

@@ -102,12 +102,15 @@ class ApiExceptionHandler {
             // input it refused before reaching a connector, so it is a 400. Both are the caller's to fix, and
             // both would otherwise fall through to a 500 that blames the server for a mistyped request.
             case "data-browser.unknown-collection" -> HttpStatus.NOT_FOUND;
-            // Both of these are judgements made before anything is sent, on the request as written: a
+            // All of these are judgements made before anything is sent, on the request as written: a
             // size this face will not serve, and a source whose connector it cannot ask for rows at all.
             // Left to the default they would come back as 500s blaming the server for the caller's
             // request - and a caller cannot tell that apart from the product having fallen over, which
             // is the one thing a refusal has to be distinguishable from.
-            case "data-browser.invalid-limit", "data-browser.connector-not-browsable" ->
+            // A third of the same kind: an order by a field whose own name holds a dot, which cannot be
+            // served in any order at all and is refused rather than answered in one nobody applied.
+            case "data-browser.invalid-limit", "data-browser.connector-not-browsable",
+                 "data-browser.unorderable-field" ->
                     HttpStatus.BAD_REQUEST;
             default -> switch (domainOf(code.code())) {
                 case "dsl" -> HttpStatus.BAD_REQUEST;

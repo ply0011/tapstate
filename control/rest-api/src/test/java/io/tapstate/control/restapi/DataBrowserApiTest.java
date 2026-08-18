@@ -12,6 +12,9 @@ import io.tapstate.control.core.TokenSecrets;
 import io.tapstate.control.core.TokenService;
 import io.tapstate.control.core.TokenSigner;
 import io.tapstate.control.core.VerifiedToken;
+import io.tapstate.core.common.Severity;
+import io.tapstate.core.common.TapstateErrorCode;
+import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.model.Metadata;
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceResource;
@@ -57,6 +60,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -471,6 +475,52 @@ class DataBrowserApiTest {
     }
 
     @Test
+    void refusesAnOrderByANameHoldingADotAsACodedBadRequest() {
+        // Ordering by such a field cannot be served at all, so the request is refused rather than answered
+        // in an order nobody applied. A refusal is the caller's to act on: served as a 500 it would be
+        // indistinguishable from the product having fallen over, and retried forever.
+        context.getBean(FakeCollectionsProbe.class).answer("order_state");
+
+        ApiError body = client().post().uri("/api/sources/views/collections/order_state:find")
+                .header("Authorization", "Bearer " + token(Scope.READ))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("sort", Map.of("field", "price\\.usd", "dir", "asc")))
+                .exchange((request, response) -> {
+                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    return response.bodyTo(ApiError.class);
+                });
+
+        assertThat(body.code()).isEqualTo("data-browser.unorderable-field");
+        // Named as the caller wrote it: parsed, they would go looking for a different field.
+        assertThat(body.params()).containsEntry("field", "price\\.usd");
+    }
+
+    @Test
+    void refusesASourceWhoseConnectorCannotAnswerTheReadAsACodedBadRequest() {
+        // A connector that does not implement the read is a fact about the source this request named, not
+        // a server-side failure: no retry changes it, and the caller acts by naming another source. The
+        // code table keeps every connector code at 500, because the same code on a resolve path really is
+        // the server's; this verb has the context, so it attributes it here.
+        context.getBean(FakeCollectionsProbe.class).answer("order_state");
+        context.getBean(FakeFindProbe.class).refuseWith(new TapstateException(
+                new StubConnectorCode(),
+                Map.of("connector", "mongodb", "capability", "executeQuery"),
+                null));
+
+        ApiError body = client().post().uri("/api/sources/views/collections/order_state:find")
+                .header("Authorization", "Bearer " + token(Scope.READ))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of())
+                .exchange((request, response) -> {
+                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    return response.bodyTo(ApiError.class);
+                });
+
+        assertThat(body.code()).isEqualTo("connector.capability-missing");
+        assertThat(body.params()).containsEntry("capability", "executeQuery");
+    }
+
+    @Test
     void refusesASizePastTheCapAsACodedBadRequest() {
         context.getBean(FakeCollectionsProbe.class).answer("order_state");
 
@@ -741,14 +791,21 @@ class DataBrowserApiTest {
     private static final class FakeFindProbe implements DataBrowserFindProbe {
         private DataBrowserPreview answer = new DataBrowserPreview(List.of(), null, false);
         private DataBrowserQuery lastQuery;
+        private RuntimeException refusal;
 
         void reset() {
             answer = new DataBrowserPreview(List.of(), null, false);
             lastQuery = null;
+            refusal = null;
         }
 
         void answer(DataBrowserPreview preview) {
             answer = preview;
+        }
+
+        /** Drives a refusal raised behind the probe, where a connector's own failures surface. */
+        void refuseWith(RuntimeException coded) {
+            refusal = coded;
         }
 
         DataBrowserQuery lastQuery() {
@@ -758,6 +815,9 @@ class DataBrowserApiTest {
         @Override
         public DataBrowserPreview find(ConnectionConfig config, DataBrowserQuery query) {
             lastQuery = query;
+            if (refusal != null) {
+                throw refusal;
+            }
             return answer;
         }
     }
@@ -843,6 +903,28 @@ class DataBrowserApiTest {
                 return Optional.empty();
             }
             return Optional.of(new VerifiedToken(token.substring(0, bar), Scope.valueOf(token.substring(bar + 1))));
+        }
+    }
+
+    /**
+     * The capability refusal as it reaches this face. Stubbed rather than imported: the connector ring is
+     * not on this module's classpath, and what is under test is the status a connector code gets here, for
+     * which the canonical string and its params are the whole of it.
+     */
+    private record StubConnectorCode() implements TapstateErrorCode {
+        @Override
+        public String code() {
+            return "connector.capability-missing";
+        }
+
+        @Override
+        public Severity severity() {
+            return Severity.ERROR;
+        }
+
+        @Override
+        public Set<String> placeholders() {
+            return Set.of("connector", "capability");
         }
     }
 }
