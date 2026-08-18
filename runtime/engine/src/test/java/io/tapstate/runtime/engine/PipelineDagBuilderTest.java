@@ -19,6 +19,7 @@ import io.tapstate.core.model.ServeBlock;
 import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
 import io.tapstate.core.model.TransformBody;
+import io.tapstate.core.model.ViewBlock;
 import io.tapstate.spi.sink.SinkWriter;
 import io.tapstate.spi.sink.WriteResult;
 import io.tapstate.spi.transform.TransformPort;
@@ -53,6 +54,67 @@ class PipelineDagBuilderTest {
 
         assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "serve.sync_1");
         assertThat(edges(dag)).containsExactly(edge("orders_src", "serve.sync_1"));
+    }
+
+    @Test
+    void view_without_serve_is_a_source_then_a_materialization_sink() {
+        PipelineResource pipeline = new PipelineResource(
+                "p", null,
+                List.of("orders_src"),
+                null,
+                view("order_state", FromRef.literal("orders_src")),
+                null,
+                null, null);
+
+        DAG dag = PipelineDagBuilder.build(pipeline, bindings(Map.of(
+                FromRef.literal("orders_src"), List.of("orders_src"))));
+
+        assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "view.order_state");
+        assertThat(edges(dag)).containsExactly(edge("orders_src", "view.order_state"));
+    }
+
+    @Test
+    void a_transform_chain_feeding_a_view_wires_source_through_step_into_the_materialization() {
+        // The shape the quickstart demo ships: one source, one stateless step, and a view as the only
+        // output. If this stopped building, the demo would fail on a clean machine and nowhere else.
+        PipelineResource pipeline = new PipelineResource(
+                "p", null,
+                List.of("orders_src"),
+                List.of(filter("shape_orders", "row.id % 2 == 0", FromRef.literal("orders_src"))),
+                view("order_state", FromRef.literal("shape_orders")),
+                null, null, null);
+
+        DAG dag = PipelineDagBuilder.build(pipeline, bindings(Map.of(
+                FromRef.literal("orders_src"), List.of("orders_src"),
+                FromRef.literal("shape_orders"), List.of("shape_orders"))));
+
+        assertThat(vertexNames(dag))
+                .containsExactlyInAnyOrder("orders_src", "shape_orders", "view.order_state");
+        assertThat(edges(dag)).containsExactlyInAnyOrder(
+                edge("orders_src", "shape_orders"),
+                edge("shape_orders", "view.order_state"));
+    }
+
+    @Test
+    void view_and_serve_each_get_the_data_rather_than_one_swallowing_the_other() {
+        // The parser defaults serve.from to the view's id when a pipeline declares both, so this is
+        // the shape a real workspace produces - not a hand-built curiosity.
+        PipelineResource pipeline = new PipelineResource(
+                "p", null,
+                List.of("orders_src"),
+                null,
+                view("order_state", FromRef.literal("orders_src")),
+                serve(FromRef.literal("order_state"), sync("sync_1", "orders_dest")),
+                null, null);
+
+        DAG dag = PipelineDagBuilder.build(pipeline, bindings(Map.of(
+                FromRef.literal("orders_src"), List.of("orders_src"))));
+
+        assertThat(vertexNames(dag))
+                .containsExactlyInAnyOrder("orders_src", "view.order_state", "serve.sync_1");
+        assertThat(edges(dag)).containsExactlyInAnyOrder(
+                edge("orders_src", "view.order_state"),
+                edge("orders_src", "serve.sync_1", 1, 0));
     }
 
     @Test
@@ -294,8 +356,7 @@ class PipelineDagBuilderTest {
                 step -> (SupplierEx<TransformPort>) () -> ev -> List.of(ev),
                 syncElement -> stubWriter(),
                 ref -> List.of(),
-                sourceId -> List.of(),
-                null);
+                sourceId -> List.of());
 
         assertThatThrownBy(() -> PipelineDagBuilder.build(pipeline, bindings))
                 .isInstanceOf(IllegalStateException.class)
@@ -312,8 +373,7 @@ class PipelineDagBuilderTest {
                 step -> (SupplierEx<TransformPort>) () -> ev -> List.of(ev),
                 syncElement -> stubWriter(),
                 ref -> List.of(),
-                sourceId -> null,
-                null);
+                sourceId -> null);
 
         assertThatThrownBy(() -> PipelineDagBuilder.build(pipeline, bindings))
                 .isInstanceOf(IllegalStateException.class)
@@ -328,7 +388,9 @@ class PipelineDagBuilderTest {
                 srcId -> stubMeta(),
                 step -> (SupplierEx<TransformPort>) () -> ev -> List.of(ev),
                 syncElement -> stubWriter(),
-                Function.<FromRef>identity().andThen(ref -> upstreams.getOrDefault(ref, List.of())));
+                Function.<FromRef>identity().andThen(ref -> upstreams.getOrDefault(ref, List.of())),
+                srcId -> List.of(srcId),
+                viewBlock -> stubWriter());
     }
 
     /** A structurally valid, behaviourally irrelevant vertex supplier for graph-shape assertions. */
@@ -350,6 +412,10 @@ class PipelineDagBuilderTest {
         @Override
         public void close() {
         }
+    }
+
+    private static ViewBlock view(String id, FromRef from) {
+        return new ViewBlock.Inline(id, from, "order_id", null, null);
     }
 
     private static ServeBlock serve(FromRef from, SyncElement... sync) {

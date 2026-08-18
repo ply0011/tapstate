@@ -296,12 +296,65 @@ public final class EnvelopeParser {
             throw new EnvelopeException("a cdc step names exactly one table, found: " + mapping.keySet());
         }
         Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
-        String change = string(only.getValue(), "cdc." + only.getKey());
+        String at = "cdc." + only.getKey();
+        // Two shapes under one word rather than two step keywords: an author writing a change writes
+        // cdc either way, and which shape it is follows from whether they named the rows themselves.
+        Object body = only.getValue();
+        return new Step.Cdc(
+                alias(only.getKey()),
+                body instanceof Map ? valuedChange(body, at) : generatedChange(body, at));
+    }
+
+    private static Step.Change generatedChange(Object node, String at) {
+        String change = string(node, at);
         String[] parts = change.trim().split("\\s+");
         if (parts.length != 2) {
             throw new EnvelopeException("a cdc change reads '<op> <rows>', found: " + change);
         }
-        return new Step.Cdc(alias(only.getKey()), cdcOp(parts[0]), cdcRows(parts[1]));
+        return new Step.Change.Generated(cdcOp(parts[0]), cdcRows(parts[1]));
+    }
+
+    /** A change that names the row it moves, and for an update the value it writes. */
+    private static Step.Change valuedChange(Object node, String at) {
+        Map<String, Object> mapping = mapping(node, at);
+        if (mapping.size() != 1) {
+            throw new EnvelopeException(
+                    at + " carries exactly one operation, found: " + mapping.keySet());
+        }
+        Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
+        CdcOp op = cdcOp(only.getKey());
+        String opAt = at + "." + only.getKey();
+        Map<String, Object> body = mapping(only.getValue(), opAt);
+        rejectUnknownKeys(body.keySet(), Vocabulary.valuedChangeKeys(op), opAt);
+
+        // An insert names rows; the other two locate one. Read it before the where below, which it has not
+        // got and does not need.
+        if (op == CdcOp.INSERT) {
+            // The same reader the seed uses: one id per row, one shape across rows, scalars only. An
+            // author who can seed a table can add to it, and the two cannot drift into different rules.
+            return new Step.Change.Insert(valueRows(body.get("values"), opAt + ".values"));
+        }
+
+        Map<String, Object> where = mapping(body.get("where"), opAt + ".where");
+        if (where.isEmpty()) {
+            throw new EnvelopeException(
+                    opAt + ".where must name at least one setting to locate the row by");
+        }
+        where.forEach((setting, value) -> requireScalar(value, opAt + ".where." + setting));
+
+        return switch (op) {
+            case UPDATE -> {
+                Map<String, Object> set = mapping(body.get("set"), opAt + ".set");
+                if (set.isEmpty()) {
+                    throw new EnvelopeException(opAt + ".set must name at least one column to write");
+                }
+                set.forEach((column, value) -> requireScalar(value, opAt + ".set." + column));
+                yield new Step.Change.Update(where, set);
+            }
+            case DELETE -> new Step.Change.Delete(where);
+            // Unreachable: returned above, before the where this operation does not carry is read.
+            case INSERT -> throw new IllegalStateException("insert is read before this point");
+        };
     }
 
     private static CdcOp cdcOp(String op) {

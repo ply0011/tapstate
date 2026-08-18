@@ -322,6 +322,28 @@ class E2eExecutorTest {
         assertThat(binding.calls).containsExactly("apply:[p.tap.yml]", "cdc:src_mongo.orders=INSERT x10");
     }
 
+    /**
+     * A valued change reaches the driver as the row and the value the specification wrote, not as a
+     * count. Without this the two shapes could parse apart and still execute the same way, and the
+     * whole point of the valued form is that the driver is told which row to move.
+     */
+    @Test
+    void drivesAnUpdateThatNamesTheRowAndTheValue() {
+        execute(minimal(
+                "steps:\n  - cdc: { src_mongo.orders: { update: { where: { id: 2 }, set: { seq: 99 } } } }\n"));
+
+        assertThat(binding.calls)
+                .containsExactly("apply:[p.tap.yml]", "update:src_mongo.orders where={id=2} set={seq=99}");
+    }
+
+    @Test
+    void drivesADeleteThatNamesTheRow() {
+        execute(minimal("steps:\n  - cdc: { src_mongo.orders: { delete: { where: { id: 2 } } } }\n"));
+
+        assertThat(binding.calls)
+                .containsExactly("apply:[p.tap.yml]", "delete:src_mongo.orders where={id=2}");
+    }
+
     @Test
     void countMatcherOverSeveralTablesHoldsOnlyWhenEveryTableMatches() {
         binding.countsOverTime(TARGET, 100L);
@@ -648,6 +670,21 @@ class E2eExecutorTest {
         @Override
         public void cdc(TableAlias table, CdcOp op, long rows) {
             calls.add("cdc:" + table + "=" + op + " x" + rows);
+        }
+
+        @Override
+        public void update(TableAlias table, Map<String, Object> where, Map<String, Object> set) {
+            calls.add("update:" + table + " where=" + where + " set=" + set);
+        }
+
+        @Override
+        public void delete(TableAlias table, Map<String, Object> where) {
+            calls.add("delete:" + table + " where=" + where);
+        }
+
+        @Override
+        public void insert(TableAlias table, List<Map<String, Object>> rows) {
+            calls.add("insert:" + table + " rows=" + rows);
         }
 
         private TableAlias redeliverMovesTable;

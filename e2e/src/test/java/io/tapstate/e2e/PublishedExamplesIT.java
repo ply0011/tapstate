@@ -143,6 +143,10 @@ class PublishedExamplesIT {
         stageConnectorJars(envelope.setup().connectors());
 
         String run = store(workspace, tier);
+        // Nest state is held under a fixed database name, so it is the one thing a run cannot isolate by
+        // taking a name of its own. Two tiers of one example share every id in it; without this the second
+        // serves documents the first assembled from rows this one never had.
+        SharedMongo.discardNestState();
         // The stores the example asked for come up before anything else: a resource cannot be applied
         // before the endpoint whose address it interpolates exists.
         try (ProvisionedStores stores = ProvisionedStores.provision(envelope.setup().databases(), run);

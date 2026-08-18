@@ -5,6 +5,7 @@ import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import io.tapstate.core.model.FromRef;
 import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
+import io.tapstate.core.model.ViewBlock;
 import io.tapstate.runtime.engine.nest.NestBinding;
 import io.tapstate.spi.sink.SinkWriter;
 import io.tapstate.spi.transform.TransformPort;
@@ -33,6 +34,11 @@ import java.util.function.Function;
  *   <li>{@code sourceKeys} - a source id to the vertex keys reading it, one per table it selects. A
  *       source reading a single table keeps the source id as its one key, so a graph over such
  *       sources is keyed exactly as it was before a source could read several.
+ *   <li>{@code viewSinks} - a pipeline's {@code view:} block to the factory of the sink writer that
+ *       materializes it. Same shape and same reason as {@code sinkWriters}: a bare writer factory the
+ *       builder alone wraps, so no caller can substitute a per-store sink processor. Where the view
+ *       lands - which store, which collection, which indexes - folds in behind the factory, so the
+ *       engine never learns the state store's addressing.
  *   <li>{@code nest} - what a nest node needs that the engine will not decide: the table behind each
  *       embedded alias, where each of its vertices keeps state, and where a change that can never
  *       reach a document goes. A pipeline with no nest never asks for it.
@@ -44,15 +50,26 @@ public record DagBindings(
         Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
         Function<FromRef, List<String>> upstreams,
         Function<String, List<String>> sourceKeys,
+        Function<ViewBlock, SupplierEx<? extends SinkWriter>> viewSinks,
         NestBinding nest) {
 
-    /** Bindings for a pipeline with no nest in it, which therefore needs nothing a nest would. */
+    /** Bindings for a pipeline with neither a view nor a nest, which therefore need neither. */
     public DagBindings(
             Function<String, ProcessorMetaSupplier> sourceVertices,
             Function<Step, SupplierEx<? extends TransformPort>> transformPorts,
             Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
             Function<FromRef, List<String>> upstreams) {
-        this(sourceVertices, transformPorts, sinkWriters, upstreams, null);
+        this(sourceVertices, transformPorts, sinkWriters, upstreams, oneKeyPerSource(), noViewSink(), null);
+    }
+
+    /** Bindings whose sources may each select several tables, with neither a view nor a nest. */
+    public DagBindings(
+            Function<String, ProcessorMetaSupplier> sourceVertices,
+            Function<Step, SupplierEx<? extends TransformPort>> transformPorts,
+            Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
+            Function<FromRef, List<String>> upstreams,
+            Function<String, List<String>> sourceKeys) {
+        this(sourceVertices, transformPorts, sinkWriters, upstreams, sourceKeys, noViewSink(), null);
     }
 
     /**
@@ -65,6 +82,44 @@ public record DagBindings(
             Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
             Function<FromRef, List<String>> upstreams,
             NestBinding nest) {
-        this(sourceVertices, transformPorts, sinkWriters, upstreams, sourceId -> List.of(sourceId), nest);
+        this(sourceVertices, transformPorts, sinkWriters, upstreams, oneKeyPerSource(), noViewSink(), nest);
+    }
+
+    /** Bindings for a pipeline that materializes a view and has no nest in it. */
+    public DagBindings(
+            Function<String, ProcessorMetaSupplier> sourceVertices,
+            Function<Step, SupplierEx<? extends TransformPort>> transformPorts,
+            Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
+            Function<FromRef, List<String>> upstreams,
+            Function<String, List<String>> sourceKeys,
+            Function<ViewBlock, SupplierEx<? extends SinkWriter>> viewSinks) {
+        this(sourceVertices, transformPorts, sinkWriters, upstreams, sourceKeys, viewSinks, null);
+    }
+
+    /** Bindings for a pipeline with a nest in it whose sources may each select several tables. */
+    public DagBindings(
+            Function<String, ProcessorMetaSupplier> sourceVertices,
+            Function<Step, SupplierEx<? extends TransformPort>> transformPorts,
+            Function<SyncElement, SupplierEx<? extends SinkWriter>> sinkWriters,
+            Function<FromRef, List<String>> upstreams,
+            Function<String, List<String>> sourceKeys,
+            NestBinding nest) {
+        this(sourceVertices, transformPorts, sinkWriters, upstreams, sourceKeys, noViewSink(), nest);
+    }
+
+    private static Function<String, List<String>> oneKeyPerSource() {
+        return sourceId -> List.of(sourceId);
+    }
+
+    /**
+     * The view-sink slot for bindings supplied without one. A pipeline that declares no view never
+     * reaches it; one that does has been assembled without the binding it needs, which is a wiring
+     * defect in the caller rather than anything an author can provoke.
+     */
+    private static Function<ViewBlock, SupplierEx<? extends SinkWriter>> noViewSink() {
+        return view -> {
+            throw new IllegalStateException(
+                    "pipeline declares a view but no view-sink binding was supplied");
+        };
     }
 }

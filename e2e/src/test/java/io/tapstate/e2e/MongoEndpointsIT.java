@@ -91,6 +91,84 @@ class MongoEndpointsIT {
     }
 
     /**
+     * The generated update rewrites whichever documents the driver picks; this one rewrites the document
+     * the specification named. Reading the whole collection back is what separates them - an
+     * implementation that changed the lowest ids would satisfy an assertion that the value is present.
+     */
+    @Test
+    void updatingWritesTheNamedFieldOnTheNamedDocumentAndLeavesTheRestAlone() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        endpoints.update(at(), TABLE, Map.of("id", 2), Map.of("seq", 99));
+
+        assertThat(rowsReadBackIndependently()).containsExactly("1,1", "2,99", "3,3");
+    }
+
+    @Test
+    void deletingRemovesTheNamedDocumentRatherThanTheLowestId() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        endpoints.delete(at(), TABLE, Map.of("id", 2));
+
+        assertThat(rowsReadBackIndependently()).containsExactly("1,1", "3,3");
+    }
+
+    /**
+     * A filter matching several documents is refused before anything moves. The single-document
+     * mutators stop at the first match and report one, so without the pre-count a change would mutate
+     * whichever document sorted first and pass - the ambiguity the refusal exists to surface.
+     */
+    @Test
+    void aValuedChangeMatchingSeveralDocumentsRefusesBeforeMutating() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+        endpoints.insert(at(), TABLE,
+                java.util.List.of(Map.of("id", 4, "seq", 9), Map.of("id", 5, "seq", 9)));
+
+        assertThatThrownBy(() -> endpoints.delete(at(), TABLE, Map.of("seq", 9)))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("moved 2");
+        assertThat(rowsReadBackIndependently()).contains("4,9", "5,9");
+    }
+
+    /**
+     * The store materializes a collection on first write, so an insert against a never-seeded table
+     * would silently create it - which is how a specification whose seed and insert name different
+     * tables passes by accident. Refused instead, like every other driver.
+     */
+    @Test
+    void insertingIntoANeverSeededCollectionRefusesRatherThanCreatingIt() {
+        assertThatThrownBy(() -> endpoints.insert(at(), "never_created",
+                        java.util.List.of(Map.of("id", 1, "seq", 1))))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("never_created")
+                .hasMessageContaining("not been seeded");
+    }
+
+    /** An empty seed still says the table exists, so a later insert against it is legitimate. */
+    @Test
+    void insertingAfterAnEmptySeedWorksBecauseTheSeedCreatedTheCollection() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(0));
+
+        endpoints.insert(at(), TABLE, java.util.List.of(Map.of("id", 1, "seq", 1)));
+
+        assertThat(rowsReadBackIndependently()).containsExactly("1,1");
+    }
+
+    /**
+     * A change matching nothing is refused rather than passed over: the specification that wrote it is
+     * about to wait for the effect downstream, and a silent no-op turns that wait into a timeout that
+     * reads like the product lost a change nobody ever made.
+     */
+    @Test
+    void aValuedChangeMatchingNoDocumentRefusesInsteadOfDoingNothing() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        assertThatThrownBy(() -> endpoints.delete(at(), TABLE, Map.of("id", 99)))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("moved 0 documents");
+    }
+
+    /**
      * "The lowest ids" stops meaning "the low numbers" the moment a document is deleted.
      *
      * <p>Every other case here seeds ids 1..N and changes them straight away, so a driver reading

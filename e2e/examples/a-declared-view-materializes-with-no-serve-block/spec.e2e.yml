@@ -1,0 +1,24 @@
+# A pipeline whose only output is a declared view. There is no serve block anywhere in it, and that
+# absence is the whole point: declaring a view is itself the instruction to materialize it, so the
+# rows reach the managed state store without the pipeline naming a target to write to.
+#
+# The count is what discriminates. The behaviour this replaces was not an error but a silence - the
+# view was parsed, validated, applied and started, and then nothing was written and nothing was said.
+# So a regression here does not throw; it leaves the endpoint empty. Counting rows that arrived is the
+# only assertion that can tell "materialized" from "quietly did nothing", because every other signal
+# an empty run produces is identical to a working one's.
+#
+# The collection is named for the view rather than for the source table: a view is an object the author
+# declared, not a copy of a table, so a run that wrote to `orders` would have ignored the declaration
+# and is a failure even with the right number of rows in it.
+name: a-declared-view-materializes-with-no-serve-block
+setup:
+  connectors: [e2e_file]
+  apply: [src_file.tap.yml, warehouse.tap.yml, pipeline.tap.yml]
+  discover: [src_file]
+pipeline: pipeline.tap.yml
+seed:
+  src_file.orders: { rows: 4 }
+steps:
+  - start
+  - await: { count: { warehouse.order_state: 4 } }

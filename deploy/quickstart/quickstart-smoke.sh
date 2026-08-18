@@ -280,10 +280,26 @@ if [ "$RUN_RC" -eq 0 ] && [ -f "$RUN/.cli-argv" ] && ! grep -Fq "$RUN_PW" "$RUN/
 else
   bad "password handling (rc=$RUN_RC, argv=$(grep -Fq "$RUN_PW" "$RUN/.cli-argv" 2>/dev/null && echo LEAK || echo ok), stdin=$(grep -Fq "$RUN_PW" "$RUN/.cli-stdin" 2>/dev/null && echo ok || echo MISSING)): $RUN_OUT"
 fi
+# Failure branches print the driven command stream to say what went wrong -- and that stream contains
+# the admin password by design (the assertion above requires it there). Print it redacted, always.
+redacted_stdin() { sed "s/$RUN_PW/<redacted>/g" "$RUN/.cli-stdin" 2>/dev/null; }
 if grep -q 'register \.\./mysql-connector.jar' "$RUN/.cli-stdin" 2>/dev/null && grep -q '^apply' "$RUN/.cli-stdin" 2>/dev/null && grep -q 'start sync_orders' "$RUN/.cli-stdin" 2>/dev/null; then
   ok "drives register / apply / start through the REPL"
 else
-  bad "online verbs not driven: $(cat "$RUN/.cli-stdin" 2>/dev/null)"
+  bad "online verbs not driven: $(redacted_stdin)"
+fi
+# The order, not just the presence. The pipeline maps a row field, which the server refuses to apply
+# until the source it reads has a discovered schema -- while the discovery needs the source applied.
+# So the stream must apply the source alone, discover it, and only then apply the workspace. Presence
+# checks matched the old broken stream just as happily; only the line order pins the fix.
+SRC_APPLY_LINE="$(grep -n '^apply source/db_src.tap.yml$' "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+DISCOVER_LINE="$(grep -n '^discover-schema db_src$' "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+FULL_APPLY_LINE="$(grep -n '^apply$' "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+if [ -n "$SRC_APPLY_LINE" ] && [ -n "$DISCOVER_LINE" ] && [ -n "$FULL_APPLY_LINE" ] \
+    && [ "$SRC_APPLY_LINE" -lt "$DISCOVER_LINE" ] && [ "$DISCOVER_LINE" -lt "$FULL_APPLY_LINE" ]; then
+  ok "applies the source alone, discovers it, then applies the workspace -- in that order"
+else
+  bad "apply/discover ordering (source-apply=$SRC_APPLY_LINE discover=$DISCOVER_LINE full-apply=$FULL_APPLY_LINE): $(redacted_stdin)"
 fi
 if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -q 'rm -rf'; then
   ok "prints teardown on completion (down -v + rm -rf, images noted)"
@@ -291,7 +307,7 @@ else
   bad "no teardown printed: $RUN_OUT"
 fi
 # The snapshot payoff is a real row count, printed with no user action (the fake docker returns 5).
-if printf '%s' "$RUN_OUT" | grep -q 'the target now holds 5 rows'; then
+if printf '%s' "$RUN_OUT" | grep -q 'the view now holds 5 rows'; then
   ok "prints the snapshot row count automatically (no user action)"
 else
   bad "snapshot row count not printed: $RUN_OUT"
@@ -321,7 +337,7 @@ fi
 # The same check must not fire on a run that did deliver: the failure path above is worth nothing if it
 # also rejects the successful one.
 run_phase_fakes 5
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'the target now holds 5 rows'; then
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'the view now holds 5 rows'; then
   ok "still succeeds when the target holds the seeded rows"
 else
   bad "a delivering run was rejected (rc=$RUN_RC): $RUN_OUT"

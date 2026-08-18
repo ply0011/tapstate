@@ -77,6 +77,7 @@ class FixedSleepGateTest {
             // One bounded read of its own target per witness class, each a poll inside a deadline loop.
             entry("test/java/io/tapstate/e2e/LosslessNumericTypeIsAcceptedIT.java", 1L),
             entry("test/java/io/tapstate/e2e/RealMysqlToMongoSnapshotIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/RealMysqlToMongoViewIndexIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestAssemblesParentAndChildrenIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestChildCdcMutatesTheArrayIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestColdRootWakesCorrectlyIT.java", 1L),

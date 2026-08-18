@@ -191,6 +191,44 @@ class MySqlEndpointsIT {
     }
 
     /**
+     * The generated update rewrites whichever rows the driver picks; this one rewrites the row the
+     * specification named. Reading the whole table back is what separates them - an implementation that
+     * changed the lowest ids instead would satisfy an assertion that the new value is present somewhere.
+     */
+    @Test
+    void updatingWritesTheNamedColumnOnTheNamedRowAndLeavesTheRestAlone() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        endpoints.update(at(), TABLE, Map.of("id", 2), Map.of("seq", 99));
+
+        assertThat(rowsReadBackIndependently()).containsExactly("1,1", "2,99", "3,3");
+        assertThat(endpoints.count(at(), TABLE)).isEqualTo(3L);
+    }
+
+    @Test
+    void deletingRemovesTheNamedRowRatherThanTheLowestId() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        endpoints.delete(at(), TABLE, Map.of("id", 2));
+
+        assertThat(rowsReadBackIndependently()).containsExactly("1,1", "3,3");
+    }
+
+    /**
+     * A change that matches nothing is refused rather than passed over. The specification that wrote it
+     * is about to wait for the effect downstream, and a silent no-op turns that wait into a timeout that
+     * reads like the product lost a change nobody ever made.
+     */
+    @Test
+    void aValuedChangeMatchingNoRowRefusesInsteadOfDoingNothing() {
+        endpoints.seed(at(), TABLE, SeedRows.generated(3));
+
+        assertThatThrownBy(() -> endpoints.delete(at(), TABLE, Map.of("id", 99)))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("moved 0 rows");
+    }
+
+    /**
      * Changing a table that was never seeded is an authoring mistake, not a change - the same refusal the
      * file driver makes, for the same reason: silently creating one would let a specification whose seed
      * and cdc name different tables pass by accident.
