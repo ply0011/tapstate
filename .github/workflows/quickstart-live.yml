@@ -92,7 +92,7 @@ jobs:
           set -eu
           cd "$RUNNER_TEMP/tapstate-demo"
           rows="$(docker compose exec -T mongo mongosh --quiet \
-            'mongodb://mongo:27017/warehouse?directConnection=true' \
+            'mongodb://mongo:27017/views?directConnection=true' \
             --eval 'db.orders.countDocuments()' | tr -d '[:space:]')"
           [ "$rows" = 5 ] || { echo "target holds $rows rows, expected the 5 seeded ones" >&2; exit 1; }
           echo "snapshot: $rows rows in the target"
@@ -104,7 +104,7 @@ jobs:
         run: |
           set -eu
           cd "$RUNNER_TEMP/tapstate-demo"
-          uri='mongodb://mongo:27017/warehouse?directConnection=true'
+          uri='mongodb://mongo:27017/views?directConnection=true'
           # Poll the target until $2 holds, or fail naming the operation $1.
           await() {
             i=0

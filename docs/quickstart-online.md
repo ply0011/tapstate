@@ -212,14 +212,14 @@ mode: cdc
 tables: [ orders ]
 ```
 
-`work/source/warehouse.tap.yml` — the write target (also `kind: source`):
+`work/source/views.tap.yml` — the write target (also `kind: source`):
 
 ```yaml
 version: tapstate/v1
 kind: source
-id: warehouse
+id: views
 connector: mongodb
-config: { isUri: true, uri: "mongodb://mongo:27017/warehouse?directConnection=true" }
+config: { isUri: true, uri: "mongodb://mongo:27017/views?directConnection=true" }
 ```
 
 `work/pipeline/sync_orders.tap.yml` — the data flow:
@@ -240,7 +240,7 @@ transforms:
 serve:
   from: shape_orders
   sync:
-    - source: warehouse
+    - source: views
 ```
 
 One `map` step reshapes the stream, and it carries every change through — insert, update
@@ -406,7 +406,7 @@ container, so no client is needed on the host:
 
 ```sh
 docker compose exec mongo mongosh --quiet \
-  "mongodb://mongo:27017/warehouse?directConnection=true" \
+  "mongodb://mongo:27017/views?directConnection=true" \
   --eval "db.orders.countDocuments()"    # should reach 5
 ```
 
@@ -421,17 +421,17 @@ than guessing:
 # insert a row, then wait for it to appear in the target (the sink upserts on the
 # discovered key, so the snapshot->CDC overlap never doubles a row)
 docker compose exec mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit(db.orders.countDocuments({id:6})?0:1)'; do sleep 1; done
-docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'db.orders.find({id:6}).pretty()'   # customer_name: 'frank', label: 'frank <orders>'
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit(db.orders.countDocuments({id:6})?0:1)'; do sleep 1; done
+docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'db.orders.find({id:6}).pretty()'   # customer_name: 'frank', label: 'frank <orders>'
 
 # update it, and watch the mapped label follow the change
 docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit((db.orders.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
-docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'db.orders.find({id:6}).pretty()'
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit((db.orders.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
+docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'db.orders.find({id:6}).pretty()'
 
 # delete it, and watch it leave the target too
 docker compose exec mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit(db.orders.countDocuments({id:6})?1:0)'; do sleep 1; done
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit(db.orders.countDocuments({id:6})?1:0)'; do sleep 1; done
 echo "row 6 is gone from MongoDB, too"
 ```
 
@@ -519,11 +519,11 @@ the server and databases are hosted changes.
    with one change: the server now runs on the host, not in the compose network, so
    the connectors address the databases by their host ports instead of the compose
    service names — `config: { host: 127.0.0.1, port: 3306, … }` in `db_src`, and
-   `uri: "mongodb://127.0.0.1:27017/warehouse"` in `warehouse`.
+   `uri: "mongodb://127.0.0.1:27017/views"` in `views`.
 
 6. **Online verbs, observe, CDC** are identical to steps 6–8, except you reach the
    databases with your own client (`docker exec tapstate-mysql …` /
-   `docker exec tapstate-mongo mongosh "mongodb://127.0.0.1:27017/warehouse" …`)
+   `docker exec tapstate-mongo mongosh "mongodb://127.0.0.1:27017/views" …`)
    rather than `docker compose exec`.
 
 Tear down with `docker rm -f tapstate-mysql tapstate-mongo` and `Ctrl-C` in the

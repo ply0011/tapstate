@@ -72,12 +72,12 @@ config: { host: mysql, port: 3306, database: appdb, username: root, password: se
 mode: cdc
 tables: [ orders ]
 YAML
-    cat > work/source/warehouse.tap.yml <<'YAML'
+    cat > work/source/views.tap.yml <<'YAML'
 version: tapstate/v1
 kind: source
-id: warehouse
+id: views
 connector: mongodb
-config: { isUri: true, uri: "mongodb://mongo:27017/warehouse?directConnection=true" }
+config: { isUri: true, uri: "mongodb://mongo:27017/views?directConnection=true" }
 YAML
     cat > work/pipeline/sync_orders.tap.yml <<'YAML'
 version: tapstate/v1
@@ -95,7 +95,7 @@ transforms:
 serve:
   from: shape_orders
   sync:
-    - source: warehouse
+    - source: views
 YAML
 }
 
@@ -105,7 +105,7 @@ YAML
 # second or two so a change still in flight is never misread as a change that did not happen.
 print_next_steps() {
     demo_dir="$(basename "$PWD")"
-    uri="mongodb://mongo:27017/warehouse?directConnection=true"
+    uri="mongodb://mongo:27017/views?directConnection=true"
     cat <<EOF
 quickstart: pipeline started. The stack is running.
 
@@ -260,7 +260,7 @@ main() {
     rows=0; i=0
     while [ "$i" -lt 30 ]; do
         rows="$(docker compose exec -T mongo mongosh --quiet \
-            'mongodb://mongo:27017/warehouse?directConnection=true' \
+            'mongodb://mongo:27017/views?directConnection=true' \
             --eval 'db.orders.countDocuments()' 2>/dev/null | tr -d '[:space:]')"
         case "$rows" in ''|*[!0-9]*) rows=0 ;; esac
         [ "$rows" -ge "$seeded" ] && break
@@ -274,7 +274,7 @@ main() {
     # than torn down -- the server log is the next thing to read, and a teardown would take it along.
     [ "$rows" -ge "$seeded" ] \
         || die "the snapshot did not reach the target ($rows of $seeded rows); inspect it with: docker compose logs server"
-    printf 'quickstart: the target now holds %s rows (MySQL orders -> MongoDB warehouse.orders)\n' "$rows"
+    printf 'quickstart: the target now holds %s rows (MySQL orders -> MongoDB views.orders)\n' "$rows"
 
     print_next_steps
 }
