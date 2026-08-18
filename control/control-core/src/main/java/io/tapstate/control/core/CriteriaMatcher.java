@@ -74,12 +74,17 @@ final class CriteriaMatcher {
      * mantissa distinct integers round to the same double, and the two mistakes are not equally
      * cheap: a slightly wrong ordering is invisible, while a wrong equality puts another row's data
      * in front of the reader as though they had asked for it.
+     *
+     * <p>Any other pair of numbers is handed to the same comparison the ordered operators use, so
+     * one term and the next answer from one rule rather than from two that agree by coincidence.
+     * That rule separates a negative zero from a positive one, here as there — exotic, and shared
+     * with every other operator rather than being this one's own quirk.
      */
     private static boolean equal(Object value, Object wanted) {
         if (value instanceof Number left && wanted instanceof Number right) {
             return whole(left) && whole(right)
                     ? new BigInteger(left.toString()).equals(new BigInteger(right.toString()))
-                    : left.doubleValue() == right.doubleValue();
+                    : compare(left, right) == 0;
         }
         return Objects.equals(value, wanted);
     }
