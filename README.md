@@ -161,6 +161,10 @@ materialized state directly in MongoDB. See
 [the online quickstart](docs/quickstart-online.md) for the complete resources,
 commands, and CDC verification loop.
 
+**The documentation lives at [tapstate.dev/docs](https://tapstate.dev/docs).** That is the
+reviewed, published version and the one to read. Pages under `docs/` in this repository are
+engineering drafts kept next to the code, useful when you are working on tapstate itself.
+
 ## Target use cases
 
 - Real-time customer and account 360
@@ -384,14 +388,32 @@ verbs exit with code `3`.
 
 ## Documentation
 
-- [All documentation](docs/)
+**[tapstate.dev/docs](https://tapstate.dev/docs)** is the documentation: reviewed, published,
+and the version to cite. Start there.
+
+Reading this repository instead? What is under `docs/` is written alongside the
+implementation and has not been through documentation review — engineering drafts,
+worked samples you can run, and material tied to a particular version. Each page says
+which it is in a header at the top; see
+[CONTRIBUTING.md](CONTRIBUTING.md#documentation).
+
+- [All drafts and samples](docs/)
 - [Quickstart](docs/quickstart-online.md)
 - [Tutorials](docs/tutorials/) - worked scenarios with sample data
 - [Nest](docs/nest/) - assembling one document out of many tables
-- Architecture: coming soon
-- Connectors: coming soon
-- Deployment: coming soon
-- FAQ: coming soon
+
+### For agents and retrieval tooling
+
+The published documentation exposes two machine-readable entry points, both plain text:
+
+- **[tapstate.dev/llms.txt](https://tapstate.dev/llms.txt)** - the index: what tapstate is,
+  when to use it, and a linked map of the pages.
+- **[tapstate.dev/llms-full.txt](https://tapstate.dev/llms-full.txt)** - the same
+  documentation inlined in full, for a single fetch.
+
+Prefer these over crawling the site or this repository: they carry the reviewed wording,
+including the boundary between what the current preview verifies and what describes the
+product direction.
 
 ## FAQ
 
