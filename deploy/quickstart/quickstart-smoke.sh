@@ -452,6 +452,20 @@ if grep -qE '^\s*image:\s*ghcr\.io/' "$COMPOSE"; then
 else
   bad "docker-compose.yml does not pin a ghcr.io image: $(grep -nE '^\s*image:' "$COMPOSE" | tr '\n' ' ')"
 fi
+# The bundled state store is the official upstream image, pulled like any other. Tapstate does not
+# redistribute a MongoDB binary, and pulling a stock image in a compose file is the ordinary way to depend
+# on one -- packaging it into the distribution instead would be a redistribution decision, made silently,
+# by whoever edited this file. Assert the store service names an unqualified upstream image (no registry
+# host, so Docker Hub's official library) rather than something built or re-hosted here.
+STORE_IMAGE="$(awk '/^  mongo:/{f=1} f&&/image:/{print $2; exit}' "$COMPOSE")"
+case "$STORE_IMAGE" in
+  mongo:*)
+    ok "the state store is the official upstream image ($STORE_IMAGE), not one repackaged here" ;;
+  "")
+    bad "no image found for the mongo service in $COMPOSE" ;;
+  *)
+    bad "the state store image is not the upstream official one: $STORE_IMAGE" ;;
+esac
 # The image tag drifting from the build is the same defect as the CLI pin drifting, and gets the same guard.
 COMPOSE_TAG="$(sed -n 's|.*image:.*ghcr\.io/[^:]*:\(.*\)|\1|p' "$COMPOSE" | sed 's/}$//; s/.*:-//')"
 if [ "$COMPOSE_TAG" = "$POM_VERSION" ]; then
