@@ -152,4 +152,27 @@ class ControlApiSchemaTest {
         assertThat(((Map<?, ?>) properties.get("options")).get("additionalProperties"))
                 .isEqualTo(true);
     }
+
+    /**
+     * The schema is where a caller picks the field it will match on, which makes it the one place the
+     * choice can be priced before it is made. A name holding a dot is already described here, because
+     * addressing it needs a spelling nobody guesses; what the description did not say is that reading on
+     * it is the expensive spelling too. An index is written the same way a path is, so such a name cannot
+     * have one, and every read matching on it walks the collection. That cost is invisible in the answer
+     * - the rows are correct - so a caller told how to address the field and not what it costs will reach
+     * for it exactly as readily as for an indexed one.
+     */
+    @Test
+    void theFilterFieldSaysWhatMatchingOnANameHoldingADotCosts() {
+        Map<?, ?> definitions = (Map<?, ?>) ControlApiSchema.document().get("$defs");
+        Map<?, ?> request = (Map<?, ?>) definitions.get("DataBrowserFindRequest");
+        Map<?, ?> filter = (Map<?, ?>) ((Map<?, ?>) request.get("properties")).get("filter");
+        Map<?, ?> field = (Map<?, ?>) ((Map<?, ?>) filter.get("properties")).get("field");
+
+        assertThat(String.valueOf(field.get("description")))
+                .as("that matching on such a field reads the whole collection")
+                .contains("every row")
+                .as("and why, so it reads as a property of the name rather than of this one read")
+                .contains("index");
+    }
 }

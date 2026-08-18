@@ -286,7 +286,9 @@ public final class ControlApiSchema {
         properties.put("field", string(
                 "Field to test. A dot steps into a nested document, so a field whose own name holds "
                         + "one is named by escaping it: `price\\.usd`. Written here that is "
-                        + "\"price\\\\.usd\", because a lone backslash is not an escape JSON allows."));
+                        + "\"price\\\\.usd\", because a lone backslash is not an escape JSON allows."
+                        + " Matching on such a field reads every row: an index is written the same way a "
+                        + "path is, so a name holding a dot cannot have one."));
         properties.put("op", enumString(
                 "eq", "ne", "gt", "gte", "lt", "lte", "in", "exists", "contains"));
         properties.put("value", Map.of("description",

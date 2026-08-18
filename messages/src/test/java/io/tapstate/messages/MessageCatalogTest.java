@@ -54,6 +54,25 @@ class MessageCatalogTest {
     }
 
     @Test
+    void theRefusalAboutADottedNameAlsoSaysWhatReadingItCostsInstead() {
+        // The refusal stops an order, and then offers a filter as the way to reach the field. That offer
+        // is the whole reason this hint has to name a cost: ordering is refused, so its cost is obvious,
+        // while filtering succeeds and charges quietly. An index is written the same way a path is, so a
+        // field whose name holds a dot cannot be indexed at all, and every read that matches on it walks
+        // the collection. A hint that sends a reader down that path as though it were the free one is
+        // wrong in the direction that never gets reported - the answers are right, only slow.
+        MessageCatalog.Rendered r = EN.render("data-browser.unorderable-field",
+                Map.of("field", "price\\.usd"));
+
+        assertThat(r.solution())
+                .as("that a filter on this field reads the whole collection")
+                .contains("every row");
+        assertThat(r.solution())
+                .as("and why - so the cost reads as a property of the name, not as this read being unlucky")
+                .contains("index");
+    }
+
+    @Test
     void unknownCodeFallsBackToTheBareCanonicalCode() {
         TapstateErrorCode absent = new TapstateErrorCode() {
             @Override
