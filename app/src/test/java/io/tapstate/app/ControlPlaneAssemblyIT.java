@@ -172,7 +172,7 @@ class ControlPlaneAssemblyIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", SOURCE))
                 .exchange((request, response) -> response.getStatusCode());
-        assertThat(noYamlSourceEndpoint).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(noYamlSourceEndpoint).isEqualTo(HttpStatus.FORBIDDEN);
     }
 
     private static void assertStructuredSource(Map<?, ?> source, String host) {
