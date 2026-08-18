@@ -115,7 +115,7 @@ dsl.row-expression-type-unknown:
   solution: "Whether this expression can run is unknown; drop the reference to `{column}`, or read a column whose type the source declares."
 dsl.upsert-needs-key:
   message: "The sync at {path} upserts table `{table}` of source `{source}`, but that table declares no key, so no write can be matched to the row it belongs to."
-  solution: "Give `{table}` a primary key (or a unique index on non-null columns) and discover `{source}` again, or write with `write_mode: append`, which adds rows instead of matching them."
+  solution: "Give `{table}` a primary key and discover `{source}` again, or write with `write_mode: append`, which adds rows instead of matching them. A unique index is not enough: only a primary key is read as the key here."
 dsl.composition:
   message: "Composition rule broken at {path}: {detail}."
   solution: "Review how the resources are wired together."
@@ -437,3 +437,21 @@ pdk.testitem.stream.read.reason:
   message: "The change stream could not be started."
 pdk.testitem.stream.read.solution:
   message: "Check that change data capture is enabled on the server and any required log or replication settings are in place."
+pdk.testitem.check.cdc.privilege.fail:
+  message: "The change-stream privilege check did not pass."
+pdk.testitem.read.privilege.fail:
+  message: "The read privilege check did not pass."
+pdk.testitem.write.privilege.fail:
+  message: "The write privilege check did not pass."
+pdk.testitem.create.table.privilege.fail:
+  message: "The table-creation privilege check did not pass."
+pdk.testitem.pdk.version.fail:
+  message: "The server version check did not pass."
+pdk.testitem.pdk.connection.fail:
+  message: "The connection could not be established."
+pdk.testitem.check.host.port.fail:
+  message: "The host and port did not accept a connection."
+pdk.testitem.time.consistent.fail:
+  message: "The clock comparison did not pass."
+pdk.testitem.stream.read.fail:
+  message: "The change stream could not be started."

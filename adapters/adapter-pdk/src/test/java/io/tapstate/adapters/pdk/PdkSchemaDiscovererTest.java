@@ -97,6 +97,30 @@ class PdkSchemaDiscovererTest {
         assertThat(indexes.get(0).unique()).isFalse();
     }
 
+    /**
+     * An index part that names no column does not take discovery down with it.
+     *
+     * <p>A functional index has parts that are expressions over the row rather than columns, so the
+     * database reports no column name for them - ordinary since MySQL 8.0.13, and present in databases
+     * nobody built for us. Copying that absent name into the model threw, which failed the whole
+     * discovery: one such index anywhere made every table in that database undiscoverable, and the
+     * failure surfaced as an uncoded server error naming neither the table nor the index. The parts
+     * that do name a column are kept, since those are what a key could ever be read from.
+     */
+    @Test
+    void anIndexPartWithNoColumnNameDoesNotFailTheWholeDiscovery(@TempDir Path dir) {
+        SchemaDiscoverer discoverer = discoverer(Synthetic.functionalIndexSource(dir), "synthetic.FunctionalIndex");
+
+        SourceModel model = discoverer.discover(config());
+
+        List<SourceIndex> indexes = model.tables().get(0).indexes();
+        assertThat(indexes).extracting(SourceIndex::name).containsExactly("uq_mixed");
+        assertThat(indexes.get(0).fields())
+                .as("the named columns survive; the expression part contributes no column name")
+                .containsExactly("amount");
+        assertThat(indexes.get(0).unique()).isTrue();
+    }
+
     @Test
     void carriesTheRowCountFromAConnectorThatCanCount(@TempDir Path dir) {
         SchemaDiscoverer discoverer =

@@ -225,7 +225,7 @@ class ErrorCodeGatesTest {
      * makes those visible; changing it is then a deliberate edit here rather than a silent drift.
      *
      * <p>The names come from the typed test exceptions the connector API defines, each of which
-     * carries a reason and a solution. It is a closed set because that API is frozen.
+     * carries a failure headline, a reason and a solution. It is a closed set because that API is frozen.
      */
     @Test
     @DisplayName("the connector-diagnostic wordings are exactly the declared set")
@@ -234,6 +234,7 @@ class ErrorCodeGatesTest {
         for (String diagnostic : List.of(
                 "check.cdc.privilege", "read.privilege", "write.privilege", "create.table.privilege",
                 "pdk.version", "pdk.connection", "check.host.port", "time.consistent", "stream.read")) {
+            expected.add(PDK_TEST_ITEM_PREFIX + diagnostic + ".fail");
             expected.add(PDK_TEST_ITEM_PREFIX + diagnostic + ".reason");
             expected.add(PDK_TEST_ITEM_PREFIX + diagnostic + ".solution");
         }

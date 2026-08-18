@@ -195,11 +195,26 @@ public final class PdkSchemaDiscoverer implements SchemaDiscoverer {
         return indexes;
     }
 
+    /**
+     * The columns an index names, skipping any part that names none.
+     *
+     * <p>Not every part of an index is a column. A functional index covers an expression over the row —
+     * {@code UNIQUE KEY (user_id, scene, (ifnull(circle_type,'')))} — and the database reports no column
+     * name for that part, because there is no column to name. Carrying the absent name into the model
+     * fails the whole discovery, and it fails it for every table in the database rather than the one
+     * holding the index, so a single ordinary index made an entire source unusable.
+     *
+     * <p>Skipping is right rather than merely safe: these names exist to say what a write could be
+     * keyed by, and an expression is not something a row can be matched on. An index that mixes the two
+     * keeps the columns it does name.
+     */
     private static List<String> indexFieldNames(TapIndex index) {
         List<String> names = new ArrayList<>();
         if (index.getIndexFields() != null) {
             for (TapIndexField field : index.getIndexFields()) {
-                names.add(field.getName());
+                if (field != null && field.getName() != null) {
+                    names.add(field.getName());
+                }
             }
         }
         return names;

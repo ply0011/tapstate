@@ -1658,6 +1658,58 @@ class ReplTest {
         assertThat(h.sink().toString().substring(mark)).doesNotContainIgnoringCase("change capture");
     }
 
+    /**
+     * A refusal that names what is wrong but not what to do leaves the reader stuck. The catalog carries
+     * a solution for the code, and the server sends the named parameters that fill it in, so the remedy
+     * can be rendered here from the same catalog the message came from - and until it is, the most
+     * carefully written half of an error is the half nobody sees.
+     */
+    @Test
+    void aRefusedApplyShowsTheRemedyAndNotOnlyWhatWentWrong(@TempDir Path base) throws Exception {
+        copyWorkspace("/ws-valid", base);
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.applyOutcome = new ApplyOutcome.Rejected("dsl.upsert-needs-key",
+                "The sync at serve.sync upserts table `events` of source `mydb`, but that table declares "
+                        + "no key, so no write can be matched to the row it belongs to.",
+                Map.of("table", "events", "source", "mydb", "path", "serve.sync"));
+        Harness h = onlineSession(base, client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("apply");
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("dsl.upsert-needs-key").contains("declares no key");
+        assertThat(out)
+                .as("the catalog's solution for the code, with its parameters filled in")
+                .contains("Give `events` a primary key")
+                .contains("write_mode: append");
+    }
+
+    /**
+     * The connector API's keys reach the message field too, not only reason and solution - a host/port
+     * check that fails carries {@code check.host.port.fail} as its message. Suppressing keys in two
+     * fields and printing them in the third would put the unreadable one where the eye lands first.
+     */
+    @Test
+    void testRendersOurOwnWordingWhenTheMessageItselfIsADiagnosticKey() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "FAILED",
+                List.of(new ConnectionReport.Check("Check host port is valid", "FAILED",
+                        "check.host.port.fail", "check.host.port.reason", "check.host.port.solution",
+                        null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("did not accept a connection");
+        assertThat(out).doesNotContain("check.host.port.fail");
+    }
+
     @Test
     void testRendersTheReportAsJsonWithTheOutputFlag() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));

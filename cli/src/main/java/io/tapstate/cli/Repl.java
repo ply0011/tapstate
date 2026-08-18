@@ -668,7 +668,8 @@ final class Repl {
                 renderApplyWarnings(applied.warnings());
                 yield Cli.EXIT_OK;
             }
-            case ApplyOutcome.Rejected rejected -> renderRejection(rejected.code(), rejected.message());
+            case ApplyOutcome.Rejected rejected ->
+                    renderRejection(rejected.code(), rejected.message(), rejected.params());
             case ApplyOutcome.Unreachable ignored -> reportRequestFailed();
         };
     }
@@ -1819,8 +1820,12 @@ final class Repl {
         out.println(report.outcome() + "  " + report.connectionId() + " (" + report.connectorId() + ")");
         for (ConnectionReport.Check check : report.checks()) {
             StringBuilder line = new StringBuilder(String.format("  %-7s %s", check.status(), check.name()));
-            if (present(check.message())) {
-                line.append("  ").append(check.message());
+            // The message is resolved the same way as the reason and the solution: the connector API
+            // puts its keys in this field too, and a key printed where the eye lands first is the worst
+            // place of the three to leave one.
+            String headline = readable(check.message());
+            if (headline != null) {
+                line.append("  ").append(headline);
             }
             if (present(check.connectorErrorCode())) {
                 line.append("  [").append(check.connectorErrorCode()).append(']');
@@ -2397,11 +2402,31 @@ final class Repl {
 
     /** Renders a coded server refusal: the {@code code} (when present) then the rendered message, to err. */
     private int renderRejection(String code, String message) {
+        return renderRejection(code, message, Map.of());
+    }
+
+    /**
+     * Reports a refused command: the code, the message the server rendered, and — where the catalog has
+     * one for that code — the remedy.
+     *
+     * <p>The message says what is wrong; the solution says what to do about it, and the second is the
+     * half a reader is actually looking for. Both live in the same catalog entry, but only the message
+     * arrives rendered, so the remedy is rendered here from the code and the parameters the refusal
+     * carried. A code with no solution, or a refusal that carried no parameters to fill one in, simply
+     * prints as it did before.
+     */
+    private int renderRejection(String code, String message, Map<String, Object> params) {
         PrintWriter err = commandLine.getErr();
         if (!code.isBlank()) {
             err.println(Ansi.AUTO.string("@|bold,red error:|@") + " " + code);
         }
         err.println("  " + message);
+        if (!code.isBlank()) {
+            String solution = MessageCatalog.bundled().render(code, params).solution();
+            if (present(solution)) {
+                err.println("  " + solution);
+            }
+        }
         err.flush();
         return Cli.EXIT_DIAGNOSTIC;
     }

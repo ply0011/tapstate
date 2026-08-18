@@ -434,6 +434,27 @@ final class Synthetic {
                 + "}";
     }
 
+    /**
+     * A connector reporting an index one of whose parts names no column, the way a real database
+     * describes a functional index: the part is an expression over the row rather than a column, so
+     * there is no column name to give and the driver reports none. A composite index mixing the two is
+     * the ordinary shape - {@code UNIQUE KEY (user_id, scene, (ifnull(circle_type,'')))}.
+     */
+    static Path functionalIndexSource(Path dir) {
+        String body = ""
+                + "TapTable table = new TapTable(\"orders\");"
+                + "table.add(new TapField(\"id\", \"int\").isPrimaryKey(true).primaryKeyPos(1));"
+                + "table.add(new TapField(\"amount\", \"decimal\"));"
+                + "table.add(new TapIndex().name(\"uq_mixed\").unique(true)"
+                + "    .indexField(new TapIndexField().name(\"amount\").fieldAsc(true))"
+                + "    .indexField(new TapIndexField().fieldAsc(true)));"
+                + "List<TapTable> tables = new ArrayList<>();"
+                + "tables.add(table);"
+                + "s.accept(tables);";
+        return SyntheticJar.compileToJar(dir, "synthetic.FunctionalIndex",
+                discoverSource("FunctionalIndex", body));
+    }
+
     /** The one-table discoverSchema body the discovery fixtures share. */
     private static final String ORDERS_TABLE = ""
             + "TapTable table = new TapTable(\"orders\");"
