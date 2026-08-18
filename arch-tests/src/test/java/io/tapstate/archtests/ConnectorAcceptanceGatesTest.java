@@ -5,6 +5,7 @@ import io.tapstate.app.ConnectorPluginProperties;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -76,8 +77,13 @@ class ConnectorAcceptanceGatesTest {
             "deploy/quickstart/quickstart.sh",
             "docs/quickstart-online.md");
 
-    /** Directories that are neither shipped nor written by hand. */
-    private static final Set<String> PRUNED = Set.of(".git", "target", "node_modules");
+    /**
+     * Directories that are neither shipped nor written by hand: version-control internals, build output,
+     * fetched dependencies, and the tool directory a session's own worktree is created under. The last
+     * one holds a whole second copy of this repository, so walking it turns every shipped file into a
+     * second reading of itself at a path nothing else accounts for.
+     */
+    private static final Set<String> PRUNED = Set.of(".git", "target", "node_modules", ".claude");
 
     @Test
     @DisplayName("the accepted connector set ships closed - nothing a release carries widens it")
@@ -144,6 +150,34 @@ class ConnectorAcceptanceGatesTest {
                 .as("this gate asserts an absence, so a scan that reached nothing would pass exactly like "
                         + "a scan that found nothing - it has to be pinned to files that really exist")
                 .containsAll(MUST_BE_SCANNED);
+    }
+
+    @Test
+    @DisplayName("a second copy of the repository under a tool directory is not scanned")
+    void aNestedCheckoutIsNotScanned(@TempDir Path root) throws IOException {
+        // Working each session in its own worktree is this repository's own rule, and the tool that makes
+        // them puts every one under .claude/worktrees - a whole second copy of the repository, inside the
+        // tree this scan walks. Every file in that copy reads as shipped, the declaration among them, and
+        // the declaration's copy is not at the path the skip compares against. So the gate accuses it: the
+        // most alarming thing this gate can say, said about a working tree that is doing exactly what the
+        // project asks for, on a machine where nothing is wrong. CI has no worktrees, so it stays green
+        // there and the reading lands only on whoever is following the rule.
+        //
+        // The real file is written beside it rather than left out, because "nothing was flagged" and
+        // "nothing was walked" are the same green - the pruning has to be shown to skip one thing while
+        // still reaching another.
+        Path nested = root.resolve(".claude/worktrees/a-session/app/src/main/java/io/tapstate/app");
+        Files.createDirectories(nested);
+        Files.writeString(nested.resolve("ConnectorPluginProperties.java"), "private List<String> alsoAcceptIds;");
+        Path shipped = root.resolve("app/src/main/java/io/tapstate/app");
+        Files.createDirectories(shipped);
+        Files.writeString(shipped.resolve("Real.java"), "// a file the walk must still reach");
+
+        assertThat(shippedFiles(root).stream().map(file -> relative(root, file)).toList())
+                .as("a copy of the repository under a tool-managed directory is not something a release "
+                        + "carries, so walking into it can only produce accusations about files that are "
+                        + "already accounted for at their real paths")
+                .containsExactly("app/src/main/java/io/tapstate/app/Real.java");
     }
 
     @Test
@@ -235,9 +269,18 @@ class ConnectorAcceptanceGatesTest {
 
     /** Everything a release carries or a user reads: shipped sources, deployment assets, documentation. */
     private static List<Path> shippedFiles() {
+        return shippedFiles(REPOSITORY);
+    }
+
+    /**
+     * The same walk over a named root. The root is a parameter only so that what the walk refuses to
+     * enter can be witnessed over a tree a test builds - pruning is the half of this scan that fails
+     * silently, by widening rather than by narrowing.
+     */
+    private static List<Path> shippedFiles(Path root) {
         List<Path> files = new ArrayList<>();
         try {
-            Files.walkFileTree(REPOSITORY, new SimpleFileVisitor<>() {
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
                     return PRUNED.contains(directory.getFileName().toString())
@@ -247,14 +290,14 @@ class ConnectorAcceptanceGatesTest {
 
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
-                    if (isShipped(relative(file))) {
+                    if (isShipped(relative(root, file))) {
                         files.add(file);
                     }
                     return FileVisitResult.CONTINUE;
                 }
             });
         } catch (IOException e) {
-            throw new UncheckedIOException("walking the repository at " + REPOSITORY, e);
+            throw new UncheckedIOException("walking the repository at " + root, e);
         }
         return files;
     }
@@ -267,7 +310,11 @@ class ConnectorAcceptanceGatesTest {
     }
 
     private static String relative(Path file) {
-        return REPOSITORY.relativize(file).toString().replace('\\', '/');
+        return relative(REPOSITORY, file);
+    }
+
+    private static String relative(Path root, Path file) {
+        return root.relativize(file).toString().replace('\\', '/');
     }
 
     /**
