@@ -112,6 +112,34 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.TableAware", source("TableAware", "", register));
     }
 
+    /**
+     * A source whose streamRead reads what it was asked to watch by walking the context's table map
+     * rather than asking for one name at a time, emitting one row per entry carrying that entry's name
+     * and column count. A connector expands a partitioned table into its children this way, at the start
+     * of the stream and before any change is decoded. A table map that answers only lookup cannot be
+     * walked at all, so a drive through one fails outright rather than yielding fewer rows.
+     */
+    static Path tableMapIteratingStreamSource(Path dir) {
+        String register = ""
+                + "functions.supportStreamRead((context, tables, offset, size, consumer) -> {"
+                + "  consumer.streamReadStarted();"
+                + "  io.tapdata.entity.utils.cache.Iterator<io.tapdata.entity.utils.cache.Entry<TapTable>>"
+                + "      entries = context.getTableMap().iterator();"
+                + "  List<TapEvent> evs = new ArrayList<>();"
+                + "  while (entries.hasNext()) {"
+                + "    io.tapdata.entity.utils.cache.Entry<TapTable> entry = entries.next();"
+                + "    Map<String,Object> r = new LinkedHashMap<>();"
+                + "    r.put(\"name\", entry.getKey());"
+                + "    r.put(\"columns\", entry.getValue().getNameFieldMap().size());"
+                + "    evs.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(r));"
+                + "  }"
+                + "  consumer.accept(evs, null);"
+                + "  consumer.streamReadEnded();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.TableMapIteratingStream",
+                source("TableMapIteratingStream", "", register));
+    }
+
     /** A connector whose constructor throws — instantiation fails, a load failure. */
     static Path ctorThrowsSource(Path dir) {
         return SyntheticJar.compileToJar(dir, "synthetic.CtorThrows",
