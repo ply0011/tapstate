@@ -248,8 +248,19 @@ main() {
     # Drive the online verbs through the REPL, feeding the password on stdin (the login prompt reads the
     # next line) so it is never a process argument or a shell-history entry. Workspace paths resolve
     # against work/, so the jars beside it are ../<jar>.
+    #
+    # Three steps, and each one is load-bearing. A row expression is judged against the columns its
+    # source actually holds, so the pipeline below -- whose `label` field reads one -- is refused
+    # until db_src has a discovered schema. A single `apply` over the whole workspace cannot get
+    # there: it is atomic, so that one refusal takes the sources down with it and leaves nothing to
+    # discover. Hence sources first, then discovery.
+    #
+    # The third step is the whole workspace again, not `apply pipeline`. A path narrows what is read,
+    # not what must resolve, so applying the pipeline directory alone leaves its `source: db_src`
+    # pointing outside the set and it is refused for a dangling reference instead. Re-applying the
+    # sources is free; naming them is what makes the pipeline's references resolvable.
     admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
-    printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\napply\ndiscover-schema db_src\nstart sync_orders\nexit\n' "$admin_pw" \
+    printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\napply source\ndiscover-schema db_src\napply\nstart sync_orders\nexit\n' "$admin_pw" \
         | ./tapstate -w work
 
     # Snapshot verification, printed automatically: the demo's payoff is a real row count in the target,
