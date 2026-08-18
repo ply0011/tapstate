@@ -47,6 +47,11 @@ final class RecordingDataBrowser implements DataBrowser {
         return new RecordingDataBrowser(null, null, preview);
     }
 
+    /** A browser primed only for follows, which hand back a handle rather than a fixed answer. */
+    static RecordingDataBrowser following() {
+        return new RecordingDataBrowser(null, null, null);
+    }
+
     @Override
     public List<String> collections(ConnectionConfig config) {
         drivenWith = config;
