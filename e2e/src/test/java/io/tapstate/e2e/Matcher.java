@@ -48,6 +48,33 @@ public sealed interface Matcher {
      */
     record FailureCode(String expected) implements Matcher {}
 
+    /**
+     * How many changes the pipeline this specification names could never place in a document, added up over
+     * every namespace of it, read from its metrics face. Written as one number rather than keyed by
+     * namespace: a namespace name is derived from the pipeline and an embed path inside it, so naming one
+     * here would be an internal name for an author to copy by hand and to rewrite whenever a step is renamed.
+     */
+    record DeadLettered(long expected) implements Matcher {}
+
+    /**
+     * One document at an endpoint: located by the equality settings in {@code where}, held to scalar
+     * values by path in {@code expect} and to list lengths by path in {@code size}. Paths read
+     * {@code a.b} for a field of a field and {@code items[0].sku} for a field of a list element.
+     * Identity is spelled {@code id} whatever the store calls it; the driver owns that spelling.
+     */
+    record Doc(
+            TableAlias table,
+            Map<String, Object> where,
+            Map<String, Object> expect,
+            Map<String, Long> size)
+            implements Matcher {
+        public Doc {
+            where = Collections.unmodifiableMap(new LinkedHashMap<>(where));
+            expect = Collections.unmodifiableMap(new LinkedHashMap<>(expect));
+            size = Collections.unmodifiableMap(new LinkedHashMap<>(size));
+        }
+    }
+
     static Matcher count(TableAlias table, long rows) {
         return new Count(Map.of(table, rows));
     }
@@ -62,5 +89,9 @@ public sealed interface Matcher {
 
     static Matcher failureCode(String expected) {
         return new FailureCode(expected);
+    }
+
+    static Matcher deadLettered(long expected) {
+        return new DeadLettered(expected);
     }
 }
