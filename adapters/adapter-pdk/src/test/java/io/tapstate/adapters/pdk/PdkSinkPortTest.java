@@ -8,6 +8,7 @@ import io.tapstate.spi.sink.SinkWriter;
 import io.tapstate.spi.sink.TargetField;
 import io.tapstate.spi.sink.TargetTable;
 import io.tapstate.spi.sink.WriteMode;
+import io.tapstate.spi.sink.TargetIndex;
 import io.tapstate.spi.sink.WriteResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,6 +47,72 @@ class PdkSinkPortTest {
     private static TargetTable target() {
         return new TargetTable("t1",
                 List.of(new TargetField("id", "int", true), new TargetField("v", "int", false)));
+    }
+
+    /** A writer assembled the way the port assembles one, with an index function of the test's own. */
+    private static PdkSinkWriter writerWith(Path jar, Map<String, TargetTable> targets,
+            io.tapdata.pdk.apis.functions.connector.target.CreateIndexFunction createIndex) throws Throwable {
+        PdkConnector connector = PdkConnector.open("demo", provisioner(jar, "synthetic.CountingSink").resolve("demo"), Map.of());
+        var write = connector.functions().getWriteRecordFunction();
+        connector.underLoader(() -> {
+            connector.connector().init(connector.context());
+            return null;
+        });
+        return new PdkSinkWriter(connector, write, WriteMode.UPSERT, DdlPolicy.FAIL, targets, createIndex);
+    }
+
+    private static TargetTable indexed(String collection) {
+        return new TargetTable(collection,
+                List.of(new TargetField("id", "int", true)),
+                List.of(new TargetIndex(List.of("id"), true)));
+    }
+
+    /**
+     * The create-index request goes out once per table, not once per stream. A view maps many streams
+     * onto one collection - the writer's target map then holds several entries all naming it - and a
+     * memo keyed by the delivering stream would send the same request once per stream, never deduping
+     * across them.
+     */
+    @Test
+    void theIndexRequestIsIssuedOncePerTableNotOncePerStream(@TempDir Path dir) throws Throwable {
+        Path jar = Synthetic.countingSink(dir);
+        AtomicInteger requests = new AtomicInteger();
+        Map<String, TargetTable> streams =
+                Map.of("orders", indexed("order_state"), "order_doc", indexed("order_state"));
+        try (SinkWriter writer = writerWith(jar, streams, (context, table, event) -> requests.incrementAndGet())) {
+            await(writer, List.of(Envelope.insert(1L, "orders", Map.of("id", 1), null)));
+            await(writer, List.of(Envelope.insert(2L, "order_doc", Map.of("id", 2), null)));
+        }
+        assertThat(requests.get())
+                .as("create-index requests for two streams sharing one collection")
+                .isEqualTo(1);
+    }
+
+    /**
+     * A failed index creation is retried on the next batch rather than remembered as done. Memoized
+     * before the call, the first failure would be recorded as success and the collection would live on
+     * without the indexes it declared - silently, since the write itself proceeds fine afterwards.
+     */
+    @Test
+    void aFailedIndexCreationIsRetriedOnTheNextBatch(@TempDir Path dir) throws Throwable {
+        Path jar = Synthetic.countingSink(dir);
+        AtomicInteger requests = new AtomicInteger();
+        io.tapdata.pdk.apis.functions.connector.target.CreateIndexFunction failsOnce =
+                (context, table, event) -> {
+                    if (requests.incrementAndGet() == 1) {
+                        throw new IllegalStateException("the store was not ready");
+                    }
+                };
+        try (SinkWriter writer = writerWith(jar, Map.of("orders", indexed("order_state")), failsOnce)) {
+            assertThatThrownBy(() -> await(writer, List.of(Envelope.insert(1L, "orders", Map.of("id", 1), null))))
+                    .isInstanceOf(ExecutionException.class)
+                    .hasCauseInstanceOf(TapstateException.class);
+            assertThat(await(writer, List.of(Envelope.insert(2L, "orders", Map.of("id", 2), null))).written())
+                    .isEqualTo(1);
+        }
+        assertThat(requests.get())
+                .as("the second batch retried the creation instead of trusting the failed first")
+                .isEqualTo(2);
     }
 
     private static WriteResult await(SinkWriter writer, List<Envelope> records) throws Exception {
