@@ -29,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class HttpControlPlaneClientDataBrowserTest {
 
     private HttpServer server;
+    private HttpControlPlaneClient client;
     private volatile String method;
     private volatile String rawPath;
     private volatile String authorization;
@@ -53,10 +54,14 @@ class HttpControlPlaneClientDataBrowserTest {
             exchange.close();
         });
         server.start();
+        client = new HttpControlPlaneClient();
     }
 
     @AfterEach
-    void stopServer() {
+    void stopServerAndClient() {
+        // The client holds an HTTP client and its executor. Ten of these left open per run is a leak
+        // the sibling test in this package already avoids by wrapping the same type.
+        client.close();
         server.stop(0);
     }
 
@@ -82,7 +87,7 @@ class HttpControlPlaneClientDataBrowserTest {
                 + "{\"kind\":\"view\"},{\"name\":\"orders\"}]}");
 
         DataBrowserOutcome.Collections outcome =
-                new HttpControlPlaneClient().collections(base(), "tok", "views");
+                client.collections(base(), "tok", "views");
 
         assertThat(outcome).isEqualTo(
                 new DataBrowserOutcome.Collections.Listed(List.of("order_state", "orders")));
@@ -95,7 +100,7 @@ class HttpControlPlaneClientDataBrowserTest {
     void doesNotReadAnAnswerItCannotRecogniseAsASourceWithNoCollections() {
         serverAnswers(200, "{\"items\":[]}");
 
-        assertThat(new HttpControlPlaneClient().collections(base(), "tok", "views"))
+        assertThat(client.collections(base(), "tok", "views"))
                 .as("an empty listing states as fact that the source holds nothing; an answer this "
                         + "shell did not understand is not that fact")
                 .isEqualTo(new DataBrowserOutcome.Collections.Unreachable());
@@ -106,7 +111,7 @@ class HttpControlPlaneClientDataBrowserTest {
         serverAnswers(404, "{\"code\":\"data-browser.unknown-collection\","
                 + "\"message\":\"no collection named orders\"}");
 
-        assertThat(new HttpControlPlaneClient().collections(base(), "tok", "views"))
+        assertThat(client.collections(base(), "tok", "views"))
                 .isEqualTo(new DataBrowserOutcome.Collections.Rejected(
                         "data-browser.unknown-collection", "no collection named orders"));
     }
@@ -117,7 +122,7 @@ class HttpControlPlaneClientDataBrowserTest {
         // first as the second states it as fact.
         serverAnswers(200, "{\"numOfRows\":0,\"avgObjSize\":128}");
 
-        assertThat(new HttpControlPlaneClient().stats(base(), "tok", "views", "order_state"))
+        assertThat(client.stats(base(), "tok", "views", "order_state"))
                 .isEqualTo(new DataBrowserOutcome.Stats.Reported(0L, null, 128L));
         assertThat(rawPath).isEqualTo("/api/sources/views/collections/order_state/stats");
     }
@@ -126,7 +131,7 @@ class HttpControlPlaneClientDataBrowserTest {
     void doesNotReadAnAnswerThatIsNotAReportAsAReport() {
         serverAnswers(200, "[]");
 
-        assertThat(new HttpControlPlaneClient().stats(base(), "tok", "views", "order_state"))
+        assertThat(client.stats(base(), "tok", "views", "order_state"))
                 .isEqualTo(new DataBrowserOutcome.Stats.Unreachable());
     }
 
@@ -136,7 +141,7 @@ class HttpControlPlaneClientDataBrowserTest {
         // database. Sending a null under the key instead says something else to the face reading it.
         serverAnswers(200, "{\"rows\":[],\"moreAvailable\":false}");
 
-        new HttpControlPlaneClient().find(base(), "tok", "views", "order_state", null, null, null);
+        client.find(base(), "tok", "views", "order_state", null, null, null);
 
         assertThat(method).isEqualTo("POST");
         assertThat(rawPath).isEqualTo("/api/sources/views/collections/order_state:find");
@@ -147,7 +152,7 @@ class HttpControlPlaneClientDataBrowserTest {
     void sendsTheFilterOrderAndSizeItWasGiven() {
         serverAnswers(200, "{\"rows\":[],\"moreAvailable\":false}");
 
-        new HttpControlPlaneClient().find(base(), "tok", "views", "order_state",
+        client.find(base(), "tok", "views", "order_state",
                 Map.of("field", "status", "op", "eq", "value", "paid"),
                 new DataBrowserCall.Order("total", "desc"), 25);
 
@@ -162,7 +167,7 @@ class HttpControlPlaneClientDataBrowserTest {
         serverAnswers(200, "{\"rows\":[{\"order_id\":\"ord_1\"}],"
                 + "\"approximateTotal\":42,\"moreAvailable\":true}");
 
-        assertThat(new HttpControlPlaneClient()
+        assertThat(client
                 .find(base(), "tok", "views", "order_state", null, null, null))
                 .isEqualTo(new DataBrowserOutcome.Find.Read(
                         List.of(Map.of("order_id", "ord_1")), 42L, true));
@@ -174,7 +179,7 @@ class HttpControlPlaneClientDataBrowserTest {
         // is the one thing this field is carried to prevent.
         serverAnswers(200, "{\"rows\":[{\"order_id\":\"ord_1\"}]}");
 
-        assertThat(new HttpControlPlaneClient()
+        assertThat(client
                 .find(base(), "tok", "views", "order_state", null, null, null))
                 .isEqualTo(new DataBrowserOutcome.Find.Unreachable());
     }
@@ -185,7 +190,7 @@ class HttpControlPlaneClientDataBrowserTest {
         // looking for a collection nobody named and answer, correctly, that there is no such thing.
         serverAnswers(200, "{\"numOfRows\":1}");
 
-        new HttpControlPlaneClient().stats(base(), "tok", "views", "order state");
+        client.stats(base(), "tok", "views", "order state");
 
         assertThat(rawPath).isEqualTo("/api/sources/views/collections/order%20state/stats");
     }
