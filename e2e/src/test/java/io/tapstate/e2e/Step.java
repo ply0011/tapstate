@@ -2,6 +2,9 @@ package io.tapstate.e2e;
 
 import io.tapstate.core.lifecycle.LifecycleVerb;
 
+import java.util.List;
+import java.util.Map;
+
 /**
  * One stage of a specification. Steps run in declaration order; the order is the scenario.
  *
@@ -19,7 +22,53 @@ public sealed interface Step {
     record Lifecycle(LifecycleVerb verb) implements Step {}
 
     /** Produces changes against a seeded table while the pipeline is running. */
-    record Cdc(TableAlias table, CdcOp op, long rows) implements Step {}
+    record Cdc(TableAlias table, Change change) implements Step {}
+
+    /**
+     * What one cdc step does to the table it names. Two shapes, and the difference is whether the
+     * specification decides which rows move.
+     *
+     * <p>{@link Generated} asks for a number of changes and leaves the rest to the driver, which is
+     * enough whenever the case is about a count arriving. {@link Update} and {@link Delete} name the
+     * row and, for an update, the value - which is what a case about an assembled document needs,
+     * because the thing it has to read back is a field, not a total. A count is satisfied by changing
+     * any row; only a named row and a named value can hold an implementation to changing the right one.
+     *
+     * <p>{@link Insert} arrived later than the other two, when a witness needed it: an assembly has to be
+     * seeded by value, because a child row without its join key belongs to no parent, and a table seeded
+     * that way refuses a generated insert - that form writes the {@code (id, seq)} shape. Adding a row
+     * upstream of an assembly was therefore not expressible at all until this existed.
+     */
+    sealed interface Change {
+
+        /** A number of changes of one kind, with the driver choosing which rows move. */
+        record Generated(CdcOp op, long rows) implements Change {}
+
+        /** Sets columns on the one row the settings locate. */
+        record Update(Map<String, Object> where, Map<String, Object> set) implements Change {
+
+            public Update {
+                where = Map.copyOf(where);
+                set = Map.copyOf(set);
+            }
+        }
+
+        /** Removes the one row the settings locate. */
+        record Delete(Map<String, Object> where) implements Change {
+
+            public Delete {
+                where = Map.copyOf(where);
+            }
+        }
+
+        /** Adds the given rows, spelled the way a seed spells them: columns and values, nothing derived. */
+        record Insert(List<Map<String, Object>> values) implements Change {
+
+            public Insert {
+                values = List.copyOf(values);
+            }
+        }
+    }
 
     /** Polls a matcher until it holds or the bound expires. */
     record Await(Matcher matcher) implements Step {}

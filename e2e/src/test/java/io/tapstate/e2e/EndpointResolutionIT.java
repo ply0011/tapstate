@@ -166,6 +166,22 @@ class EndpointResolutionIT {
         }
 
         @Override
+        public void update(
+                EndpointAddress address, String table, Map<String, Object> where, Map<String, Object> set) {
+            dialled = address;
+        }
+
+        @Override
+        public void delete(EndpointAddress address, String table, Map<String, Object> where) {
+            dialled = address;
+        }
+
+        @Override
+        public void insert(EndpointAddress address, String table, java.util.List<Map<String, Object>> rows) {
+            dialled = address;
+        }
+
+        @Override
         public long count(EndpointAddress address, String table) {
             dialled = address;
             return 0L;

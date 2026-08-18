@@ -1,0 +1,60 @@
+# A child row is added after the document is assembled, and the array inside the document gains it. The
+# third direction of the same claim: one sibling proves scattered rows become a document, one proves a
+# parent's column keeps following it, one proves a deleted child leaves - and this one proves an arriving
+# child is placed on a document that already exists.
+#
+# It is the direction that was inexpressible longest. An assembly has to be seeded by value, because a
+# child row without its join key belongs to no parent - and a table seeded that way refuses the generated
+# insert, which writes the (id, seq) shape and nothing else. So adding a row upstream of an assembly
+# could not be said at all until a valued insert existed.
+#
+# What the assertions have to discriminate:
+#
+# - Counting sees none of it. Adding a child adds no document, so the two documents a count expects are
+#   there before and after, and an implementation that assembles once at start-up and never rewrites
+#   holds that count forever while the array stays at two. The assertion is on the array's length.
+#
+# - Length alone would be satisfied by placing the new child on any document, so the second root is held
+#   to the size it started with: the arriving row names one parent, and a placement that ignored the join
+#   key would show up there and nowhere else.
+#
+# - The parent's own column is read back beside the array, so an implementation answering an arriving
+#   child by rebuilding the document from that child alone - losing the scalars - fails rather than
+#   passing on a document that has the right number of elements and nothing else right.
+#
+# - The first assertion is the control: it holds the array at two before the row is added, so a run where
+#   the insert never reached the source cannot be mistaken for a run where the product placed it.
+#
+# The order of elements inside the array is deliberately not asserted, for the reason its siblings give:
+# a snapshot read is free to return child rows in any order, and what this example is about is that the
+# new element is there, not where it sits.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips this
+# example, naming a directory whose jars do not resolve fails it.
+name: a-child-row-is-added-and-the-assembled-document-grows
+setup:
+  databases:
+    src: { kind: mysql }
+    store: { kind: mongo }
+  connectors: [mysql, mongodb]
+  apply: [src_grow_orders.tap.yml, src_grow_items.tap.yml, views.tap.yml, pipeline.tap.yml]
+  discover: [src_grow_orders, src_grow_items]
+pipeline: pipeline.tap.yml
+seed:
+  src_grow_orders.grow_orders:
+    values:
+      - { id: 1, customer: ada }
+      - { id: 2, customer: grace }
+  src_grow_items.grow_items:
+    values:
+      - { id: 1, order_id: 1, sku: sku-1 }
+      - { id: 2, order_id: 1, sku: sku-2 }
+      - { id: 3, order_id: 2, sku: sku-3 }
+steps:
+  - start
+  - await: { count: { views.grow_state: 2 } }
+  - await: { doc: { views.grow_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 2 } } } }
+  - cdc: { src_grow_items.grow_items: { insert: { values: [ { id: 4, order_id: 1, sku: sku-4 } ] } } }
+  - await: { doc: { views.grow_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
+  - assert: { doc: { views.grow_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
+  - assert: { count: { views.grow_state: 2 } }

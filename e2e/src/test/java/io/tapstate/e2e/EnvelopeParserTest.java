@@ -4,6 +4,9 @@ import io.tapstate.core.lifecycle.LifecycleVerb;
 import io.tapstate.core.lifecycle.PipelineState;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.entry;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -102,7 +105,7 @@ class EnvelopeParserTest {
                 .containsExactly(
                         new Step.Lifecycle(LifecycleVerb.START),
                         new Step.Await(Matcher.count(new TableAlias("tgt_mongo", "orders"), 100L)),
-                        new Step.Cdc(new TableAlias("src_mongo", "orders"), CdcOp.INSERT, 10L),
+                        new Step.Cdc(new TableAlias("src_mongo", "orders"), new Step.Change.Generated(CdcOp.INSERT, 10L)),
                         new Step.Await(Matcher.count(new TableAlias("tgt_mongo", "orders"), 110L)),
                         new Step.Lifecycle(LifecycleVerb.STOP),
                         new Step.Lifecycle(LifecycleVerb.START),
@@ -317,11 +320,80 @@ class EnvelopeParserTest {
     }
 
     @Test
+    void readsAnUpdateThatNamesTheRowAndTheNewValue() {
+        Envelope envelope = EnvelopeParser.parse(
+                minimal("steps:\n  - cdc: { t.o: { update: { where: { id: 1 }, set: { customer: bob } } } }\n"));
+
+        assertThat(envelope.steps())
+                .containsExactly(
+                        new Step.Cdc(
+                                new TableAlias("t", "o"),
+                                new Step.Change.Update(Map.of("id", 1), Map.of("customer", "bob"))));
+    }
+
+    @Test
+    void readsADeleteThatNamesTheRow() {
+        Envelope envelope =
+                EnvelopeParser.parse(minimal("steps:\n  - cdc: { t.o: { delete: { where: { id: 3 } } } }\n"));
+
+        assertThat(envelope.steps())
+                .containsExactly(
+                        new Step.Cdc(new TableAlias("t", "o"), new Step.Change.Delete(Map.of("id", 3))));
+    }
+
+    @Test
+    void refusesAValuedChangeThatLocatesNoRow() {
+        assertThatThrownBy(
+                        () ->
+                                EnvelopeParser.parse(
+                                        minimal("steps:\n  - cdc: { t.o: { update: { set: { customer: bob } } } }\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("where");
+    }
+
+    @Test
+    void refusesAnUpdateThatNamesNoNewValue() {
+        assertThatThrownBy(
+                        () ->
+                                EnvelopeParser.parse(
+                                        minimal("steps:\n  - cdc: { t.o: { update: { where: { id: 1 } } } }\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("set");
+    }
+
+    @Test
+    void readsAnInsertThatNamesTheRowsItAdds() {
+        Envelope envelope = EnvelopeParser.parse(minimal(
+                "steps:\n  - cdc: { t.o: { insert: { values: [ { id: 9, customer: ada } ] } } }\n"));
+
+        assertThat(envelope.steps())
+                .containsExactly(
+                        new Step.Cdc(
+                                new TableAlias("t", "o"),
+                                new Step.Change.Insert(List.of(Map.of("id", 9, "customer", "ada")))));
+    }
+
+    /**
+     * A nest example has to seed by value, because a child row without its join key belongs to no parent -
+     * and a table seeded that way cannot take a generated insert, which is the {@code (id, seq)} shape.
+     * Without a valued insert there is therefore no way at all to add a row upstream of an assembly.
+     */
+    @Test
+    void refusesAnInsertThatNamesNoRows() {
+        assertThatThrownBy(
+                        () ->
+                                EnvelopeParser.parse(
+                                        minimal("steps:\n  - cdc: { t.o: { insert: { values: [] } } }\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("values");
+    }
+
+    @Test
     void readsACdcRowCountBeyondIntRange() {
         Envelope envelope = EnvelopeParser.parse(minimal("steps:\n  - cdc: { t.o: insert 5000000000 }\n"));
 
         assertThat(envelope.steps())
-                .containsExactly(new Step.Cdc(new TableAlias("t", "o"), CdcOp.INSERT, 5_000_000_000L));
+                .containsExactly(new Step.Cdc(new TableAlias("t", "o"), new Step.Change.Generated(CdcOp.INSERT, 5_000_000_000L)));
     }
 
     @Test

@@ -14,12 +14,19 @@ import java.util.List;
  *
  * <p>Serializable so a resolved model travels with the sink factory the engine ships onto the DAG.
  */
-public record TargetTable(String name, List<TargetField> fields) implements Serializable {
+public record TargetTable(String name, List<TargetField> fields, List<TargetIndex> indexes)
+        implements Serializable {
 
     public TargetTable {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("target table name must be non-blank");
         }
         fields = fields == null ? List.of() : List.copyOf(fields);
+        indexes = indexes == null ? List.of() : List.copyOf(indexes);
+    }
+
+    /** A target whose structure carries no indexes of its own - the shape a plain table write resolves to. */
+    public TargetTable(String name, List<TargetField> fields) {
+        this(name, fields, List.of());
     }
 }
