@@ -108,4 +108,19 @@ class ViewTargetResolverTest {
                 new TargetIndex(List.of("order_id"), true),
                 new TargetIndex(List.of("customer_id"), false));
     }
+
+    @Test
+    void a_declared_index_naming_the_key_column_does_not_duplicate_the_key_index() {
+        // An author listing the key under storage.warm.indexes is redundancy, not a second index: two
+        // definitions over the one field - one unique, one not - is a shape a store may refuse outright.
+        ViewTargetResolver.ViewTarget target = ViewTargetResolver.resolve(new ViewBlock.Inline(
+                "order_state", FromRef.literal("orders"), "id",
+                new Storage(null, new Storage.Warm("order_state", List.of("id", "name")), null), null));
+
+        assertThat(target.indexes())
+                .as("one definition per field, the key's unique one winning")
+                .containsExactly(
+                        new TargetIndex(List.of("id"), true),
+                        new TargetIndex(List.of("name"), false));
+    }
 }

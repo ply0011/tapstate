@@ -66,7 +66,32 @@ enum ActuationError implements TapstateErrorCode {
      * A pipeline declares a view but the managed state store it materializes into is not configured;
      * {@code store} is the source id expected to supply it.
      */
-    VIEW_STORE_NOT_CONFIGURED("actuation.view-store-not-configured", Set.of("store"));
+    VIEW_STORE_NOT_CONFIGURED("actuation.view-store-not-configured", Set.of("store")),
+
+    /**
+     * A view's declared key is not the key its assembled feed converges on; {@code view} is its id,
+     * {@code key} the view's key, {@code rootKey} the assembly's. The sink upserts on the view's key
+     * and indexes it uniquely, so assembled roots that differ only on the columns the view's key
+     * leaves out would silently replace each other. Refused where the pipeline is built, because at
+     * write time the loss is invisible: right collection, right count on any single snapshot.
+     */
+    VIEW_KEY_NOT_ROOT_KEY("actuation.view-key-not-root-key", Set.of("view", "key", "rootKey")),
+
+    /**
+     * A view is fed by more than one stream with no assembly collapsing them; {@code view} is its id,
+     * {@code tables} the streams. Every stream is upserted into the one collection on the one view
+     * key, so rows from different tables sharing a key value would take turns overwriting the same
+     * document.
+     */
+    VIEW_FED_BY_MANY_TABLES("actuation.view-fed-by-many-tables", Set.of("view", "tables")),
+
+    /**
+     * The resource resolved under the managed state store's id declares capture settings, so it is an
+     * authored source rather than the deployment's store; {@code store} is the id. Refused rather than
+     * written into: the store is resolved by its id alone, and materializing a view into a database an
+     * author is capturing from writes into one the deployment does not own.
+     */
+    VIEW_STORE_IS_A_CAPTURE_SOURCE("actuation.view-store-is-a-capture-source", Set.of("store"));
 
     private final String code;
     private final Set<String> placeholders;

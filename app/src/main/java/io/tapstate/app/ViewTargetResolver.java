@@ -83,7 +83,11 @@ final class ViewTargetResolver {
         indexes.add(new TargetIndex(List.of(view.primaryKey()), true));
         if (warm != null && warm.indexes() != null) {
             for (String field : warm.indexes()) {
-                indexes.add(new TargetIndex(List.of(field), false));
+                // The key already carries its unique index; a declared duplicate would hand the store
+                // two definitions over one field, which it may refuse outright.
+                if (!field.equals(view.primaryKey())) {
+                    indexes.add(new TargetIndex(List.of(field), false));
+                }
             }
         }
         return new ViewTarget(STATE_STORE_SOURCE_ID, collection, view.primaryKey(), indexes);

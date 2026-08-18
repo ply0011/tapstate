@@ -43,6 +43,7 @@ import io.tapstate.spi.store.StorePort;
 import io.tapstate.spi.transform.TransformPort;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -344,7 +345,7 @@ final class StoreBackedDagSource implements DagSource {
                 element -> sinkWriter(element, targets, servedTables),
                 ref -> upstreams(ref, sourceKeyByTable, sourceKeysById, sourceVertices, stepIds),
                 sourceKeysById::get,
-                view -> viewSink(view, targets, servedTables),
+                view -> viewSink(pipeline, view, targets, servedTables, sourceKeysById),
                 nestBinding(pipeline, sourceIdByTable(sourceVertices)));
     }
 
@@ -359,11 +360,13 @@ final class StoreBackedDagSource implements DagSource {
      * target may be created, so refusing to drift costs the materialization nothing.
      */
     private SupplierEx<? extends SinkWriter> viewSink(
-            ViewBlock view, Map<String, TargetTable> targets, Set<String> servedTables) {
+            PipelineResource pipeline, ViewBlock view, Map<String, TargetTable> targets,
+            Set<String> servedTables, Map<String, List<String>> tablesBySourceId) {
         if (!(view instanceof ViewBlock.Inline inline)) {
             throw new IllegalArgumentException(
                     "view block is a use-reference; resolve it to an inline view first");
         }
+        requireKeyIsTheFeedIdentity(pipeline, inline, tablesBySourceId);
         ViewTargetResolver.ViewTarget target = ViewTargetResolver.resolve(inline);
         // Coded rather than bare, unlike a source the author named: this store is the deployment's, so
         // its absence is a condition an operator acts on rather than a defect on this side.
@@ -372,6 +375,13 @@ final class StoreBackedDagSource implements DagSource {
                 .map(SourceResource.class::cast)
                 .orElseThrow(() -> new TapstateException(ActuationError.VIEW_STORE_NOT_CONFIGURED,
                         Map.of("store", target.sourceId()), null));
+        // Resolved by id alone, so a source the author happened to give that id would satisfy the lookup
+        // - and be written into. Capture settings are what tells an authored source from the store; a
+        // plain connection under the id is indistinguishable today, which is a narrower, recorded gap.
+        if (store.mode() != null || store.tables() != null) {
+            throw new TapstateException(ActuationError.VIEW_STORE_IS_A_CAPTURE_SOURCE,
+                    Map.of("store", target.sourceId()), null);
+        }
         // Keyed by every source table that can reach the view, all answering with the one collection.
         // The sink resolves a target by the table a row came from, so a view - which collapses those
         // tables into a single object - has to answer to each of their names. Keyed by the view's own
@@ -384,6 +394,96 @@ final class StoreBackedDagSource implements DagSource {
         }
         return sinkWriterBinder.bind(
                 store.connector(), store.config(), WriteMode.UPSERT, DdlPolicy.FAIL, bySourceTable);
+    }
+
+    /**
+     * Refuses a view whose single key is not the identity of what feeds it, before anything binds.
+     *
+     * <p>The view sink upserts every stream on the view's declared key and indexes it uniquely, so the
+     * key has to be what the feed converges on. Two shapes break that and neither says anything at
+     * write time: an assembly keyed on more columns than the view's key collapses distinct roots onto
+     * one document, and several tables feeding one view take turns overwriting each other wherever
+     * their key values coincide. Both land rows in the right collection with a right-looking count on
+     * any single snapshot, which is why they are refused here by name instead.
+     *
+     * <p>What feeds the view is resolved by walking its from-reference down to leaves: a nest step is
+     * one assembled stream carrying its root's key, a source id is each of its tables, anything else
+     * is one table. A regex names many upstreams by construction and is refused as such.
+     */
+    private static void requireKeyIsTheFeedIdentity(PipelineResource pipeline, ViewBlock.Inline view,
+            Map<String, List<String>> tablesBySourceId) {
+        List<String> streams = new ArrayList<>();
+        List<TransformBody.Nest> assemblies = new ArrayList<>();
+        collectFeed(pipeline, view.from(), tablesBySourceId, streams, assemblies, new HashSet<>());
+        if (streams.size() + assemblies.size() > 1) {
+            throw new TapstateException(ActuationError.VIEW_FED_BY_MANY_TABLES,
+                    Map.of("view", view.id(), "tables", String.join(", ", streams)), null);
+        }
+        if (assemblies.size() == 1) {
+            List<String> rootKey = assemblies.getFirst().root().key();
+            if (rootKey == null || !rootKey.equals(List.of(view.primaryKey()))) {
+                throw new TapstateException(ActuationError.VIEW_KEY_NOT_ROOT_KEY,
+                        Map.of("view", view.id(), "key", String.valueOf(view.primaryKey()),
+                                "rootKey", rootKey == null ? "(none)" : String.join(", ", rootKey)),
+                        null);
+            }
+        }
+    }
+
+    /** Resolves one from-reference to the leaf streams it names; see the gate above for the reading. */
+    private static void collectFeed(PipelineResource pipeline, FromRef from,
+            Map<String, List<String>> tablesBySourceId, List<String> streams,
+            List<TransformBody.Nest> assemblies, Set<String> visited) {
+        if (!(from instanceof FromRef.Literal literal)) {
+            // A regex is many upstreams by construction; two entries make the count say so.
+            streams.add(from.toString());
+            streams.add(from.toString());
+            return;
+        }
+        String ref = literal.ref();
+        if (!visited.add(ref)) {
+            return;
+        }
+        Step step = stepOf(pipeline, ref);
+        if (step != null) {
+            if (step instanceof Step.Inline inline && inline.body() instanceof TransformBody.Nest nest) {
+                assemblies.add(nest);
+                return;
+            }
+            // A plain transform passes through whatever feeds it.
+            for (FromRef upstream : refsOf(step.from())) {
+                collectFeed(pipeline, upstream, tablesBySourceId, streams, assemblies, visited);
+            }
+            return;
+        }
+        List<String> sourceTables = tablesBySourceId.get(ref);
+        if (sourceTables != null) {
+            streams.addAll(sourceTables);
+            return;
+        }
+        streams.add(ref);
+    }
+
+    private static Step stepOf(PipelineResource pipeline, String id) {
+        if (pipeline.transforms() == null) {
+            return null;
+        }
+        for (Step step : pipeline.transforms()) {
+            if (step.id().equals(id)) {
+                return step;
+            }
+        }
+        return null;
+    }
+
+    private static List<FromRef> refsOf(FromClause from) {
+        if (from instanceof FromClause.Flow flow) {
+            return flow.refs();
+        }
+        if (from instanceof FromClause.Aliases aliases) {
+            return List.copyOf(aliases.aliases().values());
+        }
+        return List.of();
     }
 
     /**

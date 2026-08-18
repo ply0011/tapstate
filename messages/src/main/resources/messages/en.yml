@@ -26,6 +26,16 @@ actuation.view-storage-tier-unsupported:
 actuation.view-store-not-configured:
   message: "The managed state store `{store}` a view materializes into is not configured."
   solution: "Start the deployment's managed state store, or register a source under that id for views to materialize into."
+actuation.view-key-not-root-key:
+  message: "View `{view}` declares key `{key}`, but its assembled feed converges on `{rootKey}`."
+  solution: "Declare the view's primaryKey as the assembly's root key, or key the nest root on the column the view declares - the two must be the same column for an upsert to converge on one record."
+actuation.view-fed-by-many-tables:
+  message: "View `{view}` is fed by more than one stream: {tables}."
+  solution: "Feed the view from a single table, or assemble the streams into one document with a nest step and feed the view from that."
+actuation.view-store-is-a-capture-source:
+  message: "The resource under the managed state store id `{store}` declares capture settings, so it is an authored source, not the deployment's store."
+  solution: "Rename your source so it does not occupy the managed store's id, or remove its mode/tables if it really is the deployment's state store."
+
 actuation.source-table-not-discovered:
   message: "Source `{source}` does not declare discovered table `{table}`."
   solution: "Discover the source again or change the pipeline table selector to a discovered table."
