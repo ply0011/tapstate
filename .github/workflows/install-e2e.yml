@@ -67,11 +67,30 @@ jobs:
           "$bin" new -y --kind source --id my_db --connector mysql
           "$bin" validate
       - name: Re-run is an in-place upgrade, not an accretion
+        # Compare the tree against itself before and after a second run, rather than against a
+        # literal file count. The bundle's shape is not this test's subject and it does change --
+        # a hard-coded count silently stopped testing re-runs the day the MCP sidecar, LICENSE and
+        # NOTICE joined the binary, because it then failed on the *first* install. What accretion
+        # actually looks like is a second version directory left standing beside the first, so
+        # assert that directly too: an installer that unpacks beside the old version instead of
+        # replacing it fails the version-count check even if the file count happened to match.
         run: |
           set -eu
+          before="$(find "$HOME/.tapstate/bin" -type f | wc -l | tr -d ' ')"
           curl -sSL https://install.tapstate.dev/cli | sh
-          count="$(find "$HOME/.tapstate/bin" -type f | wc -l | tr -d ' ')"
-          test "$count" = "1" || { echo "a re-run left $count files behind" >&2; exit 1; }
+          after="$(find "$HOME/.tapstate/bin" -type f | wc -l | tr -d ' ')"
+          test "$after" = "$before" || {
+            echo "a re-run changed the file count: $before -> $after" >&2
+            find "$HOME/.tapstate/bin" -type f >&2
+            exit 1
+          }
+          versions="$(find "$HOME/.tapstate/bin/versions" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+          test "$versions" = "1" || {
+            echo "a re-run left $versions version directories, want 1" >&2
+            find "$HOME/.tapstate/bin/versions" -mindepth 1 -maxdepth 1 -type d >&2
+            exit 1
+          }
+          test -L "$HOME/.tapstate/bin/tapstate" || { echo "the stable entry is not a link" >&2; exit 1; }
       - name: Negative paths against the checked-in fixtures
         run: bash install/install-smoke.sh
 
