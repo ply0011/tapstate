@@ -1,0 +1,12 @@
+version: tapstate/v1
+kind: pipeline
+id: e2e_pipeline
+source: src_file
+settings: { read_mode: snapshot_only }
+view:
+  id: order_state
+  from: orders
+  primary_key: id
+serve:
+  sync:
+    - source: tgt_file

@@ -1,6 +1,7 @@
 package io.tapstate.runtime.scheduler;
 
 import io.tapstate.core.lifecycle.CasOutcome;
+import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.lifecycle.CheckpointDoc;
 import io.tapstate.core.lifecycle.DesiredState;
 import io.tapstate.core.lifecycle.PipelineState;
@@ -116,7 +117,21 @@ public final class PipelineConverger {
             if (outcome instanceof CasOutcome.Applied applied) {
                 // Record first, then actuate: the store is the source of truth and Jet is subordinate, so the
                 // fenced write lands the intent durably before the job side is driven to match it.
-                actuate(pipelineId, from, target);
+                try {
+                    actuate(pipelineId, from, target);
+                } catch (TapstateException refused) {
+                    // The job side refused with a diagnosis. Record it the way a job that died is recorded,
+                    // because to everyone reading the product they are the same event: the pipeline is not
+                    // going to run, and here is why. Letting it escape instead leaves the pass to abort
+                    // before anything is published, so the read face keeps whatever state it last saw while
+                    // the loop retries every tick -- a pipeline stuck at NEW, and the reason for it in the
+                    // server log alone.
+                    //
+                    // Only coded refusals. An uncoded throw is a defect in this process rather than a
+                    // condition of this pipeline, and recording it here would file it under the user's name
+                    // and stop it crashing anything -- which is what makes a defect visible.
+                    return failedWith(pipelineId, refused);
+                }
                 return ConvergeResult.converged(applied.next());
             }
             // Fenced: another writer moved the epoch on. Re-read it and rebase before retrying.
@@ -150,6 +165,18 @@ public final class PipelineConverger {
                 // never reaches this actuation path.
             }
         }
+    }
+
+    /**
+     * Drives the pipeline to FAILED and carries {@code cause} out on the result, so the publisher renders
+     * it as the observation's coded failure. Shared with the dead-job path, which reaches the same state
+     * by a different road.
+     */
+    private ConvergeResult failedWith(String pipelineId, TapstateException cause) {
+        ConvergeResult driven = driveTo(pipelineId, PipelineState.FAILED, false, requireCheckpoint(pipelineId));
+        return driven.checkpoint()
+                .map(checkpoint -> ConvergeResult.failed(checkpoint, cause))
+                .orElse(driven);
     }
 
     private CheckpointDoc requireCheckpoint(String pipelineId) {
