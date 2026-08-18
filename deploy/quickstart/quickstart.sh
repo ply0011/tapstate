@@ -230,20 +230,47 @@ main() {
     # Bring up the stack. The compose file pins the published image, so this pulls rather than builds.
     docker compose up -d
 
+    # Both waits below poll on this interval. It is a knob only so the script's own test suite can drive
+    # the waiting paths without spending a minute on each; a run that does not set it waits the same two
+    # seconds it always has.
+    poll="${TAPSTATE_QUICKSTART_POLL_SECONDS:-2}"
+
     # Wait until the server container reports healthy -- its image carries the /healthz healthcheck -- so
-    # the online verbs are not driven before the server can answer. By then the bootstrap sidecar has
-    # created the admin from .env.
+    # the online verbs are not driven before the server can answer.
     printf 'quickstart: waiting for the stack to become healthy'
     i=0
     while [ "$i" -lt 90 ]; do
         if docker compose ps --format json server 2>/dev/null | grep -q '"Health":"healthy"'; then
             break
         fi
-        i=$((i + 1)); printf '.'; sleep 2
+        i=$((i + 1)); printf '.'; sleep "$poll"
     done
     printf '\n'
     docker compose ps --format json server 2>/dev/null | grep -q '"Health":"healthy"' \
         || die "the server did not become healthy in time; inspect it with: docker compose logs server"
+
+    # Then wait for the first admin to actually exist. Server health is not that moment -- it is the
+    # moment before it: the bootstrap sidecar declares depends_on the server being healthy, so health is
+    # precisely when that container is cleared to start its one POST. Driving `login` off the health
+    # check alone is a race with a one-request container, and it is a race this has lost in the wild.
+    #
+    # A one-shot container reports State and ExitCode, never Health, so both are checked: `exited` alone
+    # would accept a bootstrap that ran and failed. A non-zero exit is reported immediately rather than
+    # waited out -- the container is gone, so no amount of further waiting changes the answer.
+    printf 'quickstart: waiting for the first admin to be created'
+    i=0
+    while [ "$i" -lt 60 ]; do
+        bootstrap_ps="$(docker compose ps -a --format json bootstrap 2>/dev/null)"
+        if printf '%s' "$bootstrap_ps" | grep -q '"State":"exited"'; then
+            printf '%s' "$bootstrap_ps" | grep -q '"ExitCode":0' \
+                || { printf '\n'; die "the first admin could not be created; inspect it with: docker compose logs bootstrap"; }
+            break
+        fi
+        i=$((i + 1)); printf '.'; sleep "$poll"
+    done
+    printf '\n'
+    printf '%s' "$bootstrap_ps" | grep -q '"State":"exited"' \
+        || die "the first admin was not created in time; inspect it with: docker compose logs bootstrap"
 
     # Drive the online verbs through the REPL, feeding the password on stdin (the login prompt reads the
     # next line) so it is never a process argument or a shell-history entry. Workspace paths resolve
@@ -256,9 +283,20 @@ main() {
     # the source unapplied and the discovery with nothing to look at.
     #
     # Applying the source twice is free; the second apply reports it unchanged.
+    #
+    # The REPL's output is captured so a failed login can be named here. It cannot be left to the row
+    # count below: that check fires half a minute later and says "the target is empty", which sends the
+    # reader to the server log to investigate a pipeline that was never started. Authentication is also
+    # the one failure that cascades -- every verb after it reports cli.not-authenticated, so the real
+    # cause ends up at the top of a screen of consequences.
     admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
-    printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\napply source/db_src.tap.yml\ndiscover-schema db_src\napply\nstart sync_orders\nexit\n' "$admin_pw" \
-        | ./tapstate -w work
+    repl_out="$(printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\napply source/db_src.tap.yml\ndiscover-schema db_src\napply\nstart sync_orders\nexit\n' "$admin_pw" \
+        | ./tapstate -w work 2>&1)"
+    printf '%s\n' "$repl_out"
+    case "$repl_out" in
+        *control.auth-failed*|*cli.not-authenticated*)
+            die "the CLI could not log in, so no verb after it ran; inspect it with: docker compose logs bootstrap" ;;
+    esac
 
     # Snapshot verification, printed automatically: the demo's payoff is a real row count in the target,
     # not an "it should have worked". A fresh snapshot of the seeded rows is quick, but the read still

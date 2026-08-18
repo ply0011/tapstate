@@ -264,6 +264,10 @@ run_phase_fakes() {
 #!/bin/sh
 printf '%s\n' "$*" >> .cli-argv
 cat >> .cli-stdin
+# A REPL prints its verbs' errors and still exits 0 -- an interactive session does not end because one
+# command was rejected. FAKE_CLI_OUT lets a case reproduce that shape: output that says it failed, over
+# an exit status that says it did not.
+[ -n "${FAKE_CLI_OUT:-}" ] && printf '%s\n' "$FAKE_CLI_OUT"
 exit 0
 CLI
   chmod +x "$RUN/tapstate"
@@ -273,9 +277,22 @@ CLI
   printf '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; *) echo unknown ;; esac\n' > "$shim/uname"
   cat > "$shim/docker" <<'DOCK'
 #!/bin/sh
-# `compose ps ... server` -> report healthy so the wait loop ends; `compose exec ... mongosh` (the
-# snapshot count read) -> report the row count the case asked for, so a run that delivers and a run
+# `compose ps ... server` -> report healthy so the wait loop ends; `compose ps -a ... bootstrap` -> report
+# the one-shot admin-creation container in whatever state the case asked for; `compose exec ... mongosh`
+# (the snapshot count read) -> report the row count the case asked for, so a run that delivers and a run
 # that delivers nothing can both be driven; every other subcommand no-ops.
+#
+# The two `ps` answers are deliberately different shapes. A server reports Health; a one-shot container
+# reports State and ExitCode and never reports Health at all. A script that waited on the wrong one would
+# read a field the other never publishes, which is exactly the confusion these fakes have to be able to
+# expose rather than paper over.
+# A brace inside ${VAR:-default} would close the expansion, so the default is set on its own line.
+bs="${FAKE_BOOTSTRAP_PS:-}"
+[ -n "$bs" ] || bs='{"State":"exited","ExitCode":0}'
+# Which container is being asked about is decided before the subcommand is, because `ps` appears in the
+# bootstrap query too -- answering on the subcommand alone would hand the server's Health line back for
+# every query and quietly make the two indistinguishable.
+case " $* " in *" bootstrap "*) echo "$bs"; exit 0 ;; esac
 for a in "$@"; do
   [ "$a" = ps ] && { echo '{"Health":"healthy"}'; exit 0; }
   [ "$a" = exec ] && { echo "${FAKE_TARGET_ROWS:-5}"; exit 0; }
@@ -287,6 +304,8 @@ DOCK
     TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$CLI_STUB" \
     TAPSTATE_QUICKSTART_BASE_URL="file://$QS_STUB" TAPSTATE_CONNECTORS_URL="file://$QS_STUB/connectors-preview" \
     FAKE_TARGET_ROWS="${1:-5}" \
+    FAKE_BOOTSTRAP_PS="${FAKE_BOOTSTRAP_PS:-}" FAKE_CLI_OUT="${FAKE_CLI_OUT:-}" \
+    TAPSTATE_QUICKSTART_POLL_SECONDS=0 \
     sh "$RUN/quickstart.sh" 2>&1)"; RUN_RC=$?
   rm -rf "$shim"
 }
@@ -319,6 +338,41 @@ if printf '%s' "$RUN_OUT" | grep -q 'INSERT INTO orders' \
   ok "the CDC section demonstrates insert, update and delete"
 else
   bad "CDC section does not walk insert/update/delete: $RUN_OUT"
+fi
+
+# --- the first admin exists before anyone tries to log in ---------------------------------------------
+# The bootstrap sidecar depends_on the server being *healthy*, so it only starts at the moment the server
+# reports healthy. Waiting on server health therefore proves the opposite of what it looks like it proves:
+# it is the moment the admin is guaranteed NOT to exist yet. Observed as a real flake -- two runs of the
+# same commit, one logged in fine and one drew control.auth-failed, after which every following verb
+# reported cli.not-authenticated and the run died on the row count with the real cause scrolled off the top.
+FAKE_BOOTSTRAP_PS='{"State":"running","ExitCode":0}' run_phase_fakes
+unset FAKE_BOOTSTRAP_PS
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -qi 'admin'; then
+  ok "refuses to drive the verbs while the admin has not been created yet, and says so"
+else
+  bad "raced the bootstrap instead of waiting (rc=$RUN_RC): $RUN_OUT"
+fi
+# A bootstrap that ran and *failed* is a different condition from one still running, and it must not be
+# waited out until the timeout: the container is gone, so waiting can only end one way.
+FAKE_BOOTSTRAP_PS='{"State":"exited","ExitCode":1}' run_phase_fakes
+unset FAKE_BOOTSTRAP_PS
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'docker compose logs bootstrap'; then
+  ok "a bootstrap that exited non-zero fails the run and points at its log"
+else
+  bad "a failed bootstrap was not surfaced (rc=$RUN_RC): $RUN_OUT"
+fi
+# An authentication failure must be named where it happens. Without this the run still fails -- but it
+# fails 30 seconds later on "did not reach the target (0 of 5 rows)", which sends the reader to the server
+# log to investigate a pipeline that was never started. The discriminating part is that the run below
+# delivers its rows: a check that merely required a non-zero exit would pass on the row count alone.
+FAKE_CLI_OUT='error: control.auth-failed' run_phase_fakes
+unset FAKE_CLI_OUT
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'could not log in' \
+   && ! printf '%s' "$RUN_OUT" | grep -q 'did not reach the target'; then
+  ok "an auth failure is diagnosed as an auth failure, not as an empty target"
+else
+  bad "auth failure not named at the point it happened (rc=$RUN_RC): $RUN_OUT"
 fi
 
 # A run whose online verbs did not take must fail, loudly and non-zero. The REPL is the reason this
