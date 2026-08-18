@@ -17,6 +17,10 @@ import io.tapstate.core.model.Step;
 import io.tapstate.core.model.TableRef;
 import io.tapstate.core.model.TransformBody;
 import io.tapstate.core.model.ViewBlock;
+import io.tapstate.spi.store.DiscoveredSourceModel;
+import io.tapstate.spi.store.SourceField;
+import io.tapstate.spi.store.SourceModel;
+import io.tapstate.spi.store.SourceTable;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +51,7 @@ class AViewKeyMustBeTheIdentityOfWhatFeedsItTest {
 
         assertThatThrownBy(() -> dagFor(artifacts))
                 .isInstanceOf(TapstateException.class)
-                .satisfies(code("actuation.view-key-not-root-key"));
+                .satisfies(code("actuation.view-key-not-feed-identity"));
     }
 
     @Test
@@ -58,7 +62,7 @@ class AViewKeyMustBeTheIdentityOfWhatFeedsItTest {
 
         assertThatThrownBy(() -> dagFor(artifacts))
                 .isInstanceOf(TapstateException.class)
-                .satisfies(code("actuation.view-key-not-root-key"));
+                .satisfies(code("actuation.view-key-not-feed-identity"));
     }
 
     @Test
@@ -97,6 +101,54 @@ class AViewKeyMustBeTheIdentityOfWhatFeedsItTest {
         assertThatThrownBy(() -> dagFor(artifacts))
                 .isInstanceOf(TapstateException.class)
                 .satisfies(code("actuation.view-store-is-a-capture-source"));
+    }
+
+    @Test
+    void a_nest_fed_view_with_no_key_still_gets_the_missing_key_error_not_a_bare_crash() {
+        // Review found this as a regression: the feed-identity gate ran before the resolver and took
+        // List.of(null) on the way, so the coded refusal this shape already had turned into a bare
+        // NullPointerException. The missing key is the earlier and simpler fact; it must speak first.
+        assertThatThrownBy(() -> dagFor(nestWorkspace(List.of("id"), null)))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(code("actuation.view-key-missing"));
+    }
+
+    @Test
+    void a_view_keyed_off_a_column_that_is_not_the_discovered_tables_key_is_refused() {
+        // The same collapse as the nest case, in the shape the gate did not cover: one table, its key
+        // discovered as id, the view upserting - and uniquely indexing - a column rows can share.
+        InMemoryArtifactStore artifacts = new InMemoryArtifactStore();
+        artifacts.save(new SourceResource("src", null, "fake", Map.of("host", "h"), SourceMode.CDC,
+                List.of(TableRef.literal("orders")), null, null, null));
+        artifacts.save(managedStore());
+        artifacts.save(new PipelineResource(PIPELINE, null, List.of("src"), null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders"), "customer", null, null),
+                null, settings(), null));
+        InMemoryStorePort store = new InMemoryStorePort(artifacts);
+        store.schemas().save(new DiscoveredSourceModel("src", "fake", 0L, new SourceModel(List.of(
+                new SourceTable("orders",
+                        List.of(new SourceField("id", "int"), new SourceField("customer", "string")),
+                        List.of("id"), List.of())))));
+
+        assertThatThrownBy(() -> new StoreBackedDagSource(store).dagFor(PIPELINE))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(code("actuation.view-key-not-feed-identity"));
+    }
+
+    @Test
+    void a_view_over_an_undiscovered_table_keeps_its_own_key_because_no_identity_is_known() {
+        // The undiscovered path stays permissive on purpose: the view names its own key precisely so
+        // that materialization does not wait on a discovery, and with no identity on record there is
+        // nothing to hold the key against.
+        InMemoryArtifactStore artifacts = new InMemoryArtifactStore();
+        artifacts.save(new SourceResource("src", null, "fake", Map.of("host", "h"), SourceMode.CDC,
+                List.of(TableRef.literal("orders")), null, null, null));
+        artifacts.save(managedStore());
+        artifacts.save(new PipelineResource(PIPELINE, null, List.of("src"), null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders"), "customer", null, null),
+                null, settings(), null));
+
+        Assertions.assertThatCode(() -> dagFor(artifacts)).doesNotThrowAnyException();
     }
 
     @Test

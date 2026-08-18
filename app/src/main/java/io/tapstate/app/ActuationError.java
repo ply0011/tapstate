@@ -69,13 +69,15 @@ enum ActuationError implements TapstateErrorCode {
     VIEW_STORE_NOT_CONFIGURED("actuation.view-store-not-configured", Set.of("store")),
 
     /**
-     * A view's declared key is not the key its assembled feed converges on; {@code view} is its id,
-     * {@code key} the view's key, {@code rootKey} the assembly's. The sink upserts on the view's key
-     * and indexes it uniquely, so assembled roots that differ only on the columns the view's key
-     * leaves out would silently replace each other. Refused where the pipeline is built, because at
-     * write time the loss is invisible: right collection, right count on any single snapshot.
+     * A view's declared key is not the identity of what feeds it; {@code view} is its id, {@code key}
+     * the view's key, {@code identity} the feed's - a nest's root key, or a table's discovered key.
+     * The sink upserts on the view's key and indexes it uniquely, so records that differ only on the
+     * columns the view's key leaves out would silently replace each other. Refused where the pipeline
+     * is built, because at write time the loss is invisible: right collection, right count on any
+     * single snapshot. A feed with no identity on record - an undiscovered table - is not held to
+     * this; there the view's key is the only identity there is.
      */
-    VIEW_KEY_NOT_ROOT_KEY("actuation.view-key-not-root-key", Set.of("view", "key", "rootKey")),
+    VIEW_KEY_NOT_FEED_IDENTITY("actuation.view-key-not-feed-identity", Set.of("view", "key", "identity")),
 
     /**
      * A view is fed by more than one stream with no assembly collapsing them; {@code view} is its id,

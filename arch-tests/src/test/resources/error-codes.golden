@@ -15,7 +15,7 @@ actuation.source-table-selection-empty
 actuation.source-table-spec-unsupported
 actuation.view-fed-by-many-tables
 actuation.view-key-missing
-actuation.view-key-not-root-key
+actuation.view-key-not-feed-identity
 actuation.view-storage-tier-unsupported
 actuation.view-store-is-a-capture-source
 actuation.view-store-not-configured

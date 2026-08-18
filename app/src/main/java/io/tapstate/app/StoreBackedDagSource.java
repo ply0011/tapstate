@@ -366,8 +366,11 @@ final class StoreBackedDagSource implements DagSource {
             throw new IllegalArgumentException(
                     "view block is a use-reference; resolve it to an inline view first");
         }
-        requireKeyIsTheFeedIdentity(pipeline, inline, tablesBySourceId);
+        // Resolve first: it holds the simpler facts - a missing key among them - and a view without a
+        // key has nothing for the identity gate to compare. Review found the reverse order turning the
+        // coded missing-key refusal into a bare NullPointerException inside the gate.
         ViewTargetResolver.ViewTarget target = ViewTargetResolver.resolve(inline);
+        requireKeyIsTheFeedIdentity(pipeline, inline, targets, tablesBySourceId);
         // Coded rather than bare, unlike a source the author named: this store is the deployment's, so
         // its absence is a condition an operator acts on rather than a defect on this side.
         SourceResource store = artifacts().get(target.sourceId())
@@ -411,7 +414,7 @@ final class StoreBackedDagSource implements DagSource {
      * is one table. A regex names many upstreams by construction and is refused as such.
      */
     private static void requireKeyIsTheFeedIdentity(PipelineResource pipeline, ViewBlock.Inline view,
-            Map<String, List<String>> tablesBySourceId) {
+            Map<String, TargetTable> targets, Map<String, List<String>> tablesBySourceId) {
         List<String> streams = new ArrayList<>();
         List<TransformBody.Nest> assemblies = new ArrayList<>();
         collectFeed(pipeline, view.from(), tablesBySourceId, streams, assemblies, new HashSet<>());
@@ -420,13 +423,31 @@ final class StoreBackedDagSource implements DagSource {
                     Map.of("view", view.id(), "tables", String.join(", ", streams)), null);
         }
         if (assemblies.size() == 1) {
-            List<String> rootKey = assemblies.getFirst().root().key();
-            if (rootKey == null || !rootKey.equals(List.of(view.primaryKey()))) {
-                throw new TapstateException(ActuationError.VIEW_KEY_NOT_ROOT_KEY,
-                        Map.of("view", view.id(), "key", String.valueOf(view.primaryKey()),
-                                "rootKey", rootKey == null ? "(none)" : String.join(", ", rootKey)),
-                        null);
+            requireKeyIs(view, assemblies.getFirst().root().key());
+            return;
+        }
+        // A single table: its identity is whatever discovery recorded. An undiscovered table has no
+        // identity on record, and the view's own key is then the only identity there is - which is the
+        // path that lets materialization run before any discovery has.
+        if (streams.size() == 1 && targets != null) {
+            TargetTable model = targets.get(streams.getFirst());
+            if (model != null) {
+                List<String> identity = model.fields().stream()
+                        .filter(TargetField::primaryKey).map(TargetField::name).toList();
+                if (!identity.isEmpty()) {
+                    requireKeyIs(view, identity);
+                }
             }
+        }
+    }
+
+    /** One refusal for every feed shape: the view's single key must be exactly this identity. */
+    private static void requireKeyIs(ViewBlock.Inline view, List<String> identity) {
+        if (identity == null || !identity.equals(List.of(view.primaryKey()))) {
+            throw new TapstateException(ActuationError.VIEW_KEY_NOT_FEED_IDENTITY,
+                    Map.of("view", view.id(), "key", String.valueOf(view.primaryKey()),
+                            "identity", identity == null ? "(none)" : String.join(", ", identity)),
+                    null);
         }
     }
 
