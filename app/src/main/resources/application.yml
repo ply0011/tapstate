@@ -1,0 +1,5 @@
+# The port the server binds. 8080 is the published default: the container image exposes it, its
+# health check probes it, the compose file maps it and the quickstart addresses it, so moving it
+# means moving those together. SERVER_PORT overrides it for a host where 8080 is already taken.
+server:
+  port: ${SERVER_PORT:8080}
