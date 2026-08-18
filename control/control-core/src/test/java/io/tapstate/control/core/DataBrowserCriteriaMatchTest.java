@@ -137,6 +137,53 @@ class DataBrowserCriteriaMatchTest {
     }
 
     @Test
+    @DisplayName("equality holds on the number, not on the type the number arrived as")
+    void matchesNumbersByValueRatherThanByTheTypeTheyArrivedAs() {
+        // A follower's filter came from JSON text, so every whole number in it is a Long; the row came
+        // from the connector, so an int32 column arrives as an Integer. Comparing those by type is a
+        // filter that matches nothing and reports nothing -- the reader watches a table that never
+        // seems to change. The ordered operators already read one number line; these three did not.
+        Map<String, Object> row = row("total", 100);
+
+        assertThat(match("total", DataBrowserCriteria.Operator.EQ, 100L).matches(row)).isTrue();
+        assertThat(match("total", DataBrowserCriteria.Operator.NE, 100L).matches(row)).isFalse();
+        assertThat(match("total", DataBrowserCriteria.Operator.IN, List.of(100L, 200L)).matches(row))
+                .isTrue();
+        assertThat(match("total", DataBrowserCriteria.Operator.EQ, 100.0d).matches(row))
+                .as("a whole number and a decimal are the same point on the one number line")
+                .isTrue();
+
+        assertThat(match("total", DataBrowserCriteria.Operator.EQ, 101L).matches(row)).isFalse();
+        assertThat(match("total", DataBrowserCriteria.Operator.NE, 101L).matches(row)).isTrue();
+        assertThat(match("total", DataBrowserCriteria.Operator.IN, List.of(200L, 300L)).matches(row))
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("equality between whole numbers is exact, however far apart a double would put them")
+    void doesNotCallTwoDistantWholeNumbersEqualBecauseTheyRoundAlike() {
+        // Past a double's 53 bits of mantissa, distinct integers round to the same double. Ordering
+        // two of those slightly wrong is invisible; calling them equal shows the reader another row.
+        Map<String, Object> row = row("id", 9_007_199_254_740_993L);
+
+        assertThat(match("id", DataBrowserCriteria.Operator.EQ, 9_007_199_254_740_992L).matches(row))
+                .isFalse();
+        assertThat(match("id", DataBrowserCriteria.Operator.EQ, 9_007_199_254_740_993L).matches(row))
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("a number and something that is not one are still not equal")
+    void doesNotReadTextOrBooleansOntoTheNumberLine() {
+        assertThat(match("total", DataBrowserCriteria.Operator.EQ, 100L).matches(row("total", "100")))
+                .as("the store does not match a number against its text either, and a reader who "
+                        + "wrote one meaning the other is better told nothing matched")
+                .isFalse();
+        assertThat(match("flag", DataBrowserCriteria.Operator.EQ, 1L).matches(row("flag", true)))
+                .isFalse();
+    }
+
+    @Test
     @DisplayName("a comparison between kinds that have no order answers false rather than guessing")
     void refusesToOrderValuesThatHaveNoOrder() {
         assertThat(match("total", DataBrowserCriteria.Operator.GT, 5).matches(row("total", "twelve")))

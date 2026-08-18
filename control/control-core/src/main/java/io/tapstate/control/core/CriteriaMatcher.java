@@ -2,6 +2,7 @@ package io.tapstate.control.core;
 
 import io.tapstate.spi.store.FieldPath;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -48,9 +49,9 @@ final class CriteriaMatcher {
 
     private static boolean holds(DataBrowserCriteria.Operator operator, Object value, Object wanted) {
         return switch (operator) {
-            case EQ -> Objects.equals(value, wanted);
-            case NE -> !Objects.equals(value, wanted);
-            case IN -> wanted instanceof List<?> set && set.stream().anyMatch(one -> Objects.equals(value, one));
+            case EQ -> equal(value, wanted);
+            case NE -> !equal(value, wanted);
+            case IN -> wanted instanceof List<?> set && set.stream().anyMatch(one -> equal(value, one));
             case CONTAINS -> value instanceof String text && wanted instanceof String part && text.contains(part);
             case GT -> compare(value, wanted) > 0;
             case GTE -> compare(value, wanted) >= 0;
@@ -58,6 +59,36 @@ final class CriteriaMatcher {
             case LTE -> compare(value, wanted) <= 0 && compare(value, wanted) != NO_ORDER;
             case EXISTS -> true;   // settled before a value is ever looked at
         };
+    }
+
+    /**
+     * Whether two values are the same value. Numbers are read on the one number line the ordered
+     * operators below already read them on: which Java class a literal parsed into says how it was
+     * spelt and how it was transported, never what the reader asked about. A filter whose value came
+     * from JSON text holds a whole number as a long; the row it is tested against holds whatever the
+     * connector produced, and a 32-bit column produces an int. Answering by type there is a filter
+     * that matches nothing at all, with nothing to report it -- the reader watches a table that
+     * appears never to change, and the negated form shows every row instead.
+     *
+     * <p>Two whole numbers are compared exactly rather than through a double. Past 53 bits of
+     * mantissa distinct integers round to the same double, and the two mistakes are not equally
+     * cheap: a slightly wrong ordering is invisible, while a wrong equality puts another row's data
+     * in front of the reader as though they had asked for it.
+     */
+    private static boolean equal(Object value, Object wanted) {
+        if (value instanceof Number left && wanted instanceof Number right) {
+            return whole(left) && whole(right)
+                    ? new BigInteger(left.toString()).equals(new BigInteger(right.toString()))
+                    : left.doubleValue() == right.doubleValue();
+        }
+        return Objects.equals(value, wanted);
+    }
+
+    /** Whether a number has no fractional part to lose, in the type it arrived as. */
+    private static boolean whole(Number number) {
+        return number instanceof Integer || number instanceof Long
+                || number instanceof Short || number instanceof Byte
+                || number instanceof BigInteger;
     }
 
     /**
