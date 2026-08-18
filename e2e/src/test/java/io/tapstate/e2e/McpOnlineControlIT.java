@@ -118,15 +118,19 @@ class McpOnlineControlIT {
         Files.writeString(data.resolve(BY_HAND + ".csv"), "id,note\n1,nobody declared me\n");
         Files.writeString(later.resolve("arrivals.csv"), "id,note\n1,applied mid-session\n");
 
-        E2eConnectorJar.buildInto(connectorJars, E2eConnectorJar.CONNECTOR_ID);
+        // Packaged under the browsable id, because rows are served only to connectors the product
+        // knows speak the request shape it asks in. Listing and sizing are answered for any connector;
+        // reading rows is not, so a fixture filed under the plain test id can be listed and never read
+        // - and a listing that is never read from is half the chain this specification is about.
+        E2eConnectorJar.buildInto(connectorJars, E2eConnectorJar.BROWSABLE_CONNECTOR_ID);
         String previousConnectorsDir =
                 System.setProperty("tapstate.e2e.connectors-dir", connectorJars.toString());
         Path stderr = temporaryDirectory.resolve("mcp-online.stderr");
         try (ServerHandle server = InProcessServer.start(SharedMongo.replicaSetUrl("e2e_mcp_browse"))) {
             ControlPlane control = new ControlPlane(server.baseUrl());
             control.bootstrapAndLogin("e2e", "e2e-password");
-            control.registerConnector(
-                    E2eConnectorJar.CONNECTOR_ID, ConnectorJars.bytesFor(E2eConnectorJar.CONNECTOR_ID));
+            control.registerConnector(E2eConnectorJar.BROWSABLE_CONNECTOR_ID,
+                    ConnectorJars.bytesFor(E2eConnectorJar.BROWSABLE_CONNECTOR_ID));
             control.apply(Map.of(
                     "src.tap.yml", sourceYaml("src_browse", data),
                     "v_declared.tap.yml", declaringViewYaml()));
@@ -178,9 +182,31 @@ class McpOnlineControlIT {
                 assertThat(listed.get(DECLARED)).doesNotContainKey("fields");
                 assertThat(listed.get(BY_HAND)).doesNotContainKey("fields");
 
+                // And the collection the listing named is the one a read of it answers from. This is the
+                // chain an agent actually walks - list, then read one of what was listed - and it is the
+                // half that "three tools are offered" never covered: `find` was in the catalogue and had
+                // never been called, so nothing here would have noticed it answering from somewhere else,
+                // or not answering at all. The two seeded collections carry different columns on purpose:
+                // a read wired to the other one comes back with `note` and fails on the last assertion
+                // rather than passing on a row that merely looks plausible.
+                send(input, findCall(4, "src_browse", DECLARED));
+                Map<?, ?> found = (Map<?, ?>) receive(output).get("result");
+                assertThat(found.get("isError"))
+                        .as("reading the collection the listing named, in the same session")
+                        .isEqualTo(false);
+                List<?> rows = (List<?>) ((Map<?, ?>) found.get("structuredContent")).get("rows");
+                assertThat(rows).as("the rows the declared collection holds").hasSize(1);
+                Map<?, ?> row = (Map<?, ?>) rows.get(0);
+                assertThat(String.valueOf(row.get("total")))
+                        .as("the value held by the row of the collection that was listed")
+                        .isEqualTo("10");
+                assertThat(row.keySet().stream().map(String::valueOf).toList())
+                        .as("and not the row of the collection nobody declared, whose column is another")
+                        .doesNotContain("note");
+
                 // Applied after the tools were listed, and read without listing them again.
                 control.apply(Map.of("src_later.tap.yml", sourceYaml("src_later", later)));
-                assertThat(collectionsByName(input, output, 4, "src_later"))
+                assertThat(collectionsByName(input, output, 5, "src_later"))
                         .as("a source applied mid-session, read by a client that has not re-listed")
                         .containsKey("arrivals");
 
@@ -188,11 +214,11 @@ class McpOnlineControlIT {
                 // answer. The first source is asked again in the same breath, so "it disappeared" is
                 // distinguishable from "the session broke".
                 control.deleteSource("src_later");
-                send(input, call(5, "src_later"));
+                send(input, call(6, "src_later"));
                 assertThat(((Map<?, ?>) receive(output).get("result")).get("isError"))
                         .as("reading a source that has been deleted, in a session that never restarted")
                         .isEqualTo(true);
-                assertThat(collectionsByName(input, output, 6, "src_browse"))
+                assertThat(collectionsByName(input, output, 7, "src_browse"))
                         .as("the source that was not deleted, asked right afterwards")
                         .containsKeys(DECLARED, BY_HAND);
             } finally {
@@ -231,6 +257,14 @@ class McpOnlineControlIT {
         return byName;
     }
 
+    /** One {@code data_browser_find} call: the read an agent makes after a listing told it the name. */
+    private static String findCall(int id, String sourceId, String collection) {
+        return """
+                {"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{
+                  "name":"data_browser_find","arguments":{"sourceId":"%s","collection":"%s"}}}
+                """.formatted(id, sourceId, collection);
+    }
+
     private static String call(int id, String sourceId) {
         return """
                 {"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{
@@ -243,9 +277,9 @@ class McpOnlineControlIT {
                 version: tapstate/v1
                 kind: source
                 id: %s
-                connector: e2e_file
+                connector: %s
                 config: { uri: "%s" }
-                """.formatted(id, directory);
+                """.formatted(id, E2eConnectorJar.BROWSABLE_CONNECTOR_ID, directory);
     }
 
     private static String declaringViewYaml() {
