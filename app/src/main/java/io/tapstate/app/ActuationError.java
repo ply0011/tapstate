@@ -48,7 +48,52 @@ enum ActuationError implements TapstateErrorCode {
     FROM_REGEX_INVALID("actuation.from-regex-invalid", Set.of("regex")),
 
     /** A serve.from regex matches no upstream vertex; {@code regex} carries the expression. */
-    FROM_REGEX_EMPTY("actuation.from-regex-empty", Set.of("regex"));
+    FROM_REGEX_EMPTY("actuation.from-regex-empty", Set.of("regex")),
+
+    /**
+     * A view declares no key, so nothing identifies the record a change updates; {@code view} is its id.
+     * Materializing without one would append a copy per change rather than converge on the record.
+     */
+    VIEW_KEY_MISSING("actuation.view-key-missing", Set.of("view")),
+
+    /**
+     * A view declares a storage tier this release does not materialize; {@code view} is its id and
+     * {@code tier} names the tier. Refused rather than ignored: a silently dropped tier reads as working.
+     */
+    VIEW_STORAGE_TIER_UNSUPPORTED("actuation.view-storage-tier-unsupported", Set.of("view", "tier")),
+
+    /**
+     * A pipeline declares a view but the managed state store it materializes into is not configured;
+     * {@code store} is the source id expected to supply it.
+     */
+    VIEW_STORE_NOT_CONFIGURED("actuation.view-store-not-configured", Set.of("store")),
+
+    /**
+     * A view's declared key is not the identity of what feeds it; {@code view} is its id, {@code key}
+     * the view's key, {@code identity} the feed's - a nest's root key, or a table's discovered key.
+     * The sink upserts on the view's key and indexes it uniquely, so records that differ only on the
+     * columns the view's key leaves out would silently replace each other. Refused where the pipeline
+     * is built, because at write time the loss is invisible: right collection, right count on any
+     * single snapshot. A feed with no identity on record - an undiscovered table - is not held to
+     * this; there the view's key is the only identity there is.
+     */
+    VIEW_KEY_NOT_FEED_IDENTITY("actuation.view-key-not-feed-identity", Set.of("view", "key", "identity")),
+
+    /**
+     * A view is fed by more than one stream with no assembly collapsing them; {@code view} is its id,
+     * {@code tables} the streams. Every stream is upserted into the one collection on the one view
+     * key, so rows from different tables sharing a key value would take turns overwriting the same
+     * document.
+     */
+    VIEW_FED_BY_MANY_TABLES("actuation.view-fed-by-many-tables", Set.of("view", "tables")),
+
+    /**
+     * The resource resolved under the managed state store's id declares capture settings, so it is an
+     * authored source rather than the deployment's store; {@code store} is the id. Refused rather than
+     * written into: the store is resolved by its id alone, and materializing a view into a database an
+     * author is capturing from writes into one the deployment does not own.
+     */
+    VIEW_STORE_IS_A_CAPTURE_SOURCE("actuation.view-store-is-a-capture-source", Set.of("store"));
 
     private final String code;
     private final Set<String> placeholders;
