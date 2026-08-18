@@ -59,8 +59,6 @@ class NestStateOutlivesARunAndIsDiscardedBetweenThemIT {
     private static final String VIEW = "order_state";
     private static final String PIPELINE_ID = "assembled_orders_leak";
     private static final String BOUNDARY_PIPELINE_ID = "assembled_orders_boundary";
-    private static final String OTHER_PIPELINE_ID = "assembled_orders_boundary_again";
-    private static final String OTHER_VIEW = "order_state_again";
 
     private static final String SEEDED = "seeded-customer";
     /** Written only by the first run, so reading it in the second says where it came from. */
@@ -148,11 +146,13 @@ class NestStateOutlivesARunAndIsDiscardedBetweenThemIT {
         try (ServerHandle server = Tiers.IN_PROCESS.launch(
                         SharedMongo.replicaSetUrl("nest_boundary_state_two"));
                 MongoEndpoints mongo = new MongoEndpoints()) {
-            start(server, secondSource, secondWarehouse, BOUNDARY_PIPELINE_ID, OTHER_VIEW);
+            // The one line under test is the discard; everything else, the view identity
+            // included, matches the first run so nothing but the discard separates them.
+            start(server, secondSource, secondWarehouse, BOUNDARY_PIPELINE_ID, VIEW);
             EndpointAddress warehouse = EndpointAddress.uri(secondWarehouse);
-            awaitCustomer(mongo, warehouse, OTHER_VIEW, SEEDED, "the second run's own assembly");
+            awaitCustomer(mongo, warehouse, SEEDED, "the second run's own assembly");
 
-            assertThat(customer(mongo, warehouse, OTHER_VIEW))
+            assertThat(customer(mongo, warehouse, VIEW))
                     .as("the customer the second run serves once the state has been discarded")
                     .isEqualTo(SEEDED);
         }

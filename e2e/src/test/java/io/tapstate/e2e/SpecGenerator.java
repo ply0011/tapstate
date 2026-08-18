@@ -277,6 +277,9 @@ final class SpecGenerator {
                 row.put("type", "object");
                 row.put("description", "One row: its columns and their values, carrying id.");
                 row.put("minProperties", 1);
+                // The parser refuses a row without id, so the schema has to as well - a schema that
+                // accepts what the parser refuses validates specifications that cannot run.
+                row.put("required", List.of("id"));
                 row.put("additionalProperties", scalarValue());
 
                 Map<String, Object> values = new LinkedHashMap<>();

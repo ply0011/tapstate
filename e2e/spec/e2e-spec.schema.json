@@ -237,6 +237,9 @@
                                   "type": "object",
                                   "description": "One row: its columns and their values, carrying id.",
                                   "minProperties": 1,
+                                  "required": [
+                                    "id"
+                                  ],
                                   "additionalProperties": {
                                     "type": [
                                       "integer",

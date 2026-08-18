@@ -47,11 +47,14 @@ final class MongoEndpoints implements Endpoints {
             row.forEach((column, value) -> document.append(column, normalized(value)));
             documents.add(document);
         }
-        // Seeding nothing is how a specification says the collection holds nothing, and the driver
-        // rejects a write of no documents outright; the drop above has already made it so.
-        if (!documents.isEmpty()) {
-            collection.insertMany(documents);
+        if (documents.isEmpty()) {
+            // Seeding nothing says the collection exists and holds nothing. The store only materializes
+            // a collection on first write, so absence has to be asked for - otherwise a later valued
+            // insert against this legitimately seeded table would read as never-seeded and be refused.
+            database(address).createCollection(table);
+            return;
         }
+        collection.insertMany(documents);
     }
 
     /**
@@ -95,19 +98,46 @@ final class MongoEndpoints implements Endpoints {
         Document values = new Document();
         set.forEach((column, value) -> values.append(column, normalized(value)));
         long moved = collection(address, table)
-                .updateOne(filterOf(where), new Document("$set", values))
+                .updateOne(new Document("_id", only(address, table, where)), new Document("$set", values))
                 .getMatchedCount();
         requireOne(moved, table, where, "update");
     }
 
     @Override
     public void delete(EndpointAddress address, String table, Map<String, Object> where) {
-        long moved = collection(address, table).deleteOne(filterOf(where)).getDeletedCount();
+        long moved = collection(address, table)
+                .deleteOne(new Document("_id", only(address, table, where)))
+                .getDeletedCount();
         requireOne(moved, table, where, "delete");
+    }
+
+    /**
+     * The store's own id of the one document the settings locate. The single-document mutators stop at
+     * the first match and report one, so a filter quietly matching several would mutate one and pass -
+     * the count has to be taken before the mutation, and the mutation aimed at the counted document.
+     */
+    private Object only(EndpointAddress address, String table, Map<String, Object> where) {
+        List<Document> matches =
+                collection(address, table).find(filterOf(where)).limit(2).into(new ArrayList<>());
+        if (matches.size() != 1) {
+            throw new EnvelopeException(
+                    "a change of " + table + " matching " + where + " moved " + matches.size()
+                            + " documents; a valued change names exactly one");
+        }
+        return matches.getFirst().get(INTERNAL_KEY);
     }
 
     @Override
     public void insert(EndpointAddress address, String table, List<Map<String, Object>> rows) {
+        // The store materializes a collection on first write, so an unseeded table would not be
+        // refused here - it would be created, which is how a specification whose seed and insert name
+        // different tables passes by accident. The same refusal the other drivers make, for the same
+        // reason.
+        boolean exists = database(address).listCollectionNames().into(new ArrayList<>()).contains(table);
+        if (!exists) {
+            throw new EnvelopeException(
+                    "the table " + table + " has not been seeded, so there is nothing to add to");
+        }
         List<Document> documents = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             Document document = new Document();
@@ -252,6 +282,17 @@ final class MongoEndpoints implements Endpoints {
                             + "), so an inserted row has nothing to continue from");
         }
         return number.longValue();
+    }
+
+    private com.mongodb.client.MongoDatabase database(EndpointAddress address) {
+        String uri = address.text(CONNECTION_STRING);
+        ConnectionString connectionString = new ConnectionString(uri);
+        String database = connectionString.getDatabase();
+        if (database == null) {
+            throw new EnvelopeException(
+                    "the endpoint at " + uri + " names no database, so there is no table to address");
+        }
+        return client(uri).getDatabase(database);
     }
 
     private MongoCollection<Document> collection(EndpointAddress address, String table) {
