@@ -285,6 +285,19 @@ if grep -q 'register \.\./mysql-connector.jar' "$RUN/.cli-stdin" 2>/dev/null && 
 else
   bad "online verbs not driven: $(cat "$RUN/.cli-stdin" 2>/dev/null)"
 fi
+# The order, not just the presence. The pipeline maps a row field, which the server refuses to apply
+# until the source it reads has a discovered schema -- while the discovery needs the source applied.
+# So the stream must apply the source alone, discover it, and only then apply the workspace. Presence
+# checks matched the old broken stream just as happily; only the line order pins the fix.
+SRC_APPLY_LINE="$(grep -n '^apply source/db_src.tap.yml$' "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+DISCOVER_LINE="$(grep -n '^discover-schema db_src$' "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+FULL_APPLY_LINE="$(grep -n '^apply$' "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+if [ -n "$SRC_APPLY_LINE" ] && [ -n "$DISCOVER_LINE" ] && [ -n "$FULL_APPLY_LINE" ] \
+    && [ "$SRC_APPLY_LINE" -lt "$DISCOVER_LINE" ] && [ "$DISCOVER_LINE" -lt "$FULL_APPLY_LINE" ]; then
+  ok "applies the source alone, discovers it, then applies the workspace -- in that order"
+else
+  bad "apply/discover ordering (source-apply=$SRC_APPLY_LINE discover=$DISCOVER_LINE full-apply=$FULL_APPLY_LINE): $(cat "$RUN/.cli-stdin" 2>/dev/null)"
+fi
 if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -q 'rm -rf'; then
   ok "prints teardown on completion (down -v + rm -rf, images noted)"
 else
