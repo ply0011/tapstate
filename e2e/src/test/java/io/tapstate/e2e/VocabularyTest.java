@@ -28,7 +28,8 @@ class VocabularyTest {
 
     @Test
     void matcherWordsAreTheOnesTheParserAccepts() {
-        assertThat(Vocabulary.MATCHERS).containsExactly("count", "error_count", "failure_code", "state");
+        assertThat(Vocabulary.MATCHERS)
+                .containsExactly("count", "dead_lettered", "doc", "error_count", "failure_code", "state");
     }
 
     @Test
@@ -44,9 +45,15 @@ class VocabularyTest {
                 .containsExactly("name", "setup", "pipeline", "seed", "steps");
     }
 
+    /**
+     * The order is the dependency order, and it is asserted rather than assumed: {@code databases} is the
+     * harness's own and must come first, because a resource cannot be applied before the endpoint whose
+     * address it interpolates exists. The remaining three are the product's own verbs, in their order.
+     */
     @Test
     void setupKeysAreTheSetupsOwnComponents() {
-        assertThat(Vocabulary.SETUP_KEYS).containsExactly("connectors", "apply", "discover");
+        assertThat(Vocabulary.SETUP_KEYS)
+                .containsExactly("databases", "connectors", "apply", "discover");
     }
 
     @Test

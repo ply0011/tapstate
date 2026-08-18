@@ -2,6 +2,7 @@ package io.tapstate.control.core;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -12,20 +13,52 @@ class ControlApiSchemaTest {
 
     private static final Set<String> MCP_OPERATIONS = Set.of(
             "connector.list", "connector.get",
-            "source.list", "source.get", "source.draft",
+            "source.draft",
             "connection.test", "connection.test-result", "connection.discover-schema", "connection.schema",
-            "artifact.validate", "artifact.apply",
+            "artifact.validate", "artifact.apply", "artifact.delete", "artifact.get",
             "pipeline.start", "pipeline.stop", "pipeline.status", "pipeline.metrics",
             "pipeline.snapshot", "pipeline.logs",
             "data-browser.collections", "data-browser.find", "data-browser.stats");
 
     @Test
-    void mcpSurfaceIsTheOnlinePipelineClosureAndTheReadFace() {
+    void mcpSurfaceIsTheOnlineAuthoringClosureAndTheReadFace() {
         Set<String> actual = ControlOperations.registry().exposedOn(Frontend.MCP).stream()
                 .map(Operation::id)
                 .collect(Collectors.toSet());
 
         assertThat(actual).isEqualTo(MCP_OPERATIONS);
+    }
+
+    /**
+     * A draft may carry the same per-resource precondition the removal takes, and the schema has to say
+     * so. This is not decoration: the draft object is {@code additionalProperties: false}, so a field the
+     * schema does not declare is one a schema-checking caller is told never to send — the server would
+     * accept it and no caller would ever offer it. It stays optional, because a draft without one is the
+     * behaviour every existing caller already has.
+     */
+    @Test
+    void anApplyDraftMayDeclareThePreconditionItIsEditingAgainst() {
+        Map<?, ?> draft = applyDraftSchema();
+
+        Map<?, ?> properties = (Map<?, ?>) draft.get("properties");
+        assertThat(properties.keySet().stream().map(String::valueOf).toList())
+                .contains("expectedContentHash");
+        assertThat(draft.get("additionalProperties")).isEqualTo(false);
+        List<?> required = (List<?>) draft.get("required");
+        assertThat(required.stream().map(String::valueOf).toList())
+                .as("a draft without a precondition keeps today's behaviour")
+                // The list is pinned as non-empty by naming what does stay required: on an empty one
+                // the absence below holds vacuously, so a schema that lost its required fields
+                // altogether would read as proof that the precondition is optional.
+                .contains("content")
+                .doesNotContain("expectedContentHash");
+    }
+
+    private static Map<?, ?> applyDraftSchema() {
+        Map<?, ?> request = ControlApiSchema.resolve(
+                ControlOperations.registry().resolve("artifact.apply").schema().params());
+        Map<?, ?> drafts = (Map<?, ?>) ((Map<?, ?>) request.get("properties")).get("drafts");
+        return (Map<?, ?>) drafts.get("items");
     }
 
     @Test
@@ -45,6 +78,26 @@ class ControlApiSchemaTest {
             assertThat(definitions.containsKey(
                     operation.schema().result().substring("#/$defs/".length()))).isTrue();
         }
+    }
+
+    /**
+     * The delete tool's argument names are published the moment the tool is, and a remote model calls it
+     * by those names alone. Both are required: an id with no precondition would let a caller discard a
+     * version it never read, which is the one thing the conditional delete exists to prevent, and an
+     * optional precondition is indistinguishable from none for a model that omits what it may omit.
+     */
+    @Test
+    void artifactDeleteRequiresBothTheIdAndThePreconditionItWillBeCalledWith() {
+        Map<?, ?> definitions = (Map<?, ?>) ControlApiSchema.document().get("$defs");
+        Map<?, ?> request = (Map<?, ?>) definitions.get("ArtifactDeleteRequest");
+        Map<?, ?> properties = (Map<?, ?>) request.get("properties");
+
+        assertThat(properties.keySet().stream().map(String::valueOf).toList())
+                .containsExactlyInAnyOrder("id", "expectedContentHash");
+        assertThat(request.get("required")).isEqualTo(java.util.List.of("id", "expectedContentHash"));
+        assertThat(request.get("additionalProperties"))
+                .as("an unknown argument must be refused, not silently dropped")
+                .isEqualTo(false);
     }
 
     @Test
@@ -74,5 +127,29 @@ class ControlApiSchemaTest {
                         "description", "Canonical tapstate/v1 Source YAML")),
                 "additionalProperties", false,
                 "required", java.util.List.of("yaml")));
+    }
+
+    @Test
+    void sourceDraftSchemaConstrainsNestedFieldsButKeepsExtensionMapsOpen() {
+        Map<?, ?> definitions = (Map<?, ?>) ControlApiSchema.document().get("$defs");
+        Map<?, ?> request = (Map<?, ?>) definitions.get("SourceDraftRequest");
+        Map<?, ?> properties = (Map<?, ?>) request.get("properties");
+
+        Map<?, ?> metadata = (Map<?, ?>) properties.get("metadata");
+        assertThat(metadata.get("additionalProperties")).isEqualTo(false);
+        assertThat(((Map<?, ?>) metadata.get("properties")).keySet().stream().map(String::valueOf).toList())
+                .containsExactlyInAnyOrder("labels", "description");
+
+        Map<?, ?> table = (Map<?, ?>) ((Map<?, ?>) properties.get("tables")).get("items");
+        assertThat(((Map<?, ?>) ((Map<?, ?>) table.get("properties")).get("type")).get("enum"))
+                .isEqualTo(java.util.List.of("literal", "regex", "spec"));
+
+        Map<?, ?> srs = (Map<?, ?>) properties.get("srs");
+        assertThat(((Map<?, ?>) ((Map<?, ?>) srs.get("properties")).get("schemaEvolution")).get("enum"))
+                .isEqualTo(java.util.List.of("track", "ignore"));
+        assertThat(((Map<?, ?>) ((Map<?, ?>) srs.get("properties")).get("queryable")).get("type"))
+                .isEqualTo("boolean");
+        assertThat(((Map<?, ?>) properties.get("options")).get("additionalProperties"))
+                .isEqualTo(true);
     }
 }

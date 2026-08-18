@@ -104,9 +104,9 @@ class DataBrowserDottedFieldIT {
 
         try (ServerHandle server = InProcessServer.start(storeUri);
                 MongoEndpoints mongo = new MongoEndpoints()) {
-            mongo.insert(dataUri, COLLECTION,
+            mongo.insert(EndpointAddress.uri(dataUri), COLLECTION,
                     new Document("_id", LITERALLY_NAMED).append(LITERAL_COLUMN, HELD_UNDER_THE_LITERAL_NAME));
-            mongo.insert(dataUri, COLLECTION,
+            mongo.insert(EndpointAddress.uri(dataUri), COLLECTION,
                     new Document("_id", NESTED).append("price", new Document("usd", HELD_UNDER_THE_PATH)));
 
             ControlPlane control = new ControlPlane(server.baseUrl());
@@ -143,14 +143,14 @@ class DataBrowserDottedFieldIT {
                         Map.of("filtered on the column literally named `" + BARE + "`", byName,
                                 "filtered on a `usd` inside a `price`", byPath));
 
-                mongo.insert(dataUri, COLLECTION, new Document("_id", LITERALLY_NAMED_AGAIN)
+                mongo.insert(EndpointAddress.uri(dataUri), COLLECTION, new Document("_id", LITERALLY_NAMED_AGAIN)
                         .append(LITERAL_COLUMN, HELD_UNDER_THE_LITERAL_NAME));
-                mongo.insert(dataUri, COLLECTION, new Document("_id", NESTED_AGAIN)
+                mongo.insert(EndpointAddress.uri(dataUri), COLLECTION, new Document("_id", NESTED_AGAIN)
                         .append("price", new Document("usd", HELD_UNDER_THE_PATH)));
                 // Last, and matching both filters, so each follow having been sent it proves the two
                 // before it were already delivered or already filtered out. Without a change both
                 // follows must see, "the other document never arrived" is only "it has not arrived yet".
-                mongo.insert(dataUri, COLLECTION, bothReadings(BOTH_READINGS));
+                mongo.insert(EndpointAddress.uri(dataUri), COLLECTION, bothReadings(BOTH_READINGS));
 
                 assertThat(subjectsUnderTest(byName))
                         .as("the changes a follow filtered on the column literally named `%s` was sent", BARE)
@@ -182,7 +182,7 @@ class DataBrowserDottedFieldIT {
         int attempt = 0;
         List<String> silent = List.of();
         while (System.nanoTime() - deadline < 0) {
-            mongo.insert(dataUri, COLLECTION, bothReadings("live-" + attempt++));
+            mongo.insert(EndpointAddress.uri(dataUri), COLLECTION, bothReadings("live-" + attempt++));
             silent = follows.entrySet().stream()
                     .filter(follow -> follow.getValue().frames().isEmpty())
                     .map(Map.Entry::getKey)

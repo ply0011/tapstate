@@ -75,7 +75,7 @@ public final class Cli implements Runnable {
      * declaration, and the version is wanted on a path that must not depend on either. The build pins it
      * to the project version, so the string here cannot quietly drift from what was released.
      */
-    static final String VERSION = "tapstate 0.1.0";
+    static final String VERSION = "tapstate 0.2.0";
 
     /** Exit code for a verb that ran and did what was asked. */
     static final int EXIT_OK = 0;
@@ -122,6 +122,7 @@ public final class Cli implements Runnable {
             Map.entry("artifact.validate", "validate"),
             Map.entry("artifact.get", "get"),
             Map.entry("artifact.list", "ls"),
+            Map.entry("artifact.delete", "delete"),
             Map.entry("connection.test", "test"),
             Map.entry("connection.test-result", "test-result"),
             Map.entry("connection.discover-schema", "discover-schema"),
@@ -195,10 +196,12 @@ public final class Cli implements Runnable {
      * that only some of these verbs accept.
      */
     static final Map<String, VerbHelp> VERB_HELP = Map.ofEntries(
-            Map.entry("apply", new VerbHelp("[<path>]",
+            Map.entry("apply", new VerbHelp("[<path>] [--if-match <hash>]",
                     "Upload the workspace, or one artifact, creating or updating each resource.")),
             Map.entry("get", new VerbHelp("<id>",
                     "Fetch one stored artifact back as canonical YAML.")),
+            Map.entry("delete", new VerbHelp("<id> [--if-match <hash>] [-o text|json|yaml]",
+                    "Remove one stored artifact for good; --if-match pins the version removed.")),
             Map.entry("connectors", new VerbHelp("[-o text|json|yaml]",
                     "List the connectors registered on the server.")),
             Map.entry("register", new VerbHelp("<path> [-o text|json|yaml]",

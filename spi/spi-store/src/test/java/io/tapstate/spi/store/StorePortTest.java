@@ -1,6 +1,9 @@
 package io.tapstate.spi.store;
 
+import io.tapstate.core.event.SourceOrder;
+import io.tapstate.core.event.ChainPosition;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
@@ -16,8 +19,10 @@ import io.tapstate.core.model.ViewResource;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -515,7 +520,7 @@ class StorePortTest {
 
         meta.upsertConsumerOffset("chain", new ConsumerOffset("p1", Map.of("orders", 10L), null));
         meta.upsertConsumerOffset("chain", new ConsumerOffset("p2", Map.of("orders", 20L), null));
-        meta.upsertConsumerOffset("chain", new ConsumerOffset("p1", Map.of("orders", 99L), "gtid:aaa-1:99"));
+        meta.upsertConsumerOffset("chain", new ConsumerOffset("p1", Map.of("orders", 99L), new ChainPosition(new SourceOrder(1, 99), "gtid:aaa-1:99")));
 
         List<ConsumerOffset> cursors = meta.read("chain").orElseThrow().consumerOffsets();
         assertThat(cursors).extracting(ConsumerOffset::pipelineId).containsExactly("p1", "p2");
@@ -525,13 +530,80 @@ class StorePortTest {
     }
 
     @Test
-    void metaSetCdcStartPositionPersistsTheSeamPosition() {
+    void metaSetCdcStartPersistsTheSeamPositionAndTheGenerationItsSnapshotIsPinnedTo() {
         SrsMetaStore meta = new InMemoryStore().meta();
         meta.create("chain", null);
 
-        meta.setCdcStartPosition("chain", "binlog.000042:1024");
+        meta.setCdcStart("chain", "binlog.000042:1024", 3L);
 
-        assertThat(meta.read("chain").orElseThrow().cdcStartPosition()).isEqualTo("binlog.000042:1024");
+        // One call, both fields. A restart mid-snapshot has to answer "which generation did this snapshot
+        // begin in", and the seam position is the only record that it began at all -- so a store that could
+        // write the position without its generation would leave a snapshot that resumes with no way to know
+        // what to pin its rows to. The pair is written together because it is only ever read together.
+        SrsMeta record = meta.read("chain").orElseThrow();
+        assertThat(record.cdcStartPosition()).isEqualTo("binlog.000042:1024");
+        assertThat(record.snapshotEpoch()).isEqualTo(3L);
+    }
+
+    @Test
+    void metaOpenEpochAllocatesTheNextGenerationAndRemembersIt() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("chain", null);
+        assertThat(meta.read("chain").orElseThrow().epoch()).isZero();
+
+        assertThat(meta.openEpoch("chain")).isEqualTo(1L);
+        assertThat(meta.openEpoch("chain")).isEqualTo(2L);
+        assertThat(meta.read("chain").orElseThrow().epoch()).isEqualTo(2L);
+    }
+
+    @Test
+    void metaOpenEpochNeverRepeatsAGenerationAcrossChains() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("a", null);
+        meta.create("b", null);
+
+        // Generations are per chain: an order is only ever compared against another order of the same
+        // chain, and a shared counter would make one chain's restart look like progress on another's.
+        assertThat(meta.openEpoch("a")).isEqualTo(1L);
+        assertThat(meta.openEpoch("a")).isEqualTo(2L);
+        assertThat(meta.openEpoch("b")).isEqualTo(1L);
+        assertThat(meta.read("a").orElseThrow().epoch()).isEqualTo(2L);
+    }
+
+    @Test
+    void metaGenerationsSurviveALaterUnrelatedMutation() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("chain", null);
+        long running = meta.openEpoch("chain");
+        meta.setCdcStart("chain", "binlog.000042:1024", running);
+
+        meta.markSnapshotComplete("chain", "orders");
+        meta.advanceSourceReadOffset("chain", "gtid:aaa-1:900");
+        meta.appendSchemaVersion("chain", new SchemaVersion(0, Map.of("id", "int"), 0));
+
+        // Each facet is an independent writer of one record. A mutator that rebuilt the record without
+        // carrying the generations through would reset them to "none opened" without failing anything of
+        // its own, and every change after it would compare against a generation the chain has left behind.
+        SrsMeta record = meta.read("chain").orElseThrow();
+        assertThat(record.epoch()).isEqualTo(running);
+        assertThat(record.snapshotEpoch()).isEqualTo(running);
+    }
+
+    @Test
+    void metaOpenEpochLeavesTheSnapshotsPinnedGenerationAlone() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("chain", null);
+        long running = meta.openEpoch("chain");
+        meta.setCdcStart("chain", "binlog.000042:1024", running);
+
+        meta.openEpoch("chain");
+
+        // The restart that opens generation 2 is exactly when a snapshot that had not drained must keep
+        // generation 1. A store that advanced both would hand the rerun's rows the newer generation and
+        // let them overwrite changes the older one had already applied.
+        SrsMeta record = meta.read("chain").orElseThrow();
+        assertThat(record.epoch()).isEqualTo(2L);
+        assertThat(record.snapshotEpoch()).isEqualTo(1L);
     }
 
     @Test
@@ -547,6 +619,141 @@ class StorePortTest {
         assertThat(history.get(1).ddlSeq()).isEqualTo(12L);
     }
 
+    // --- the removal side of the per-pipeline stores, and the detach that frees a shared chain ---
+
+    @Test
+    void stateDesiredAndObservationDeleteRemoveTheDocumentAndReadIsEmptyAfterwards() {
+        StorePort store = new InMemoryStore();
+        store.state().create("p1", "STOPPED", T0);
+        store.desired().save(new DesiredState("p1", PipelineState.STOPPED, "rev-1"));
+        store.observations().save(new Observation("p1", PipelineState.STOPPED, Map.of(), Map.of()));
+
+        store.state().delete("p1");
+        store.desired().delete("p1");
+        store.observations().delete("p1");
+
+        assertThat(store.state().read("p1")).isEmpty();
+        assertThat(store.desired().read("p1")).isEmpty();
+        assertThat(store.observations().read("p1")).isEmpty();
+    }
+
+    @Test
+    void deletingAPipelineThatWasNeverStoredIsANoOpRatherThanAnError() {
+        StorePort store = new InMemoryStore();
+        // The removal path deletes all three unconditionally after the artifact is gone, and a pipeline
+        // that never ran has no checkpoint and no observation. If absence threw, an ordinary removal
+        // would report residue it does not have — and the artifact would already be unrecoverable.
+        assertThatCode(() -> {
+            store.state().delete("never-ran");
+            store.desired().delete("never-ran");
+            store.observations().delete("never-ran");
+        }).doesNotThrowAnyException();
+    }
+
+    @Test
+    void deletingOnePipelineLeavesTheOthersAlone() {
+        StorePort store = new InMemoryStore();
+        store.desired().save(new DesiredState("p1", PipelineState.RUNNING, "rev-1"));
+        store.desired().save(new DesiredState("p2", PipelineState.RUNNING, "rev-1"));
+
+        store.desired().delete("p1");
+
+        // Without this, a delete implemented as "clear the map" passes every assertion above.
+        assertThat(store.desired().read("p1")).isEmpty();
+        assertThat(store.desired().read("p2")).isPresent();
+    }
+
+    @Test
+    void detachConsumerRemovesOnlyThatConsumerAndKeepsTheChainsOwnAccumulatedTruth() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("chain", "7d");
+        meta.advanceSourceReadOffset("chain", "gtid:aaa-1:500");
+        meta.setCdcStart("chain", "gtid:aaa-1:1", 1L);
+        meta.appendSchemaVersion("chain", new SchemaVersion(0, Map.of("id", "int"), 0));
+        meta.upsertConsumerOffset("chain", new ConsumerOffset("leaving", Map.of("orders", 10L), null));
+        meta.upsertConsumerOffset("chain", new ConsumerOffset("staying", Map.of("orders", 20L), null));
+
+        meta.detachConsumer("chain", "leaving");
+
+        SrsMeta after = meta.read("chain").orElseThrow();
+        assertThat(after.consumerOffsets()).extracting(ConsumerOffset::pipelineId).containsExactly("staying");
+        // The chain outlives its departing consumer. A detach that rebuilt the document from the kept
+        // consumers alone would drop these four, and the loss shows up only as a chain that re-reads
+        // from the beginning — no error, and nothing here would have said so.
+        assertThat(after.sourceReadOffset()).isEqualTo("gtid:aaa-1:500");
+        assertThat(after.cdcStartPosition()).isEqualTo("gtid:aaa-1:1");
+        assertThat(after.schemaHistory()).extracting(SchemaVersion::version).containsExactly(0L);
+        assertThat(after.retention()).isEqualTo("7d");
+    }
+
+    @Test
+    void detachConsumerIsIdempotentAndUnseededChainsAreNotAnOrderingError() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("chain", "7d");
+        meta.upsertConsumerOffset("chain", new ConsumerOffset("leaving", Map.of(), null));
+        meta.detachConsumer("chain", "leaving");
+
+        // Deliberately the opposite rule from every other mutator (see the ordering-error test below),
+        // and the removal path depends on it: each chain is detached independently so one failure does
+        // not strand the rest, which means a chain already detached — or gone — must cost nothing.
+        assertThatCode(() -> {
+            meta.detachConsumer("chain", "leaving");
+            meta.detachConsumer("never-mined", "leaving");
+        }).doesNotThrowAnyException();
+        assertThat(meta.read("chain").orElseThrow().consumerOffsets()).isEmpty();
+    }
+
+    @Test
+    void miningChainIdsWithConsumerFindsEveryChainCarryingItAndNoneForAStranger() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("chain-a", "7d");
+        meta.create("chain-b", "7d");
+        meta.create("chain-c", "7d");
+        meta.upsertConsumerOffset("chain-a", new ConsumerOffset("shared", Map.of(), null));
+        meta.upsertConsumerOffset("chain-b", new ConsumerOffset("other", Map.of(), null));
+        meta.upsertConsumerOffset("chain-c", new ConsumerOffset("shared", Map.of(), null));
+
+        // Membership, not order: the lookup walks a hash map, so the order is unspecified. Every chain
+        // must be named — one missed is a cursor nothing later enumerates, pinning that chain's durable
+        // frontier for every other pipeline on it, with no error anywhere.
+        assertThat(meta.miningChainIdsWithConsumer("shared"))
+                .containsExactlyInAnyOrder("chain-a", "chain-c");
+        assertThat(meta.miningChainIdsWithConsumer("never-a-consumer")).isEmpty();
+    }
+
+    @Test
+    void metaMarkSnapshotCompleteIsPerTableAndIdempotent() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("chain", null);
+
+        meta.markSnapshotComplete("chain", "orders");
+        meta.markSnapshotComplete("chain", "order_items");
+        meta.markSnapshotComplete("chain", "orders");
+
+        // One chain carries many tables, each snapshotted by its own capture run, so the mark is per table
+        // rather than a chain-level flag. Re-marking is set membership: a replayed or re-run snapshot marks
+        // the same table again and must not accumulate entries.
+        assertThat(meta.read("chain").orElseThrow().snapshotCompletedTables())
+                .containsExactly("orders", "order_items");
+    }
+
+    @Test
+    void metaSnapshotMarksSurviveALaterUnrelatedMutation() {
+        SrsMetaStore meta = new InMemoryStore().meta();
+        meta.create("chain", null);
+        meta.markSnapshotComplete("chain", "orders");
+
+        meta.advanceSourceReadOffset("chain", "gtid:aaa-1:900");
+        meta.setCdcStart("chain", "binlog.000042:1024", 1L);
+        meta.openEpoch("chain");
+        meta.appendSchemaVersion("chain", new SchemaVersion(0, Map.of("id", "int"), 0));
+
+        // Each facet is an independent writer of one record. A mutator that rebuilt the record without
+        // carrying the marks through would erase the completion signal without failing anything of its
+        // own -- and the reader that depends on it would then see a table that had drained as un-drained.
+        assertThat(meta.read("chain").orElseThrow().snapshotCompletedTables()).containsExactly("orders");
+    }
+
     @Test
     void metaMutateOnAnUnseededChainIsAnOrderingError() {
         SrsMetaStore meta = new InMemoryStore().meta();
@@ -555,9 +762,12 @@ class StorePortTest {
         assertThatThrownBy(() -> meta.advanceSourceReadOffset("nope", "x")).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> meta.upsertConsumerOffset("nope", new ConsumerOffset("p", Map.of(), null)))
                 .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> meta.setCdcStartPosition("nope", "x")).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> meta.setCdcStart("nope", "x", 1L)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> meta.appendSchemaVersion("nope", new SchemaVersion(0, Map.of(), 0)))
                 .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> meta.markSnapshotComplete("nope", "orders"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> meta.openEpoch("nope")).isInstanceOf(IllegalStateException.class);
     }
 
     /**
@@ -580,6 +790,8 @@ class StorePortTest {
         private final Map<String, DesiredState> desired = new HashMap<>();
         private final Map<String, Observation> observations = new HashMap<>();
         private final Map<String, SrsMeta> srsMeta = new HashMap<>();
+        private final Map<String, byte[]> keyedState = new HashMap<>();
+        private final Map<String, NestDeadLetterRecord> deadLetters = new LinkedHashMap<>();
 
         @Override
         public ArtifactStore artifacts() {
@@ -628,6 +840,11 @@ class StorePortTest {
                         checkpoints.put(pipelineId, applied.next());
                     }
                     return outcome;
+                }
+
+                @Override
+                public void delete(String pipelineId) {
+                    checkpoints.remove(pipelineId);
                 }
             };
         }
@@ -770,6 +987,11 @@ class StorePortTest {
                 public List<String> pipelineIds() {
                     return List.copyOf(desired.keySet());
                 }
+
+                @Override
+                public void delete(String pipelineId) {
+                    desired.remove(pipelineId);
+                }
             };
         }
 
@@ -784,6 +1006,65 @@ class StorePortTest {
                 @Override
                 public Optional<Observation> read(String pipelineId) {
                     return Optional.ofNullable(observations.get(pipelineId));
+                }
+
+                @Override
+                public void delete(String pipelineId) {
+                    observations.remove(pipelineId);
+                }
+            };
+        }
+
+        @Override
+        public KeyedStateStore keyedState() {
+            return new KeyedStateStore() {
+                @Override
+                public Optional<byte[]> load(String namespace, String key) {
+                    return Optional.ofNullable(keyedState.get(namespace + "/" + key));
+                }
+
+                @Override
+                public void save(String namespace, String key, byte[] state) {
+                    keyedState.put(namespace + "/" + key, state);
+                }
+
+                @Override
+                public void delete(String namespace, String key) {
+                    keyedState.remove(namespace + "/" + key);
+                }
+
+                @Override
+                public void dropNamespace(String namespace) {
+                    keyedState.keySet().removeIf(id -> id.startsWith(namespace + "/"));
+                }
+
+                @Override
+                public long count(String namespace) {
+                    return keyedState.keySet().stream().filter(id -> id.startsWith(namespace + "/")).count();
+                }
+            };
+        }
+
+        @Override
+        public NestDeadLetterStore nestDeadLetters() {
+            return new NestDeadLetterStore() {
+                @Override
+                public void record(NestDeadLetterRecord record) {
+                    deadLetters.put(record.namespace() + "/" + record.element(), record);
+                }
+
+                @Override
+                public List<NestDeadLetterRecord> read(String namespace, int limit) {
+                    return deadLetters.values().stream()
+                            .filter(held -> held.namespace().equals(namespace))
+                            .sorted(Comparator.comparingLong(NestDeadLetterRecord::discardedAt).reversed())
+                            .limit(limit)
+                            .toList();
+                }
+
+                @Override
+                public void dropNamespace(String namespace) {
+                    deadLetters.values().removeIf(held -> held.namespace().equals(namespace));
                 }
             };
         }
@@ -809,7 +1090,7 @@ class StorePortTest {
                     SrsMeta current = require(miningChainId);
                     srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), sourceReadOffset,
                             current.consumerOffsets(), current.cdcStartPosition(), current.schemaHistory(),
-                            current.retention()));
+                            current.retention(), current.snapshotCompletedTables(), current.epoch(), current.snapshotEpoch()));
                 }
 
                 @Override
@@ -829,7 +1110,8 @@ class StorePortTest {
                         merged.add(offset);
                     }
                     srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), current.sourceReadOffset(),
-                            merged, current.cdcStartPosition(), current.schemaHistory(), current.retention()));
+                            merged, current.cdcStartPosition(), current.schemaHistory(), current.retention(),
+                            current.snapshotCompletedTables(), current.epoch(), current.snapshotEpoch()));
                 }
 
                 @Override
@@ -842,7 +1124,7 @@ class StorePortTest {
                             Map<String, Long> perTable = new HashMap<>(existing.perTableSeq());
                             perTable.put(table, lastReadSeq);
                             // Advance the read cursor only; the consumer's sink-acked position is untouched.
-                            merged.add(new ConsumerOffset(pipelineId, perTable, existing.sinkAckedSrcpos()));
+                            merged.add(new ConsumerOffset(pipelineId, perTable, existing.sinkAcked()));
                             advanced = true;
                         } else {
                             merged.add(existing);
@@ -853,18 +1135,19 @@ class StorePortTest {
                         merged.add(new ConsumerOffset(pipelineId, Map.of(table, lastReadSeq), null));
                     }
                     srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), current.sourceReadOffset(),
-                            merged, current.cdcStartPosition(), current.schemaHistory(), current.retention()));
+                            merged, current.cdcStartPosition(), current.schemaHistory(), current.retention(),
+                            current.snapshotCompletedTables(), current.epoch(), current.snapshotEpoch()));
                 }
 
                 @Override
-                public void advanceSinkAckedSrcpos(String miningChainId, String pipelineId, String srcpos) {
+                public void advanceSinkAcked(String miningChainId, String pipelineId, ChainPosition position) {
                     SrsMeta current = require(miningChainId);
                     List<ConsumerOffset> merged = new ArrayList<>();
                     boolean advanced = false;
                     for (ConsumerOffset existing : current.consumerOffsets()) {
                         if (existing.pipelineId().equals(pipelineId)) {
                             // Advance the sink-acked position only; the consumer's read cursor is untouched.
-                            merged.add(new ConsumerOffset(pipelineId, existing.perTableSeq(), srcpos));
+                            merged.add(new ConsumerOffset(pipelineId, existing.perTableSeq(), position));
                             advanced = true;
                         } else {
                             merged.add(existing);
@@ -872,18 +1155,29 @@ class StorePortTest {
                     }
                     if (!advanced) {
                         // A sink may ack before the reader first publishes a cursor: create the entry, cursor empty.
-                        merged.add(new ConsumerOffset(pipelineId, Map.of(), srcpos));
+                        merged.add(new ConsumerOffset(pipelineId, Map.of(), position));
                     }
                     srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), current.sourceReadOffset(),
-                            merged, current.cdcStartPosition(), current.schemaHistory(), current.retention()));
+                            merged, current.cdcStartPosition(), current.schemaHistory(), current.retention(),
+                            current.snapshotCompletedTables(), current.epoch(), current.snapshotEpoch()));
                 }
 
                 @Override
-                public void setCdcStartPosition(String miningChainId, String cdcStartPosition) {
+                public void setCdcStart(String miningChainId, String cdcStartPosition, long snapshotEpoch) {
                     SrsMeta current = require(miningChainId);
                     srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), current.sourceReadOffset(),
                             current.consumerOffsets(), cdcStartPosition, current.schemaHistory(),
-                            current.retention()));
+                            current.retention(), current.snapshotCompletedTables(), current.epoch(), snapshotEpoch));
+                }
+
+                @Override
+                public long openEpoch(String miningChainId) {
+                    SrsMeta current = require(miningChainId);
+                    long opened = current.epoch() + 1;
+                    srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), current.sourceReadOffset(),
+                            current.consumerOffsets(), current.cdcStartPosition(), current.schemaHistory(),
+                            current.retention(), current.snapshotCompletedTables(), opened, current.snapshotEpoch()));
+                    return opened;
                 }
 
                 @Override
@@ -892,7 +1186,48 @@ class StorePortTest {
                     List<SchemaVersion> history = new ArrayList<>(current.schemaHistory());
                     history.add(version);
                     srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), current.sourceReadOffset(),
-                            current.consumerOffsets(), current.cdcStartPosition(), history, current.retention()));
+                            current.consumerOffsets(), current.cdcStartPosition(), history, current.retention(),
+                            current.snapshotCompletedTables(), current.epoch(), current.snapshotEpoch()));
+                }
+
+                @Override
+                public void markSnapshotComplete(String miningChainId, String table) {
+                    SrsMeta current = require(miningChainId);
+                    if (current.snapshotCompletedTables().contains(table)) {
+                        return;
+                    }
+                    List<String> completed = new ArrayList<>(current.snapshotCompletedTables());
+                    completed.add(table);
+                    srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), current.sourceReadOffset(),
+                            current.consumerOffsets(), current.cdcStartPosition(), current.schemaHistory(),
+                            current.retention(), completed, current.epoch(), current.snapshotEpoch()));
+                }
+
+                @Override
+                public List<String> miningChainIdsWithConsumer(String pipelineId) {
+                    List<String> chains = new ArrayList<>();
+                    srsMeta.forEach((chainId, meta) -> {
+                        if (meta.consumerOffsets().stream()
+                                .anyMatch(offset -> offset.pipelineId().equals(pipelineId))) {
+                            chains.add(chainId);
+                        }
+                    });
+                    return chains;
+                }
+
+                @Override
+                public void detachConsumer(String miningChainId, String pipelineId) {
+                    // Idempotent, unlike the advancing mutators: an absent chain already satisfies the
+                    // end condition a detach states.
+                    SrsMeta current = srsMeta.get(miningChainId);
+                    if (current == null) {
+                        return;
+                    }
+                    List<ConsumerOffset> kept = current.consumerOffsets().stream()
+                            .filter(offset -> !offset.pipelineId().equals(pipelineId))
+                            .toList();
+                    srsMeta.put(miningChainId, new SrsMeta(current.miningChainId(), current.sourceReadOffset(),
+                            kept, current.cdcStartPosition(), current.schemaHistory(), current.retention()));
                 }
 
                 private SrsMeta require(String miningChainId) {

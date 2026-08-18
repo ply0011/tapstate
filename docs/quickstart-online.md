@@ -121,6 +121,25 @@ to a minute):
 docker compose ps          # the "server" row should read "healthy"
 ```
 
+### The server's address
+
+This guide addresses the server as `http://127.0.0.1:8080` throughout. Export it once and
+the shell commands below follow it:
+
+```sh
+export TAPSTATE_URL=http://127.0.0.1:8080
+```
+
+If 8080 is taken on your machine, move it in one place and use your port above:
+
+- **the compose stack** - the published port in `deploy/quickstart/docker-compose.yml`,
+  the left-hand side of `127.0.0.1:8080:8080`.
+- **a server you run yourself** - the `SERVER_PORT` environment variable, see
+  [Alternative: build and run the server from source](#alternative-build-and-run-the-server-from-source).
+
+Two places cannot read a shell variable and so spell the address out: what you type at the
+REPL prompt, and the MCP JSON configuration. Substitute your port there by hand.
+
 ## 3. Get the CLI
 
 Install it right here in the demo directory — the same installer as a permanent
@@ -262,7 +281,8 @@ Validate offline before going online (no server needed):
 ## 6. Go online and run
 
 Start the interactive REPL and drive it. The connection is session state, so these
-run inside one REPL session:
+run inside one REPL session. The REPL does not expand shell variables, so the address is
+written out below; type your own port instead if you moved it:
 
 ```console
 $ ./tapstate-cli/bin/tapstate -w work
@@ -327,7 +347,7 @@ not put it in command arguments:
 
 `--server` wins over `TAPSTATE_SERVER_URL`; the final default is
 `http://127.0.0.1:8080`. There is intentionally no `--token` option. Without
-`--allow-write`, the sidecar exposes exactly the 11 read tools. With it, six write
+`--allow-write`, the sidecar exposes exactly the 10 read tools. With it, five write
 tools are added, but the Server still enforces the token scope. A read token cannot
 write even when the tools are locally visible.
 
@@ -336,7 +356,8 @@ An agent should use this sequence:
 1. Call `connector_list`, then `connector_get` for each required connector.
 2. Build each Source envelope from the DSL semantics and build its `config` only
    from the complete live connector spec returned by `connector_get`.
-3. Call `source_create`, `connection_test`, and
+3. Call `source_draft` to validate the structured Source view and render canonical
+   YAML without persistence, then call `connection_test` and
    `connection_discover_schema`. Source config may contain `${NAME}` or
    `${var:NAME:default}` references; the sidecar expands them only inside `config`
    immediately before the HTTP request.
@@ -346,11 +367,11 @@ An agent should use this sequence:
    `pipeline_snapshot`, and `pipeline_logs` until the expected state and data are
    visible. Finish with `pipeline_stop`.
 
-`source_create` refuses to guess connector fields. If the connector is bundled-only,
+`source_draft` refuses to guess connector fields. If the connector is bundled-only,
 its runtime is unavailable, or the live response has no complete spec and content
-hash, the call fails before writing the Source. Secret values are returned only in
-redacted Source views; the MCP tool result exposes configured secret field names,
-not their values.
+hash, the call fails before rendering the Source YAML. It does not create an artifact
+or audit record. Secret values are returned only in redacted Source views; the MCP
+tool result exposes configured secret field names, not their values.
 
 Revoke the credential when the automation no longer needs it:
 
@@ -477,13 +498,20 @@ the server and databases are hosted changes.
      --tapstate.connectors.plugins-dir=./plugins
    ```
 
-   It listens on port **8080**. A Hazelcast `--add-opens` warning at startup is harmless.
+   It listens on port **8080**. If that port is taken, set `SERVER_PORT` to another one
+   before starting it, and point the rest of this section at the same value:
+
+   ```sh
+   export TAPSTATE_URL=http://127.0.0.1:8080     # match SERVER_PORT if you set one
+   ```
+
+   A Hazelcast `--add-opens` warning at startup is harmless.
 
 4. **First admin.** There is no bootstrap sidecar here, so create the first user with
    a one-time, localhost-only `curl` (a `204 No Content` means success):
 
    ```sh
-   curl -X POST http://localhost:8080/auth/bootstrap \
+   curl -X POST "$TAPSTATE_URL/auth/bootstrap" \
      -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}'
    ```
 

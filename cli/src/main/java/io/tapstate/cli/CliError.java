@@ -55,7 +55,13 @@ enum CliError implements TapstateErrorCode {
      * degraded view but a file of control characters. Decided entirely on the client — the server is
      * never asked, and would have no way to know.
      */
-    WATCH_NEEDS_A_TERMINAL("cli.watch-needs-a-terminal", Set.of());
+    WATCH_NEEDS_A_TERMINAL("cli.watch-needs-a-terminal", Set.of()),
+
+    /**
+     * A version precondition was offered for a batch holding more than one resource; {@code count} is how
+     * many it holds. One hash names one version, so there is no resource it could be describing.
+     */
+    IF_MATCH_NEEDS_ONE_RESOURCE("cli.if-match-needs-one-resource", Set.of("count"));
 
     private final String code;
     private final Set<String> placeholders;

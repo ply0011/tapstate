@@ -34,9 +34,10 @@ import java.util.regex.PatternSyntaxException;
  * -> hash: it parses each draft (structural + expression checks), validates the whole batch as one
  * closure (duplicate ids, reference closure, mode rules, and the connector capability matrix against
  * the catalog), judges the batch's row expressions against the columns of the tables its sources were
- * discovered to hold, then emits each resource's canonical form and content hash. It writes nothing, and the only
- * store it reads is the schema store — an observation of what discovery found, never the config truth
- * layer, which apply is the one writer of.
+ * discovered to hold, then emits each resource's canonical form and content hash. It writes nothing. It reads the
+ * schema store — an observation of what discovery found, never the config truth layer, which apply is
+ * the one writer of — and reads the artifact store only for a draft that carries a precondition, to
+ * judge that precondition against the stored version.
  * {@link #apply} runs a plan and then upserts each artifact into the store by its id, skipping the
  * write when the stored artifact's content hash is unchanged (a no-op).
  *
@@ -44,8 +45,11 @@ import java.util.regex.PatternSyntaxException;
  * only once a connection has been discovered, so an expression the data cannot survive is refused
  * here rather than at the offline check, which has nothing to judge it against.
  *
- * <p>Any validation failure aborts with the first coded {@code dsl.*} diagnostic before any upsert;
- * nothing is written on a validation failure. The batch is the closure: references resolve within the
+ * <p>Any validation failure aborts with the first coded {@code dsl.*} diagnostic before any upsert, and a
+ * draft whose precondition has gone stale aborts the same way with {@code artifact.version-conflict};
+ * nothing is written on either. The refusal is of the whole batch, never of the offending draft alone —
+ * a batch is one closure, so letting half of it land would store a state nothing ever validated. The
+ * batch is the closure: references resolve within the
  * submitted set. The union with store-resident artifacts is layered in where the store is consulted.
  *
  * <p>The catalog is supplied per plan rather than fixed, so the online path validates against the live
@@ -56,6 +60,13 @@ import java.util.regex.PatternSyntaxException;
  * — even with different raw key order — writes nothing. Apply writes the changed set — the created and
  * updated artifacts — as one atomic batch, so a mid-batch write failure rolls the whole batch back and
  * no partial batch is stored, matching the validation-failure guarantee on the write side.
+ *
+ * <p>A declared version is enforced <em>inside</em> that batch write, not only compared beforehand.
+ * The comparison in {@link #plan} is what produces the diagnostic an author can read; it is not what
+ * makes the edit safe, because validation runs between it and the write and a second author lands in
+ * that window. Handing the declared versions to the store makes the comparison and the write one
+ * indivisible operation, so the losing author is refused with {@code artifact.version-conflict}
+ * rather than silently overwriting the winner.
  */
 public final class ApplyService {
 
@@ -63,21 +74,31 @@ public final class ApplyService {
     private final ArtifactStore store;
     private final AuditGate auditGate;
     private final SchemaStore schemas;
+    private final PlanAdvisories advisories;
     private final DslParser parser = new DslParser();
     private final CanonicalWriter writer = new CanonicalWriter();
 
     public ApplyService(
-            Supplier<TapstateCatalog> catalog, ArtifactStore store, AuditGate auditGate, SchemaStore schemas) {
+            Supplier<TapstateCatalog> catalog, ArtifactStore store, AuditGate auditGate, SchemaStore schemas,
+            PlanAdvisories advisories) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.store = Objects.requireNonNull(store, "store");
         this.auditGate = Objects.requireNonNull(auditGate, "auditGate");
         this.schemas = Objects.requireNonNull(schemas, "schemas");
+        // Named rather than defaulted: a service that quietly reported "nothing to advise" for every batch
+        // would be indistinguishable from one whose rules all passed, so an assembly with no rules yet
+        // states that by handing over PlanAdvisories.none().
+        this.advisories = Objects.requireNonNull(advisories, "advisories");
     }
 
     /**
      * Validates and canonicalizes {@code drafts} as one batch, returning the artifacts an apply
-     * would upsert. Throws the first {@link DslException} (a coded, user-facing diagnostic) on any
-     * structural / reference / mode / capability violation.
+     * would upsert together with the advisory findings over them. Throws the first {@link DslException}
+     * (a coded, user-facing diagnostic) on any structural / reference / mode / capability violation.
+     *
+     * <p>The advisory pass runs last, over a batch every gate above it has already accepted — so a rule
+     * reads resources that are known good, and a refusal is never buried under advice about a batch that
+     * is not going anywhere.
      */
     public ApplyPlan plan(List<ArtifactDraft> drafts) {
         Objects.requireNonNull(drafts, "drafts");
@@ -85,14 +106,32 @@ public final class ApplyService {
         for (ArtifactDraft draft : drafts) {
             resources.add(parse(draft));
         }
+        // Preconditions are judged once every draft has parsed, so a malformed document is reported as
+        // malformed rather than as a version conflict, and before the batch is validated, so an author
+        // editing a version that has moved on is told that instead of being handed diagnostics about
+        // content they are about to rewrite. Each one declared is kept under the id it was declared
+        // against: this is the only point at which a draft and the id it parses to are both in hand.
+        Map<String, String> preconditions = new LinkedHashMap<>();
+        for (int index = 0; index < drafts.size(); index++) {
+            ArtifactDraft draft = drafts.get(index);
+            Resource parsed = resources.get(index);
+            requireCurrentVersion(draft, parsed);
+            if (draft.expectedContentHash() != null) {
+                preconditions.put(parsed.id(), draft.expectedContentHash());
+            }
+        }
         Workspace workspace = Workspace.of(resources, catalog.get());
-        RowExpressionTypeRules.validate(resources, discoveredTables(resources));
+        // Read once and handed to both: the gate judges the batch against it, then the advisory pass
+        // advises on the same reading rather than paying a second round trip for a possibly different one.
+        Map<String, List<DiscoveredTable>> discovered = discoveredTables(resources);
+        RowExpressionTypeRules.validate(resources, discovered);
+        List<Resource> validated = List.copyOf(workspace.resources());
         List<PreparedArtifact> prepared = new ArrayList<>();
-        for (Resource resource : workspace.resources()) {
+        for (Resource resource : validated) {
             String canonicalForm = writer.write(resource);
             prepared.add(new PreparedArtifact(resource, canonicalForm, CanonicalHash.of(canonicalForm)));
         }
-        return new ApplyPlan(prepared);
+        return new ApplyPlan(prepared, advisories.review(validated, discovered), preconditions);
     }
 
     /** Validates and plans a batch while performing no store or audit write. */
@@ -104,13 +143,14 @@ public final class ApplyService {
             return new ArtifactValidationResult(
                     false,
                     List.of(),
-                    List.of(new ValidationDiagnostic(diagnostic.code().code(), diagnostic.args())));
+                    List.of(new ValidationDiagnostic(diagnostic.code().code(), diagnostic.args())),
+                    List.of());
         }
         List<ArtifactOutcome> outcomes = new ArrayList<>();
         for (PreparedArtifact prepared : planned.artifacts()) {
             outcomes.add(outcome(prepared));
         }
-        return new ArtifactValidationResult(true, outcomes, List.of());
+        return new ArtifactValidationResult(true, outcomes, List.of(), planned.warnings());
     }
 
     /**
@@ -122,9 +162,10 @@ public final class ApplyService {
      * batch.
      *
      * <p>Apply is an audited write: the changed set passes the audit gate under {@code principal}, one
-     * record per changed artifact attributed by its own id, before any of it is stored. A no-op leaves no
-     * record because it changes nothing, and an audit-write failure refuses the whole apply
-     * ({@code control.audit-blocked}) with the store untouched.
+     * record per changed artifact attributed by its own id and carrying the version its draft declared
+     * it was editing, before any of it is stored. A no-op leaves no record because it changes nothing,
+     * and an audit-write failure refuses the whole apply ({@code control.audit-blocked}) with the store
+     * untouched.
      */
     public ApplyResult apply(String principal, List<ArtifactDraft> drafts) {
         Objects.requireNonNull(principal, "principal");
@@ -132,22 +173,40 @@ public final class ApplyService {
         List<ArtifactOutcome> outcomes = new ArrayList<>();
         List<Resource> toWrite = new ArrayList<>();
         List<AuditContext> audited = new ArrayList<>();
+        Map<String, String> enforced = new LinkedHashMap<>();
         for (PreparedArtifact prepared : plan.artifacts()) {
             ArtifactOutcome outcome = outcome(prepared);
-            ArtifactOutcome.Change change = outcome.change();
-            if (change != ArtifactOutcome.Change.UNCHANGED) {
+            if (outcome.change() != ArtifactOutcome.Change.UNCHANGED) {
                 toWrite.add(prepared.resource());
-            }
-            if (change != ArtifactOutcome.Change.UNCHANGED) {
-                audited.add(new AuditContext(principal, prepared.id()));
+                // The declared version travels with the record, so a version-checked edit is
+                // distinguishable in the audit trail from a blind overwrite of the same id. A draft that
+                // declared none records none, which is what that absence then means.
+                String declared = plan.precondition(prepared.id());
+                audited.add(new AuditContext(principal, prepared.id(), declared));
+                // Only the ids this batch actually overwrites are guarded at the write. An unchanged
+                // artifact is not written, so there is nothing for its declared version to protect —
+                // plan() already compared it, and the comparison is all a caller asked for.
+                if (declared != null) {
+                    enforced.put(prepared.id(), declared);
+                }
             }
             outcomes.add(outcome);
         }
         // The changed set is audited per artifact, then written as one atomic batch: all of it lands or,
         // on a write failure, none does.
+        //
+        // The declared versions are handed to the write rather than only to plan(). plan()'s comparison
+        // happens before a whole workspace validation and a schema-store read, so a second author
+        // editing the same id inside that window passes the same comparison and both writes land — the
+        // first author's edit is gone, and nothing anywhere reports it. Passing them here makes the
+        // comparison and the write one store operation, which is the only form of the check that
+        // survives a concurrent writer.
         return auditGate.dispatchAll(ControlOperations.ARTIFACT_APPLY, audited, () -> {
-            store.saveAll(toWrite);
-            return new ApplyResult(outcomes);
+            String conflicted = store.saveAll(toWrite, enforced).orElse(null);
+            if (conflicted != null) {
+                throw new TapstateException(ArtifactError.VERSION_CONFLICT, Map.of("id", conflicted), null);
+            }
+            return new ApplyResult(outcomes, plan.warnings());
         });
     }
 
@@ -199,7 +258,10 @@ public final class ApplyService {
                             for (SourceField field : table.fields()) {
                                 columns.put(field.name(), field.type());
                             }
-                            tables.add(new DiscoveredTable(table.name(), columns));
+                            // The row count travels with the columns, absence and all: a table nobody
+                            // counted has to stay distinguishable from one counted and found empty.
+                            tables.add(new DiscoveredTable(
+                                    table.name(), columns, table.approximateRowCount()));
                         }
                         bySource.put(source.id(), tables);
                     });
@@ -267,6 +329,25 @@ public final class ApplyService {
     /** The content hash of a stored artifact, recomputed over its canonical form for the no-op check. */
     private String storedHash(Resource stored) {
         return CanonicalHash.of(writer.write(stored));
+    }
+
+    /**
+     * Refuses a draft whose optional precondition no longer names the stored version. A draft without
+     * one is left alone, which is what keeps a caller that never asked for the check from ever being
+     * refused by it. An id that is not stored at all cannot match any version, and is reported as
+     * absent rather than as a conflict, so an author whose target was deleted is told what happened.
+     */
+    private void requireCurrentVersion(ArtifactDraft draft, Resource parsed) {
+        String expected = draft.expectedContentHash();
+        if (expected == null) {
+            return;
+        }
+        String id = parsed.id();
+        Resource stored = store.get(id).orElseThrow(() ->
+                new TapstateException(ArtifactError.NOT_FOUND, Map.of("id", id), null));
+        if (!storedHash(stored).equals(expected)) {
+            throw new TapstateException(ArtifactError.VERSION_CONFLICT, Map.of("id", id), null);
+        }
     }
 
     private Resource parse(ArtifactDraft draft) {

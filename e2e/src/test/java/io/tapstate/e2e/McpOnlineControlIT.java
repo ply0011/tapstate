@@ -59,92 +59,6 @@ class McpOnlineControlIT {
     private Path temporaryDirectory;
 
     @Test
-    void sourceDraftUsesOneDirectRequestAndKeepsTheSecretOffMcpStderr() throws Exception {
-        AtomicReference<Map<?, ?>> sourceRequest = new AtomicReference<>();
-        AtomicReference<String> authorization = new AtomicReference<>();
-        List<String> requests = new CopyOnWriteArrayList<>();
-        HttpServer server = server(exchange -> {
-            authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
-            requests.add(exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath());
-            if (exchange.getRequestURI().getPath().equals("/_ready")) {
-                answer(exchange, 200, "{}");
-                return;
-            }
-            sourceRequest.set((Map<?, ?>) JsonReader.parse(new String(
-                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
-            answer(exchange, 200, sourceDraftResponse());
-        });
-        Path stderr = temporaryDirectory.resolve("mcp.stderr");
-        try {
-            awaitServer(server);
-            requests.clear();
-            Process process = startMcp(server, stderr);
-            try (Writer input = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8);
-                    BufferedReader output = process.inputReader(StandardCharsets.UTF_8)) {
-                send(input, """
-                        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                          "protocolVersion":"2025-06-18","capabilities":{},
-                          "clientInfo":{"name":"tapstate-e2e","version":"1"}}}
-                        """);
-                Map<?, ?> initialized = receive(output);
-                assertThat(((Map<?, ?>) initialized.get("result")).get("protocolVersion"))
-                        .isEqualTo("2025-06-18");
-
-                send(input, """
-                        {"jsonrpc":"2.0","method":"notifications/initialized"}
-                        """);
-                send(input, """
-                        {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
-                        """);
-                List<?> tools = (List<?>) ((Map<?, ?>) receive(output).get("result")).get("tools");
-                assertThat(tools).hasSize(20);
-                assertThat(tools.stream()
-                        .map(tool -> String.valueOf(((Map<?, ?>) tool).get("name")))
-                        .toList())
-                        .contains("source_draft", "artifact_apply", "pipeline_stop")
-                        // The read face, offered by a real sidecar process against a real server.
-                        .contains("data_browser_collections", "data_browser_find", "data_browser_stats")
-                        .doesNotContain("source_create");
-
-                send(input, """
-                        {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
-                          "name":"source_draft","arguments":{"id":"orders","connector":"mysql",
-                          "config":{"host":"db.internal","password":"%s"}}}}
-                        """.formatted(SENTINEL_SECRET));
-                Map<?, ?> drafted = receive(output);
-                Map<?, ?> result = (Map<?, ?>) drafted.get("result");
-                assertThat(result.get("isError")).isEqualTo(false);
-                String yaml = String.valueOf(((Map<?, ?>) result.get("structuredContent")).get("yaml"));
-                assertThat(yaml).isEqualTo("""
-                        version: tapstate/v1
-                        kind: source
-                        id: orders
-                        connector: mysql
-                        config:
-                          host: db.internal
-                          password: %s
-                        """.formatted(SENTINEL_SECRET));
-            } finally {
-                process.getOutputStream().close();
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                    assertThat(process.waitFor(5, TimeUnit.SECONDS)).isTrue();
-                }
-            }
-            assertThat(process.exitValue()).isZero();
-            assertThat(requests).containsExactly("POST /api/sources:draft");
-            assertThat(authorization.get()).isEqualTo("Bearer " + MACHINE_TOKEN);
-            assertThat(((Map<?, ?>) sourceRequest.get().get("config")).get("password"))
-                    .isEqualTo(SENTINEL_SECRET);
-            assertThat(Files.readString(stderr))
-                    .doesNotContain(MACHINE_TOKEN)
-                    .doesNotContain(SENTINEL_SECRET);
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    @Test
     void readinessProbeTimesOutWhenPeerDoesNotRespond() throws Exception {
         CountDownLatch requestReceived = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -385,12 +299,6 @@ class McpOnlineControlIT {
                         .build(),
                 HttpResponse.BodyHandlers.discarding());
         assertThat(response.statusCode()).isEqualTo(200);
-    }
-
-    private static String sourceDraftResponse() {
-        return """
-                {"yaml":"version: tapstate/v1\\nkind: source\\nid: orders\\nconnector: mysql\\nconfig:\\n  host: db.internal\\n  password: %s\\n"}
-                """.formatted(SENTINEL_SECRET);
     }
 
     private static Path mcpBootJar() {

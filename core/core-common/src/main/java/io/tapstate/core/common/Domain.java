@@ -41,8 +41,13 @@ public enum Domain {
     // failures such as an operation refused because its mandatory audit record could not be written
     CONTROL,
     // runtime execution: driving the Jet job that runs a pipeline (submit / suspend / resume /
-    // cancel); diagnosable failures such as acting on a pipeline that has no running job (runtime)
+    // cancel), and the machinery the running job itself depends on — carrying a position through the
+    // engine, propagating a frontier; diagnosable failures such as acting on a pipeline that has no
+    // running job, or a position the frontier's encoding cannot represent (runtime)
     ENGINE,
+    // stateful assembly of nested documents: checking a nest tree, sizing its state, and the runtime
+    // limits and unresolvable references that stop or dead-letter part of it (runtime)
+    NEST,
     // observation read faces: reading a pipeline's store-backed status / metrics / snapshot;
     // diagnosable failures such as reading a pipeline that has published no observation (control)
     MONITOR,
@@ -57,6 +62,10 @@ public enum Domain {
     // -- a code sitting next to store.unreachable would read as an operator's problem rather than a
     // caller's
     DATA_BROWSER,
+    // resource-type-agnostic artifact operations: editing an already-applied resource under an
+    // optimistic-concurrency precondition, and removing one — including the reference and lifecycle
+    // grounds on which a removal is refused (control)
+    ARTIFACT,
     // source-specific control operations: identity, optimistic concurrency and reference protection
     SOURCE,
     // local MCP presentation: sidecar input, connector-spec and upstream-response failures

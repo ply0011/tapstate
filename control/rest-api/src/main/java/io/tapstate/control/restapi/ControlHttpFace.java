@@ -40,7 +40,9 @@ import tools.jackson.databind.DeserializationFeature;
         ConnectorController.class, DataBrowserController.class, DataBrowserStreamConfiguration.class,
         PipelineController.class, PipelineObservationController.class, PipelineLogsController.class,
         PipelineStreamConfiguration.class, ClusterController.class, HealthController.class,
-        SourceController.class, AuthController.class, TokenController.class, ApiExceptionHandler.class})
+        AuthController.class, TokenController.class, SourceController.class,
+        SourceDraftController.class,
+        ApiExceptionHandler.class})
 public class ControlHttpFace {
 
     @Bean
@@ -65,4 +67,5 @@ public class ControlHttpFace {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private abstract static class NonNullSourceJson {
     }
+
 }

@@ -23,7 +23,8 @@ class DomainTest {
                 .containsExactlyInAnyOrder(
                         "dsl", "cli", "core", "catalog", "schema", "lifecycle", "role", "boot",
                         "actuation", "store", "connector", "transform", "io", "control",
-                        "engine", "monitor", "data-browser", "source", "mcp", "capture");
+                        "engine", "monitor", "data-browser", "artifact", "source", "mcp",
+                        "capture", "nest");
     }
 
     @Test
@@ -40,6 +41,7 @@ class DomainTest {
         assertThat(Domain.isRegistered("data-browser")).isTrue();
         // the constant's own spelling is not a registered id -- only its kebab form is
         assertThat(Domain.isRegistered("data_browser")).isFalse();
+        assertThat(Domain.isRegistered("artifact")).isTrue();
         assertThat(Domain.isRegistered("source")).isTrue();
         assertThat(Domain.isRegistered("mcp")).isTrue();
     }

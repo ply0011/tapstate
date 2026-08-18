@@ -106,7 +106,7 @@ class DataBrowserCollectionsIT {
             // expression is refused outright unless its source was discovered before the apply.
             binding.registerConnector(E2eConnectorJar.CONNECTOR_ID);
             binding.readResources(WORKSPACE_FILES);
-            binding.seed(new TableAlias("src_file", WRITTEN_BY_THE_PRODUCT), SEEDED_ROWS);
+            binding.seed(new TableAlias("src_file", WRITTEN_BY_THE_PRODUCT), SeedRows.generated(SEEDED_ROWS));
             binding.discoverSchema("src_file");
             binding.applyResources(WORKSPACE_FILES);
 

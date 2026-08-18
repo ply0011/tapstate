@@ -21,12 +21,32 @@ enum MatcherWord {
     COUNT,
 
     /**
+     * One document at an endpoint, located by equality settings and held to scalar values by path and
+     * to list lengths by path. This is the word that makes "the right rows crossed" assertable rather
+     * than only "rows crossed": a count is satisfied by any rows at all, and every value-level claim -
+     * a field surviving the crossing, an embedded array holding exactly its children - needs to read
+     * inside one document. Reads through the same independent driver a count does.
+     */
+    DOC,
+
+    /**
      * The count of observable errors the pipeline has published. Its source is the metrics read face,
      * which the runtime derives from the pipeline's actual state - one while it is FAILED, zero otherwise -
      * so a dead data-plane job is an assertable statistic and not only a log line. The other run
      * statistics have no source wired yet, so no word offers them.
      */
     ERROR_COUNT,
+
+    /**
+     * How many changes the pipeline's nests could never place in a document, added up over its namespaces.
+     * Its source is the metrics read face, which carries a count per namespace that discarded anything.
+     *
+     * <p>The only word here whose subject leaves no other trace. A count of rows, a state and a failure code
+     * all describe something a specification could corner another way; discarded rows were never going to
+     * appear in any document, so a pipeline throwing all of them away and one throwing none produce
+     * identical counts, states and codes. Without this word a specification cannot tell those two apart.
+     */
+    DEAD_LETTERED,
 
     /**
      * The canonical code of the failure the pipeline has published. Its source is the status read face,

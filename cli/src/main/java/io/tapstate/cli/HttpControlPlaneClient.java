@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -318,7 +319,7 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
             HttpResponse<String> response =
                     send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() == 200) {
-                return new ApplyOutcome.Applied(applyItems(response.body()));
+                return applied(response.body());
             }
             Rejection r = rejection(response.body(), "The server refused the apply.");
             return new ApplyOutcome.Rejected(r.code(), r.message());
@@ -333,7 +334,7 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
     @Override
     public GetOutcome get(URI baseUrl, String credential, String id) {
         try {
-            HttpRequest request = authed(baseUrl, "/api/artifacts/" + id, credential).GET().build();
+            HttpRequest request = authed(baseUrl, "/api/artifacts/" + urlSegment(id), credential).GET().build();
             HttpResponse<String> response =
                     send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             int status = response.statusCode();
@@ -353,6 +354,55 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
         } catch (IOException | RuntimeException e) {
             return new GetOutcome.Unreachable();
         }
+    }
+
+    @Override
+    public DeleteOutcome delete(URI baseUrl, String credential, String id, String expectedContentHash) {
+        try {
+            HttpRequest.Builder builder = authed(
+                    baseUrl, "/api/artifacts/" + urlSegment(id), credential);
+            // Send no If-Match at all rather than an empty one when the caller supplied no precondition:
+            // the server tells "you sent none" (428) apart from "yours is stale" (412), and an empty
+            // header would turn the first into the second.
+            if (expectedContentHash != null) {
+                builder.header("If-Match", "\"" + expectedContentHash + "\"");
+            }
+            HttpResponse<String> response = send(
+                    builder.DELETE().build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() / 100 == 2) {
+                return new DeleteOutcome.Removed(id);
+            }
+            return rejectedDelete(response.body());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new DeleteOutcome.Unreachable();
+        } catch (IOException | RuntimeException e) {
+            return new DeleteOutcome.Unreachable();
+        }
+    }
+
+    /**
+     * Decodes a refused removal, keeping the named parameters as well as the message. The two refusal
+     * grounds each carry what the caller has to act on — who still references the resource, and what state
+     * the pipeline is really in — so dropping the parameters would leave a sentence and no next step.
+     */
+    private static DeleteOutcome rejectedDelete(String body) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        try {
+            if (JsonReader.parse(body) instanceof Map<?, ?> map && map.get("code") instanceof String code) {
+                String message = map.get("message") instanceof String m ? m : code;
+                if (map.get("params") instanceof Map<?, ?> raw) {
+                    raw.forEach((key, value) -> params.put(String.valueOf(key), value));
+                }
+                // An unmodifiable view rather than Map.copyOf: copyOf rejects a null value, and the
+                // throw would be caught below and cost the caller the code and the message over the
+                // least informative part of the body. A null-valued parameter is kept as sent.
+                return new DeleteOutcome.Rejected(code, message, Collections.unmodifiableMap(params));
+            }
+        } catch (RuntimeException malformed) {
+            // fall through: a non-coded / unparseable error body is still a refusal, not a crash
+        }
+        return new DeleteOutcome.Rejected("", "The server refused the removal.", Map.of());
     }
 
     @Override
@@ -1148,13 +1198,22 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
         return URI.create(base + path);
     }
 
-    /** The apply request body: {@code {"drafts":[{"source":..,"content":..}]}} in submission order. */
+    /**
+     * The apply request body: {@code {"drafts":[{"source":..,"content":..}]}} in submission order, each
+     * draft carrying {@code expectedContentHash} only when one was given. A draft with no precondition
+     * omits the key rather than sending null, so a request that asked for no check stays exactly the shape
+     * it has always been — and the published schema refuses properties it does not declare, which a null
+     * would still be one of.
+     */
     private static String applyBody(List<LocalDraft> drafts) {
         List<Object> array = new ArrayList<>();
         for (LocalDraft draft : drafts) {
             Map<String, Object> d = new LinkedHashMap<>();
             d.put("source", draft.source());
             d.put("content", draft.content());
+            if (draft.expectedContentHash() != null) {
+                d.put("expectedContentHash", draft.expectedContentHash());
+            }
             array.add(d);
         }
         Map<String, Object> body = new LinkedHashMap<>();
@@ -1162,10 +1221,22 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
         return JsonOut.write(body);
     }
 
+    /**
+     * A 200 apply body decoded into its two arrays: the per-artifact outcomes and the advisory warnings.
+     * The body is parsed once and each array read from the same map, so the two never disagree about
+     * which response they came from.
+     */
+    private static ApplyOutcome.Applied applied(String body) {
+        if (JsonReader.parse(body) instanceof Map<?, ?> map) {
+            return new ApplyOutcome.Applied(applyItems(map), applyWarnings(map));
+        }
+        return new ApplyOutcome.Applied(List.of(), List.of());
+    }
+
     /** The apply outcomes decoded from a 200 body's {@code outcomes} array; empty if the shape is unexpected. */
-    private static List<ApplyOutcome.Item> applyItems(String body) {
+    private static List<ApplyOutcome.Item> applyItems(Map<?, ?> map) {
         List<ApplyOutcome.Item> items = new ArrayList<>();
-        if (JsonReader.parse(body) instanceof Map<?, ?> map && map.get("outcomes") instanceof List<?> outcomes) {
+        if (map.get("outcomes") instanceof List<?> outcomes) {
             for (Object o : outcomes) {
                 if (o instanceof Map<?, ?> m
                         && m.get("id") instanceof String id
@@ -1176,6 +1247,34 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
             }
         }
         return items;
+    }
+
+    /**
+     * The advisory findings decoded from a 200 body's {@code warnings} array. A server that sends none —
+     * or one old enough not to send the array at all — decodes to no warnings rather than to a null the
+     * caller has to guard. An entry with no code is skipped on its own: it costs its own line, never the
+     * applied result, because the batch did land whatever the server said about it afterwards.
+     */
+    private static List<ApplyOutcome.Warning> applyWarnings(Map<?, ?> map) {
+        List<ApplyOutcome.Warning> warnings = new ArrayList<>();
+        if (map.get("warnings") instanceof List<?> entries) {
+            for (Object o : entries) {
+                if (o instanceof Map<?, ?> m && m.get("code") instanceof String code) {
+                    warnings.add(new ApplyOutcome.Warning(code, warningParams(m.get("params"))));
+                }
+            }
+        }
+        return warnings;
+    }
+
+    /** One warning's named params, keyed by name; anything but a JSON object reads as none. */
+    private static Map<String, Object> warningParams(Object params) {
+        if (!(params instanceof Map<?, ?> map)) {
+            return Map.of();
+        }
+        Map<String, Object> named = new LinkedHashMap<>();
+        map.forEach((key, value) -> named.put(String.valueOf(key), value));
+        return named;
     }
 
     /** One stored artifact decoded from a 200 body, or {@code null} if the body is not a usable artifact. */

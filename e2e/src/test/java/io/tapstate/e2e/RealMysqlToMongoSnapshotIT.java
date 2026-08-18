@@ -3,6 +3,7 @@ package io.tapstate.e2e;
 import io.tapstate.core.lifecycle.LifecycleVerb;
 import io.tapstate.testsupport.DockerGate;
 
+import org.bson.Document;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -13,10 +14,16 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TimeZone;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,7 +40,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Snapshot only on purpose: this is the smallest real crossing, batch-read to sink with no change
  * stream, so it needs no binlog and no replication grant and rests on nothing but the connector reading
- * a table and the sink writing one. The change-stream half is {@link RealMysqlToMongoCdcIT}.
+ * a table and the sink writing one. The change-stream half is the declarative example
+ * a-real-change-stream-carries-rows-written-after-start.
+ *
+ * <p>The crossing itself is also witnessed declaratively, by the example
+ * real-mysql-rows-cross-to-a-real-mongo-target. What keeps this class is the timestamp claim below: a
+ * seed spells its rows as strings and integers only, so a TIMESTAMP(3) column, the session time zone it
+ * is read in, and an instant compared as an instant are all unsayable there. When the specification
+ * grows those words this class has nothing left the example cannot say, and goes.
  *
  * <p>Run on both fidelity tiers. Embedded in this JVM, and - the one that matters here - against the
  * shipped boot jar in its own process: that is the connector loaded by the fat-jar the product actually
@@ -59,6 +73,8 @@ class RealMysqlToMongoSnapshotIT {
     private static final String TABLE = "orders";
     private static final String TARGET_COLLECTION = "player_address";
     private static final String PIPELINE_ID = "mysql2mongo";
+    private static final String TIMESTAMP_COLUMN = "created_at";
+    private static final Instant CREATED_AT = Instant.parse("2026-08-12T13:08:43.123Z");
 
     @BeforeAll
     static void requireDockerAndRealConnectors() {
@@ -100,17 +116,26 @@ class RealMysqlToMongoSnapshotIT {
 
                 control.lifecycle(PIPELINE_ID, LifecycleVerb.START);
 
-                awaitCount(mongo, targetUri, TARGET_COLLECTION, SEEDED_ROWS);
+                // Dialled as the uri this test already holds: the target is a store it created itself,
+                // not a resource it applied and can be handed the settings of.
+                EndpointAddress target = EndpointAddress.uri(targetUri);
+                awaitCount(mongo, target, TARGET_COLLECTION, SEEDED_ROWS);
+                assertThat(mongo.documents(target, TARGET_COLLECTION))
+                        .as("the MySQL TIMESTAMP values read back from Mongo")
+                        .allSatisfy(document -> assertThat(document.get(TIMESTAMP_COLUMN))
+                                .isInstanceOf(Date.class)
+                                .isEqualTo(Date.from(CREATED_AT)));
             }
         }
     }
 
     /** Reads the target the way a user would, from outside the product, until the rows are all there. */
-    private static void awaitCount(MongoEndpoints mongo, String targetUri, String collection, long expected) {
+    private static void awaitCount(
+            MongoEndpoints mongo, EndpointAddress target, String collection, long expected) {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         long last = -1;
         while (System.nanoTime() - deadline < 0) {
-            last = mongo.count(targetUri, collection);
+            last = mongo.count(target, collection);
             if (last == expected) {
                 return;
             }
@@ -125,18 +150,26 @@ class RealMysqlToMongoSnapshotIT {
         try (Connection connection =
                 DriverManager.getConnection(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword())) {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("CREATE TABLE " + TABLE + " (id INT PRIMARY KEY, name VARCHAR(64))");
+                statement.execute("SET time_zone = '+00:00'");
+                statement.execute("CREATE TABLE " + TABLE + " (id INT PRIMARY KEY, name VARCHAR(64), "
+                        + TIMESTAMP_COLUMN + " TIMESTAMP(3) NOT NULL)");
             }
             try (PreparedStatement insert =
-                    connection.prepareStatement("INSERT INTO " + TABLE + " (id, name) VALUES (?, ?)")) {
+                    connection.prepareStatement("INSERT INTO " + TABLE + " (id, name, " + TIMESTAMP_COLUMN
+                            + ") VALUES (?, ?, ?)")) {
                 for (long id = 1; id <= rows; id++) {
                     insert.setLong(1, id);
                     insert.setString(2, "order-" + id);
+                    insert.setTimestamp(3, Timestamp.from(CREATED_AT), utcCalendar());
                     insert.addBatch();
                 }
                 insert.executeBatch();
             }
         }
+    }
+
+    private static Calendar utcCalendar() {
+        return Calendar.getInstance(TimeZone.getTimeZone(ZoneOffset.UTC));
     }
 
     /**

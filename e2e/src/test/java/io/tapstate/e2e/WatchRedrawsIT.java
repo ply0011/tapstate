@@ -102,7 +102,7 @@ class WatchRedrawsIT {
                 MongoEndpoints mongo = new MongoEndpoints();
                 MongoClient upstream = MongoClients.create(new ConnectionString(upstreamUri))) {
 
-            mongo.insert(upstreamUri, COLLECTION, new Document("_id", ROW_ID)
+            mongo.insert(EndpointAddress.uri(upstreamUri), COLLECTION, new Document("_id", ROW_ID)
                     .append("customer", "first")
                     .append("regions", List.of("north", "south")));
 
@@ -181,7 +181,7 @@ class WatchRedrawsIT {
             // early that (2) times out first, so this line is carried on the argument above rather than
             // on a witness. It stays because the hole it names is real and cheap to close, not because
             // anything has shown it closing.
-            assertThat(mongo.count(viewUri, COLLECTION))
+            assertThat(mongo.count(EndpointAddress.uri(viewUri), COLLECTION))
                     .as("rows in the view after an edit to the single upstream row")
                     .isEqualTo(1);
         }
@@ -193,7 +193,7 @@ class WatchRedrawsIT {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         List<Document> held = List.of();
         while (System.nanoTime() - deadline < 0) {
-            held = mongo.documents(viewUri, COLLECTION);
+            held = mongo.documents(EndpointAddress.uri(viewUri), COLLECTION);
             if (held.stream().anyMatch(wanted)) {
                 return;
             }
