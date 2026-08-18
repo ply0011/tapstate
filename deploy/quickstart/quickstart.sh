@@ -72,13 +72,6 @@ config: { host: mysql, port: 3306, database: appdb, username: root, password: se
 mode: cdc
 tables: [ orders ]
 YAML
-    cat > work/source/views.tap.yml <<'YAML'
-version: tapstate/v1
-kind: source
-id: views
-connector: mongodb
-config: { isUri: true, uri: "mongodb://mongo:27017/views?directConnection=true" }
-YAML
     cat > work/pipeline/sync_orders.tap.yml <<'YAML'
 version: tapstate/v1
 kind: pipeline

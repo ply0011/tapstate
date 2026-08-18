@@ -294,6 +294,11 @@ class ControlPlaneConfiguration {
     }
 
     @Bean
+    ViewStoreSeedRunner viewStoreSeedRunner(StorePort storePort, MongoProperties mongoProperties) {
+        return new ViewStoreSeedRunner(storePort.artifacts(), mongoProperties.getUri());
+    }
+
+    @Bean
     ConnectorRegisterService connectorRegisterService(ConnectorArtifactRegistrar registrar, AuditGate auditGate) {
         // The register verb reaches the distribution store through the same registrar the seed sweep uses; it
         // implements the spi ingestion port, so control-core drives it without depending on the adapters ring.

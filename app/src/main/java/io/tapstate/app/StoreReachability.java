@@ -6,8 +6,10 @@ import io.tapstate.spi.store.ConnectionTestResult;
 import io.tapstate.spi.store.ConnectionTester;
 import java.time.Duration;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -59,30 +61,47 @@ interface StoreReachability {
      *
      * <p>A connector's connection test carries no deadline of its own, so a store that accepts the
      * connection and then goes quiet would park the start indefinitely -- and an indefinite start is the
-     * failure this task exists to remove, not a lesser form of it. The probe runs on its own thread and is
-     * interrupted on expiry; a connector that ignores the interrupt leaves that thread parked, which is
-     * accepted here because the alternative is parking the caller as well.
+     * failure this task exists to remove, not a lesser form of it.
+     *
+     * <p>The probe runs on a thread of its own, which it must: a {@code CompletableFuture} cannot be made
+     * to interrupt anything ({@code cancel}'s flag is documented as having no effect there), so a probe
+     * started that way would run to completion on a pool shared with the rest of the JVM no matter what
+     * this method did about the deadline. Submitted to an executor instead, {@code cancel(true)} does
+     * interrupt, so a connector that honours interruption stops when this gives up. One that ignores it
+     * still finishes in its own time -- on a daemon thread that belongs to this call and holds nothing
+     * shared, so what leaks is bounded by that connector rather than by the pool it landed in.
      */
     static StoreReachability bounded(StoreReachability probe, Duration timeout) {
         return (storeSourceId, connectorId, settings) -> {
-            CompletableFuture<Void> answer = CompletableFuture.runAsync(
-                    () -> probe.requireReachable(storeSourceId, connectorId, settings));
+            ExecutorService worker = Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "view-store-probe");
+                thread.setDaemon(true);
+                return thread;
+            });
             try {
-                answer.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            } catch (TimeoutException e) {
-                answer.cancel(true);
-                throw unreachable(storeSourceId,
-                        "no answer within " + timeout.toMillis() + "ms");
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw unreachable(storeSourceId, "interrupted while probing");
-            } catch (ExecutionException e) {
-                Throwable cause = e.getCause();
-                // A coded refusal from the probe is the answer, not a wrapper to re-describe.
-                if (cause instanceof TapstateException coded) {
-                    throw coded;
+                Future<?> answer = worker.submit(
+                        () -> probe.requireReachable(storeSourceId, connectorId, settings));
+                try {
+                    answer.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+                } catch (TimeoutException e) {
+                    answer.cancel(true);
+                    throw unreachable(storeSourceId,
+                            "no answer within " + timeout.toMillis() + "ms");
+                } catch (InterruptedException e) {
+                    answer.cancel(true);
+                    Thread.currentThread().interrupt();
+                    throw unreachable(storeSourceId, "interrupted while probing");
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause();
+                    // A coded refusal from the probe is the answer, not a wrapper to re-describe.
+                    if (cause instanceof TapstateException coded) {
+                        throw coded;
+                    }
+                    throw unreachable(storeSourceId, String.valueOf(cause));
                 }
-                throw unreachable(storeSourceId, String.valueOf(cause));
+            } finally {
+                // Stops accepting and lets the thread go; a probe still running is already cancelled.
+                worker.shutdownNow();
             }
         };
     }

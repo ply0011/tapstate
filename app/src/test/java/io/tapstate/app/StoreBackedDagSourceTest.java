@@ -232,6 +232,32 @@ class StoreBackedDagSourceTest {
     }
 
     @Test
+    void giving_up_actually_interrupts_the_probe_rather_than_abandoning_it() throws InterruptedException {
+        // Giving up on the answer and giving up on the work are different things, and only the second
+        // frees the thread. Left un-interrupted, a probe against a store that never replies keeps running
+        // for as long as its connector takes -- invisible, because the caller already returned. Asserting
+        // the timeout alone cannot see that: it passes identically either way.
+        FakeStorePort store = seededViewPipeline();
+        java.util.concurrent.CountDownLatch interrupted = new java.util.concurrent.CountDownLatch(1);
+        StoreReachability neverAnswers = (id, connectorId, settings) -> {
+            try {
+                Thread.sleep(Duration.ofMinutes(5));
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        assertThatThrownBy(() -> new StoreBackedDagSource(
+                store, StoreReachability.bounded(neverAnswers, Duration.ofMillis(200))).dagFor("p"))
+                .isInstanceOf(TapstateException.class);
+
+        assertThat(interrupted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                .as("the probe was interrupted, not merely left behind")
+                .isTrue();
+    }
+
+    @Test
     void a_store_that_answers_is_not_refused() {
         // The refusals above are worth nothing if the healthy case does not pass them: a probe wired to
         // reject everything would satisfy both of them and break every working deployment.

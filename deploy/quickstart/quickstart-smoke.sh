@@ -175,8 +175,15 @@ if [ -n "$pw_a" ] && [ "$pw_a" != "$pw_b" ]; then ok "each fresh run gets a diff
 # --- the demo workspace is generated, uses in-network addresses, and honours the CEL constraint ------
 WORK="$PREP/work"
 have work/source/db_src.tap.yml        "generates the source resource"
-have work/source/views.tap.yml         "generates the target resource"
 have work/pipeline/sync_orders.tap.yml "generates the pipeline resource"
+# The managed store is deliberately NOT here. It is the deployment's, registered by the server at
+# startup, and a demo that shipped it as a file to apply would be teaching the opposite -- that the
+# store is one more thing an author owns and has to hand back.
+if [ ! -e "$WORK/source/views.tap.yml" ]; then
+  ok "does not generate the managed store: the deployment provides it"
+else
+  bad "the managed store is still generated as a workspace file: $(cat "$WORK/source/views.tap.yml")"
+fi
 # Addresses use compose service names: the connector runs inside the server container, so 127.0.0.1
 # would point the server at itself, not at the databases.
 if grep -q 'host: mysql' "$WORK/source/db_src.tap.yml" 2>/dev/null && ! grep -q '127.0.0.1' "$WORK/source/db_src.tap.yml" 2>/dev/null; then
@@ -184,20 +191,15 @@ if grep -q 'host: mysql' "$WORK/source/db_src.tap.yml" 2>/dev/null && ! grep -q 
 else
   bad "source is not addressed by service name: $(cat "$WORK/source/db_src.tap.yml" 2>/dev/null)"
 fi
-if grep -q 'mongo:27017' "$WORK/source/views.tap.yml" 2>/dev/null && ! grep -q '127.0.0.1' "$WORK/source/views.tap.yml" 2>/dev/null; then
-  ok "target addresses mongo by its compose service name, not loopback"
+# The store the server seeds is derived from its own store URI, so that URI has to be reachable from
+# inside the container for the derived one to be too. Checked on the compose file, which is where it is
+# set: loopback here would point the server at itself and the derived views URI would inherit exactly
+# that mistake, one indirection further from anyone looking for it.
+if grep -q 'TAPSTATE_STORE_MONGO_URI:.*mongo:27017' "$PREP/docker-compose.yml" 2>/dev/null \
+   && ! grep -q 'TAPSTATE_STORE_MONGO_URI:.*127.0.0.1' "$PREP/docker-compose.yml" 2>/dev/null; then
+  ok "the server's store URI addresses mongo by its compose service name, not loopback"
 else
-  bad "target is not addressed by service name: $(cat "$WORK/source/views.tap.yml" 2>/dev/null)"
-fi
-# The resource id -- not the filename -- is what the data browser prefixes a collection with, so a
-# workspace whose file is views.tap.yml but whose `id:` still reads warehouse would show `warehouse.orders`
-# to the user while looking renamed on disk. Assert the id, and assert the old name is gone from the whole
-# workspace: the pipeline's sync target names it too, and a half-done rename leaves a workspace that fails
-# to validate rather than one that reads oddly.
-if grep -q '^id: views$' "$WORK/source/views.tap.yml" 2>/dev/null; then
-  ok "the default target declares id: views (what the data browser prefixes collections with)"
-else
-  bad "default target id is not views: $(grep -n '^id:' "$WORK/source/views.tap.yml" 2>/dev/null)"
+  bad "server store URI is not addressed by service name: $(grep TAPSTATE_STORE_MONGO_URI "$PREP/docker-compose.yml" 2>/dev/null)"
 fi
 stale="$(grep -rl 'warehouse' "$WORK" 2>/dev/null || true)"
 if [ -z "$stale" ]; then
@@ -206,7 +208,7 @@ else
   bad "warehouse survives the rename in: $stale"
 fi
 vcount="$(cat "$WORK"/source/*.tap.yml "$WORK"/pipeline/*.tap.yml 2>/dev/null | grep -c '^version: tapstate/v1' || true)"
-if [ "$vcount" = 3 ]; then ok "all three resources declare version: tapstate/v1"; else bad "version lines = $vcount (want 3)"; fi
+if [ "$vcount" = 2 ]; then ok "both generated resources declare version: tapstate/v1"; else bad "version lines = $vcount (want 2)"; fi
 # HARD CONSTRAINT: the decimal `amount` column cannot pass through a CEL expression in this preview, so
 # the demo pipeline must never name it -- it only ever passes through untouched.
 if ! grep -q 'amount' "$WORK/pipeline/sync_orders.tap.yml" 2>/dev/null \
