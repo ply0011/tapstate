@@ -533,6 +533,14 @@ server's terminal.
 
 This runtime is a preview. Known constraints in this slice:
 
+- **The bundled store is not a security boundary.** The `mongo` service runs without
+  `--auth`, and the server's control-plane data — users, tokens, audit, connection
+  configuration, applied artifacts — shares that instance with everything your
+  pipelines write. A holder of a Tapstate token can point an ordinary `kind: source`
+  at the `tapstate` database and read it: valid DSL, not a bypass. The container
+  publishes no host port, so the threshold is a token rather than network reach. Do
+  not put data in this deployment that its own users should not see; isolating the two
+  needs authentication or a second instance, and this preview has neither.
 - **Single node, in-memory.** No multi-node HA. A server restart does **not** resume
   from a persisted offset — it replays from the source (idempotent upsert absorbs the
   overlap). Durable resume / exactly-once are not in this preview.
