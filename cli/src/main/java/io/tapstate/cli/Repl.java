@@ -1912,8 +1912,16 @@ final class Repl {
     /** The reserved catalog namespace the connector API's test-item keys are given wording under. */
     private static final String PDK_TEST_ITEM_PREFIX = "pdk.testitem.";
 
+    /**
+     * A dotted lowercase identifier and nothing else: two or more segments, separated by dots.
+     *
+     * <p>One repetition, and each pass through it must begin with a literal dot. That is what keeps it
+     * linear. An earlier form had two adjacent groups that could both match the same {@code .segment},
+     * so {@code a.b.c.d} could be split between them in exponentially many ways and a long input would
+     * be backtracked through all of them.
+     */
     private static final Pattern TRANSLATION_KEY =
-            Pattern.compile("[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*(?:\\.[a-z0-9-]+)+");
+            Pattern.compile("[a-z0-9-]+(?:\\.[a-z0-9-]+)+");
 
     /** The report as an ordered tree for the machine surfaces, omitting the optional check fields left null. */
     private static Map<String, Object> reportMap(ConnectionReport report) {
