@@ -28,6 +28,9 @@ import io.tapstate.spi.store.ConnectorCatalogStore;
 import io.tapstate.spi.store.ConnectorSpecStore;
 import io.tapstate.spi.store.ConnectorRegistry;
 import io.tapstate.spi.store.DesiredStore;
+import io.tapstate.spi.store.ConnectionTestItem;
+import io.tapstate.spi.store.ConnectionTestResult;
+import io.tapstate.spi.store.ConnectionTester;
 import io.tapstate.spi.store.DiscoveredSourceModel;
 import io.tapstate.spi.store.ObservationStore;
 import io.tapstate.spi.store.SchemaStore;
@@ -36,6 +39,7 @@ import io.tapstate.spi.store.SourceTable;
 import io.tapstate.spi.store.SrsMetaStore;
 import io.tapstate.spi.store.StateStore;
 import io.tapstate.spi.store.StorePort;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -146,6 +150,116 @@ class StoreBackedDagSourceTest {
 
         assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "view.order_state");
         assertThat(edges(dag)).containsExactly(edge("orders_src", "view.order_state"));
+    }
+
+    @Test
+    void a_view_whose_store_is_registered_but_unreachable_says_so_by_its_own_name() {
+        // A different condition from "not configured", and deliberately a different code: that one says
+        // nobody set the store up, this one says it is set up and not answering. Collapsing them would
+        // send an operator to check a configuration that is already correct.
+        FakeStorePort store = seededViewPipeline();
+
+        assertThatThrownBy(() -> new StoreBackedDagSource(store, refusing("connection refused")).dagFor("p"))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(e -> assertThat(((TapstateException) e).code().code())
+                        .isEqualTo("actuation.view-store-unreachable"));
+    }
+
+    @Test
+    void a_connector_reporting_a_failed_check_is_what_unreachable_means() {
+        // The test above hands in a refusal already formed, so it proves the build asks and propagates --
+        // not that a real probe turns a connector's FAILED verdict into this code. Drive the real probe
+        // over a tester that answers FAILED, and require the reason to carry what the connector said:
+        // an implementation that reports the failure without it sends the operator away with nothing to
+        // act on, and would pass an assertion that only looked at the code.
+        FakeStorePort store = seededViewPipeline();
+        ConnectionTester failing = config -> new ConnectionTestResult(
+                config.id(), config.connectorId(), ConnectionTestResult.Outcome.FAILED,
+                List.of(new ConnectionTestItem("reachable", ConnectionTestItem.Status.FAILED,
+                        "connection refused by mongo:27017", null, null, null)),
+                0L);
+
+        assertThatThrownBy(() -> new StoreBackedDagSource(
+                store, StoreReachability.probing(failing, Duration.ofSeconds(5))).dagFor("p"))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(e -> {
+                    TapstateException coded = (TapstateException) e;
+                    assertThat(coded.code().code()).isEqualTo("actuation.view-store-unreachable");
+                    assertThat(String.valueOf(coded.args().get("reason")))
+                            .as("what the connector said, carried through to the operator")
+                            .contains("connection refused by mongo:27017");
+                });
+    }
+
+    @Test
+    void a_connector_that_passes_lets_the_pipeline_build() {
+        // The real probe's other direction: without this, a probing() that threw unconditionally would
+        // satisfy every refusal test above while breaking every working deployment.
+        FakeStorePort store = seededViewPipeline();
+        ConnectionTester passing = config -> new ConnectionTestResult(
+                config.id(), config.connectorId(), ConnectionTestResult.Outcome.PASSED, List.of(), 0L);
+
+        DAG dag = new StoreBackedDagSource(
+                store, StoreReachability.probing(passing, Duration.ofSeconds(5))).dagFor("p");
+
+        assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "view.order_state");
+    }
+
+    @Test
+    void a_store_that_never_answers_is_given_up_on_rather_than_waited_out() {
+        // The requirement is a diagnosis, not a hang: a connector's own test carries no deadline, so a
+        // store that accepts the connection and then goes quiet would otherwise park the start forever.
+        // Asserting the elapsed time is what discriminates -- a probe with no bound still produces this
+        // exact exception eventually, and a test that only checked the code would pass on it.
+        FakeStorePort store = seededViewPipeline();
+        StoreReachability neverAnswers = (id, connectorId, settings) -> {
+            try {
+                Thread.sleep(Duration.ofMinutes(5));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        long startedAt = System.nanoTime();
+        assertThatThrownBy(() -> new StoreBackedDagSource(
+                store, StoreReachability.bounded(neverAnswers, Duration.ofMillis(200))).dagFor("p"))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(e -> assertThat(((TapstateException) e).code().code())
+                        .isEqualTo("actuation.view-store-unreachable"));
+        assertThat(Duration.ofNanos(System.nanoTime() - startedAt))
+                .as("the start gave up on its own rather than waiting for the probe")
+                .isLessThan(Duration.ofMinutes(1));
+    }
+
+    @Test
+    void a_store_that_answers_is_not_refused() {
+        // The refusals above are worth nothing if the healthy case does not pass them: a probe wired to
+        // reject everything would satisfy both of them and break every working deployment.
+        FakeStorePort store = seededViewPipeline();
+
+        DAG dag = new StoreBackedDagSource(store, StoreReachability.assumingReachable()).dagFor("p");
+
+        assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "view.order_state");
+    }
+
+    /** A pipeline whose only instruction is a view, with the managed store registered and plain. */
+    private FakeStorePort seededViewPipeline() {
+        FakeStorePort store = new FakeStorePort();
+        store.artifacts().save(cdcSource("orders_src", "orders"));
+        store.artifacts().save(connectionSupplier(ViewTargetResolver.STATE_STORE_SOURCE_ID));
+        store.artifacts().save(new PipelineResource(
+                "p", null, List.of("orders_src"), null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders_src"), "id", null, null),
+                null, null, null));
+        return store;
+    }
+
+    /** A reachability check that reports the store unreachable for the given reason. */
+    private static StoreReachability refusing(String reason) {
+        return (id, connectorId, settings) -> {
+            throw new TapstateException(ActuationError.VIEW_STORE_UNREACHABLE,
+                    Map.of("store", id, "reason", reason), null);
+        };
     }
 
     @Test

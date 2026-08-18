@@ -19,6 +19,7 @@ actuation.view-key-not-feed-identity
 actuation.view-storage-tier-unsupported
 actuation.view-store-is-a-capture-source
 actuation.view-store-not-configured
+actuation.view-store-unreachable
 artifact.in-use
 artifact.not-found
 artifact.pipeline-not-stopped
