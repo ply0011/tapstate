@@ -111,7 +111,7 @@ final class PdkSinkWriter implements SinkWriter {
                     TapTable table = target != null
                             ? TargetTapTable.build(target)
                             : TargetTapTable.bare(rows.get(0).getTableId());
-                    ensureIndexes(entry.getKey(), target, table);
+                    ensureIndexes(target, table);
                     // A connector may report the batch in several flushes, one callback each; accumulate.
                     write.writeRecord(connector.context(), rows, table,
                             result -> accepted[0] += accepted(result));
@@ -130,15 +130,22 @@ final class PdkSinkWriter implements SinkWriter {
      * by the same descriptor on the same call path, so the index request rides with the write rather than
      * needing a separate provisioning step - and asking once per writer keeps a per-batch call off the
      * hot path without pretending to know what the store already has.
+     *
+     * <p>The memo is keyed by the table the index is created on, not by the stream that delivered the
+     * rows. A view maps many streams onto one collection, so keyed by stream the same create-index
+     * request would go out once per stream and the memo would never dedupe across them.
      */
-    private void ensureIndexes(String tableKey, TargetTable target, TapTable table) throws Throwable {
-        if (createIndex == null || target == null || !indexed.add(tableKey)) {
+    private void ensureIndexes(TargetTable target, TapTable table) throws Throwable {
+        if (createIndex == null || target == null || indexed.contains(target.name())) {
             return;
         }
         TapCreateIndexEvent event = TargetTapTable.createIndexEvent(target);
         if (event != null) {
             createIndex.createIndex(connector.context(), table, event);
         }
+        // Memoized only once creation has returned. Recorded before it, a failed first attempt would be
+        // remembered as done, and the collection would live on without the indexes it declared.
+        indexed.add(target.name());
     }
 
     private static long accepted(WriteListResult<TapRecordEvent> result) {
