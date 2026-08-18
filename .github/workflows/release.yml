@@ -266,6 +266,12 @@ jobs:
           prerelease: true
           make_latest: false
           name: tapstate v${{ needs.prepare.outputs.version }} (preview)
+          # The "known limits" section below is not optional prose. A release of this runtime has to say
+          # out loud that an insert-only target can end up with duplicate rows, and that a change written
+          # while the change stream is still positioning itself can be missed -- neither has a scenario
+          # covering it, so a reader who is not told has no other way to find out. It must also claim
+          # neither production readiness nor exactly-once delivery. Removing or softening any of those
+          # four is a reviewed decision, never an edit made in passing.
           body: |
             Preview build — single-node, in-memory runtime, not for production.
 
@@ -277,6 +283,18 @@ jobs:
             machines, so they can move between releases; an older system may refuse to launch them. They
             are recommendations, not gates — the installer names them and carries on rather than blocking
             you. `platform-minimums.txt` carries the same numbers in machine-readable form.
+
+            ### Known limits in this preview
+
+            These are disclosed rather than fixed, and no shipped scenario covers either one. For a change
+            the connector has read, delivery is at-least-once — never exactly-once. The second limit below
+            is a change the connector never reads at all, which no delivery guarantee can cover.
+
+            * **Duplicate rows on an insert-only target.** Where the target does not upsert, the snapshot
+              read and the change-data-capture read overlap, and a row seen by both is written twice.
+            * **Changes lost while the change stream positions itself.** The position is recorded before
+              the snapshot runs and is not handed to the connector's stream read until afterwards, so a
+              change written to the source inside that window can be missed.
           files: |
             staging/tapstate-*.tar.gz
             staging/tapstate-*.tar.gz.sha256
