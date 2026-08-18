@@ -40,17 +40,49 @@ concurrency:
 
 jobs:
   quickstart-live:
+    # Two legs over one set of steps. They differ in exactly one variable -- where the server comes from --
+    # and that variable is the whole point:
+    #
+    #   published   the user's real journey: the published image, pulled. Answers "does what we shipped
+    #               still work?" It cannot answer the other question, because the shipped server is frozen.
+    #   from-source the same journey with the server built from this checkout. Answers "does the code we
+    #               have now still work with the script we have now?"
+    #
+    # Only running the first leaves a hole with a known shape: a server that gains a validation the script
+    # does not satisfy keeps this lane green, because the published server predates the validation. That
+    # is not hypothetical -- an apply-order incompatibility sat undetected behind exactly this gap until
+    # somebody ran the demo by hand against a locally built image. Only running the second is the mirror
+    # hole: regressions in the released artifacts would go unwatched. Both, or neither is worth much.
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [published, from-source]
+    name: quickstart-live (${{ matrix.server }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: The runner is a clean machine
-        # Assert it rather than assume it. If any of this is already here, the run would still pass while
-        # proving something weaker than "a user starting from nothing".
+      - name: The image reference the compose file pins
+        # Read it off the compose file rather than restating it, so the tag this job builds and the tag
+        # the stack starts can never drift apart.
+        id: img
         run: |
           set -eu
-          if docker image inspect ghcr.io/tapstate/tapstate:0.2.0 >/dev/null 2>&1; then
+          ref="$(sed -n 's|.*image: \(ghcr.io/tapstate/tapstate:[^ ]*\).*|\1|p' \
+            deploy/quickstart/docker-compose.yml | head -1)"
+          [ -n "$ref" ] || { echo "no server image reference found in the compose file" >&2; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "compose pins: $ref"
+
+      - name: The runner is a clean machine
+        # Assert it rather than assume it. If any of this is already here, the run would still pass while
+        # proving something weaker than "a user starting from nothing". The from-source leg deliberately
+        # puts an image there in the next step, so its precondition is only the volumes.
+        run: |
+          set -eu
+          if [ "${{ matrix.server }}" = published ] \
+             && docker image inspect "${{ steps.img.outputs.ref }}" >/dev/null 2>&1; then
             echo "the server image is already present; this run would not prove it can be pulled" >&2
             exit 1
           fi
@@ -58,7 +90,25 @@ jobs:
             echo "quickstart volumes already exist; this run would start from someone else's state" >&2
             exit 1
           fi
-          echo "clean: no server image, no quickstart volumes"
+          echo "clean: no quickstart volumes"
+
+      - uses: actions/setup-java@v4
+        if: matrix.server == 'from-source'
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build the server from this checkout, under the tag the compose file pins
+        if: matrix.server == 'from-source'
+        # Tagging the local build with the pinned reference is what substitutes it, and it needs no change
+        # to the script or the compose file: compose pulls only when an image is missing, so an image that
+        # is already there under that name is the one the stack runs. The script stays byte-for-byte the
+        # one a user pipes, which is the property that makes this leg worth having.
+        run: |
+          set -eu
+          mvn -q -pl app -am -DskipTests clean package
+          docker build -f deploy/docker/Dockerfile -t "${{ steps.img.outputs.ref }}" .
 
       - name: Run the quickstart, piped, and let it make its own directory
         # The one command a user runs, with the checkout's copy standing in for the published one (see
@@ -76,14 +126,22 @@ jobs:
           grep -q 'the target now holds' run.log
           test -d tapstate-demo || { echo "the piped run did not make its own directory" >&2; exit 1; }
 
-      - name: The server was pulled, not built
-        # A registry pull leaves a repo digest; an image built locally has none. This is what "zero build"
-        # reduces to once the run is over, and it is checkable after the fact rather than by watching.
+      - name: The server came from where this leg says it did
+        # A registry pull leaves a repo digest; a local build has none. That single fact separates the two
+        # legs after the fact, without watching the run. Asserting it in both directions is what keeps the
+        # matrix honest: without the from-source half, a build step that silently no-opped would leave that
+        # leg pulling the published image and re-running the published leg under a second name -- green,
+        # and proving nothing it was added to prove.
         run: |
           set -eu
-          digests="$(docker image inspect ghcr.io/tapstate/tapstate:0.2.0 --format '{{join .RepoDigests ","}}')"
-          [ -n "$digests" ] || { echo "the server image carries no repo digest -- it was not pulled" >&2; exit 1; }
-          echo "pulled: $digests"
+          digests="$(docker image inspect "${{ steps.img.outputs.ref }}" --format '{{join .RepoDigests ","}}')"
+          if [ "${{ matrix.server }}" = published ]; then
+            [ -n "$digests" ] || { echo "the server image carries no repo digest -- it was not pulled" >&2; exit 1; }
+            echo "pulled: $digests"
+          else
+            [ -z "$digests" ] || { echo "the server image carries a repo digest -- it was pulled, not built here: $digests" >&2; exit 1; }
+            echo "built from this checkout: no repo digest"
+          fi
 
       - name: The target really holds the seeded rows
         # Read the target directly. The script prints a count of its own, and a check that only re-reads
