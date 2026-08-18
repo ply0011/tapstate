@@ -240,7 +240,10 @@ install_alias() {
     alias_version="$2"
     existing="$(command -v tap 2>/dev/null || true)"
     if [ -n "$existing" ] && [ "$existing" != "$alias_dir/tap" ]; then
+        # The backticks quote command names for the reader; they are literal text, not substitutions.
+        # shellcheck disable=SC2016
         printf 'note: skipping the optional `tap` shortcut -- a different tap is already on PATH at %s.\n' "$existing"
+        # shellcheck disable=SC2016
         printf '      tapstate is installed and unaffected; run `tapstate alias install` later to reconsider.\n'
         return 0
     fi
