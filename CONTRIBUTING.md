@@ -80,6 +80,69 @@ skipped, aborted, or never discovered fails the gate by its absence. Editing the
 manifest is editing the release contract: removing a line must say why in the
 commit.
 
+## Documentation
+
+**Two places hold documentation, and they answer to different people.** This
+repository holds what is written alongside the implementation: engineering drafts,
+executable samples, and anything version-coupled. `https://tapstate.dev/docs` holds
+the user documentation a documentation engineer has reviewed and published. A page
+here is not user documentation yet, however finished it reads.
+
+**So every reader-facing Markdown page under `docs/` says which it is, in a header
+at the very top of the file.** One of exactly two shapes:
+
+```
+---
+status: engineering-draft
+publication: handoff
+target: https://tapstate.dev/docs/<where-this-is-headed>
+---
+```
+
+The page was written next to the code and has not been reviewed for publication.
+Name where it is headed even if that page does not exist yet — the target is what
+turns a draft into a handoff rather than a file somebody may one day notice.
+
+```
+---
+status: canonical-pointer
+canonical_url: https://tapstate.dev/docs/<the-published-page>
+---
+```
+
+The published page is canonical. What stays here shrinks to a short pointer to it,
+plus anything executable — sample data, workspace files, scripts — which belongs
+with the code and moves nowhere.
+
+A page carries one shape or the other, never fields from both: a page that names a
+target *and* a canonical URL has not said which side of the handoff it is on.
+
+**What is not a page is out of scope.** Sample data, workspace files, scripts,
+diagrams and fixtures under `docs/` need no header. They are read by running them.
+
+**A page nobody touches needs nothing.** The rule applies to pages a pull request
+adds or modifies, so it arrives page by page rather than as one migration — and if
+you are editing a page, you have just read it and are the cheapest person to say
+where it is going.
+
+`.github/scripts/docs-classification.sh` enforces this on every pull request, and
+is held to its own cases.
+
+### Handing a draft over
+
+The chain is: **you write the draft, a documentation engineer reviews and publishes
+it.** You are never asked to author directly in the documentation repository.
+
+1. Write or update the draft here, classified as above.
+2. Answer **Documentation impact** in the pull request: whether follow-up is needed,
+   where your draft is, and which public page it is headed for. An unanswered
+   checkbox is not an answer.
+3. If follow-up is needed, add the `docs-needed` label. Do not open an issue in the
+   documentation repository yourself and do not notify anyone at this stage.
+4. On merge, an issue is opened in `tapstate/docs` automatically, assigned to the
+   documentation owner, linking back to this pull request. A pull request closed
+   without merging produces nothing.
+
 ## Guidelines
 
 - **Java 21.** The build targets JDK 21; the native CLI requires GraalVM for JDK 21.

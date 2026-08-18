@@ -1,3 +1,9 @@
+---
+status: engineering-draft
+publication: handoff
+target: https://tapstate.dev/docs/tutorials
+---
+
 # Tutorials
 
 Worked scenarios you can run end to end. Each one builds something real and says what to look at
@@ -26,6 +32,24 @@ docs/tutorials/
 The directory name is the slug a reader sees in the URL, so name it for the thing being taught
 (`nest-document-assembly`), not for the page (`tutorial-3`). Putting the walkthrough in `README.md`
 means a link to the directory renders it.
+
+**Classify the page.** A new walkthrough is an engineering draft until documentation
+engineering publishes it, so its `README.md` opens with the draft header and names where it
+is headed:
+
+```
+---
+status: engineering-draft
+publication: handoff
+target: https://tapstate.dev/docs/tutorials/<tutorial-slug>
+---
+```
+
+Once the published page is canonical, the page here shrinks to a pointer carrying
+`status: canonical-pointer` and its `canonical_url`, and the sample data stays. The sample
+data itself is never classified - it is executable, not a page. A pull request that adds or
+changes a page without one of the two headers is refused; the full contract is in
+[CONTRIBUTING.md](../../CONTRIBUTING.md#documentation).
 
 Two rules the existing one follows and the next one should too:
 
