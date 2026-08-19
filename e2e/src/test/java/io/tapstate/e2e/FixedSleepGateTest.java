@@ -39,7 +39,25 @@ import static org.assertj.core.api.Assertions.assertThat;
  * stimulus whose duration has to exceed a collection window is still a duration nothing checks.
  *
  * <p>This scan found a sleep the day it was written that a plain text search over the same tree had
- * just missed, so the two are not interchangeable: the gate reads every source line itself.
+ * just missed, so the two are not interchangeable: the gate reads every source itself.
+ *
+ * <p><b>What this gate does not see.</b> It matches text, so its reach is the shape of the call and
+ * nothing deeper, and saying where that ends is part of what it is worth. Whitespace no longer decides:
+ * a call split before its dot was measured slipping through and now counts, and two calls on one line
+ * count as two. Still invisible, and deliberately named rather than left to be discovered: a wait that
+ * never spells the word, such as {@code LockSupport.parkNanos}, {@code Object.wait(millis)} or an
+ * unconditional {@code latch.await(millis, unit)}; a sleep reached through a helper that lives outside
+ * this module, where nothing here reads its source; and anything assembled at runtime. Each is a real
+ * way to make this gate green over a fixed wait. They are left out because closing them by text would
+ * cost more false alarms than the sleeps it would catch, and the honest position is that this gate
+ * raises the price of a settle rather than making one impossible. A wait belongs on an observable
+ * condition whether or not a gate can see it.
+ *
+ * <p><b>The other direction is a defect, not a boundary.</b> Reddening over a sleep that is not there
+ * blocks work that is not wrong, and teaches people to route around the gate - which costs more than
+ * the settles it was built to catch. One such was found and fixed: a call named in a comment after code
+ * counted as a call, so a file could fail this gate with nothing in it to fix. Comments are now removed
+ * before anything is matched, block comments included. Report any other false alarm as a bug in here.
  */
 class FixedSleepGateTest {
 
@@ -59,6 +77,7 @@ class FixedSleepGateTest {
             // One bounded read of its own target per witness class, each a poll inside a deadline loop.
             entry("test/java/io/tapstate/e2e/LosslessNumericTypeIsAcceptedIT.java", 1L),
             entry("test/java/io/tapstate/e2e/RealMysqlToMongoSnapshotIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/RealMysqlToMongoViewIndexIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestAssemblesParentAndChildrenIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestChildCdcMutatesTheArrayIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestColdRootWakesCorrectlyIT.java", 1L),
@@ -79,7 +98,7 @@ class FixedSleepGateTest {
             entry("test/java/io/tapstate/e2e/NestThrottleCoalescesHotRootIT.java", 1L));
 
     private static final Pattern SLEEP = Pattern.compile(
-            "Thread\\.sleep\\(|TimeUnit\\.[A-Z_]+\\.sleep\\(");
+            "Thread\\s*\\.\\s*sleep\\s*\\(|TimeUnit\\s*\\.\\s*[A-Z_]+\\s*\\.\\s*sleep\\s*\\(");
 
     @Test
     void everyFixedSleepInThisModuleIsANamedPollPrimitive() {
@@ -109,6 +128,60 @@ class FixedSleepGateTest {
         assertThat(sleepsUnder(root)).containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
                 "one/Twin.java", 1L,
                 "two/Twin.java", 1L));
+    }
+
+    /**
+     * A sleep is a sleep however it is typed, so the scan may not be decided by formatting.
+     *
+     * <p>Reading line by line, the gate used to see {@code Thread.sleep(} and miss the same call with a
+     * line break before the dot - which the formatter is free to introduce, and which anyone wanting a
+     * settle past the gate can type on purpose. Both were measured: the one-line form fails this gate on
+     * an exact per-file count, the split form passed it while sleeping just as long.
+     *
+     * <p>Two sleeps sharing one line are two sleeps here for the same reason - what is counted is the
+     * calls, not the lines that happen to carry them.
+     */
+    @Test
+    void aSleepIsCountedHoweverItIsSpacedAcrossLines(@TempDir Path root) throws IOException {
+        // Spelled in pieces for the reason above: written whole, these would be counted by the walk.
+        String split = "Thread" + "\n            ." + "sleep(";
+        String inline = "Thread." + "sleep(";
+        Files.writeString(root.resolve("Split.java"),
+                "class Split { void a() throws Exception { " + split + "1); } }");
+        Files.writeString(root.resolve("Pair.java"),
+                "class Pair { void a() throws Exception { " + inline + "1); " + inline + "2); } }");
+
+        assertThat(sleepsUnder(root)).containsExactlyInAnyOrderEntriesOf(java.util.Map.of(
+                "Split.java", 1L,
+                "Pair.java", 2L));
+    }
+
+    /**
+     * A sleep the gate only read about is not a sleep, wherever the comment sits on the line.
+     *
+     * <p>Comments used to be dropped a whole line at a time, and only when the line began with one, so a
+     * comment after code survived and was matched: a file whose one mention of the call sat in a trailing
+     * comment failed this gate with nothing to fix. That direction matters as much as the misses. A gate
+     * that reddens over prose blocks work that is not wrong, and the way people deal with one of those is
+     * to stop writing the comment - or to stop trusting the gate, which costs more than the sleeps it was
+     * built to catch. This class's own comments discuss the call throughout, and were safe only by the
+     * accident of starting their lines with a star.
+     *
+     * <p>Code that resumes after a block comment closes is code again, so the last file here is counted.
+     */
+    @Test
+    void aSleepOnlyMentionedInACommentIsNotCounted(@TempDir Path root) throws IOException {
+        // Spelled in pieces for the reason above: written whole, these would be counted by the walk.
+        String call = "Thread." + "sleep(";
+        Files.writeString(root.resolve("Trailing.java"),
+                "class Trailing { void a() { int x = 1; // a settle such as " + call + "500) is banned\n } }");
+        Files.writeString(root.resolve("Block.java"),
+                "class Block {\n/* prose about " + call + "500)\n   and more prose */\n void a() { } }");
+        Files.writeString(root.resolve("Resumed.java"),
+                "class Resumed { void a() throws Exception { /* about it */ " + call + "1); } }");
+
+        assertThat(sleepsUnder(root)).containsExactlyInAnyOrderEntriesOf(
+                java.util.Map.of("Resumed.java", 1L));
     }
 
     /**
@@ -144,9 +217,49 @@ class FixedSleepGateTest {
         } catch (IOException e) {
             throw new UncheckedIOException("cannot read " + source, e);
         }
-        return lines.stream()
-                .filter(line -> !line.trim().startsWith("//") && !line.trim().startsWith("*"))
-                .filter(line -> SLEEP.matcher(line).find())
-                .count();
+        // Comments come out first, then what is left is matched as one text rather than line by line: a
+        // call split before its dot spans two lines and no single line holds it, and two calls sharing a
+        // line are two calls. What is counted is the matches, not the lines carrying them.
+        return SLEEP.matcher(withoutComments(lines)).results().count();
+    }
+
+    /**
+     * The source with its comments taken out, so the gate counts calls rather than mentions of one.
+     *
+     * <p>Dropping whole lines that begin with a comment marker is not enough and was not: a comment after
+     * code stayed, and a file whose only mention of the call sat there failed the gate over prose. Block
+     * comments are tracked across lines for the same reason, and code resuming after one closes is code.
+     *
+     * <p>Not a Java lexer, and the remaining gap is a string holding {@code //} - a URL, say - which ends
+     * the line early here and would hide a call written after it on that same line. Worth knowing and not
+     * worth a parser: this reads test sources, where that line has never existed. A string holding the
+     * call itself is still counted, which is why the fixtures in this file spell theirs in pieces.
+     */
+    private static String withoutComments(List<String> lines) {
+        StringBuilder code = new StringBuilder();
+        boolean inBlock = false;
+        for (String line : lines) {
+            int index = 0;
+            while (index < line.length()) {
+                if (inBlock) {
+                    int close = line.indexOf("*/", index);
+                    if (close < 0) {
+                        break;
+                    }
+                    inBlock = false;
+                    index = close + 2;
+                } else if (line.startsWith("//", index)) {
+                    break;
+                } else if (line.startsWith("/*", index)) {
+                    inBlock = true;
+                    index += 2;
+                } else {
+                    code.append(line.charAt(index));
+                    index++;
+                }
+            }
+            code.append('\n');
+        }
+        return code.toString();
     }
 }

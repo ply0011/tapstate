@@ -79,8 +79,29 @@ try:
     send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
     tools = receive()["result"]["tools"]
     tool_names = {tool["name"] for tool in tools}
-    assert len(tools) == 10
-    assert "source_draft" in tool_names
+    # The read-only face, named tool by tool rather than counted. A count moves silently when a verb
+    # is promoted onto this face: artifact.get became visible here and the expected number did not
+    # follow, so this smoke asked for one tool fewer than the server offered -- and since no lane but
+    # the release run executes it, the whole release lane was what reported the mismatch. A set names
+    # the tool that appeared or vanished, which is the part a number cannot say.
+    expected = {
+        "artifact_get",
+        "artifact_validate",
+        "connection_schema",
+        "connection_test_result",
+        "connector_get",
+        "connector_list",
+        "pipeline_logs",
+        "pipeline_metrics",
+        "pipeline_snapshot",
+        "pipeline_status",
+        "source_draft",
+    }
+    assert tool_names == expected, (
+        f"unexpected tools: {sorted(tool_names - expected)}; "
+        f"missing tools: {sorted(expected - tool_names)}"
+    )
+    # Write verbs stay off a face that was not granted them, and the retired Source CRUD stays retired.
     assert tool_names.isdisjoint({"source_create", "source_list", "source_get", "source_update", "source_delete"})
 
     process.stdin.close()
@@ -88,7 +109,7 @@ try:
     assert process.returncode == 0
     stderr = process.stderr.read()
     assert "smoke-token" not in stderr
-    print("mcp smoke: initialize, 10 read tools, clean EOF, no credential leak")
+    print(f"mcp smoke: initialize, {len(expected)} read tools, clean EOF, no credential leak")
 finally:
     if process.poll() is None:
         process.kill()

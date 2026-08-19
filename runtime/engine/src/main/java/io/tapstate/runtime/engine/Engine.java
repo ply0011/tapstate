@@ -217,8 +217,9 @@ public final class Engine {
     }
 
     /**
-     * The number of records the pipeline's live job has driven to its serve sinks, or empty when it
-     * has no live job. The count is the received count summed over the serve-sink vertices, so a
+     * The number of records the pipeline's live job has driven to its output sinks, or empty when it
+     * has no live job. The count is the received count summed over the output-sink vertices - serve
+     * sinks and view materializations alike - so a
      * filter earlier in the chain is reflected in it. It reads the job's last collected metrics, so a
      * freshly submitted job reports a low or zero count until the first collection; a stopped pipeline
      * reports empty, matching the live-state projection the rest of the read face carries.
@@ -229,7 +230,7 @@ public final class Engine {
             return OptionalLong.empty();
         }
         long reached = job.getMetrics().get(MetricNames.RECEIVED_COUNT).stream()
-                .filter(Engine::isServeSink)
+                .filter(Engine::isOutputSink)
                 .mapToLong(Measurement::value)
                 .sum();
         return OptionalLong.of(reached);
@@ -358,10 +359,17 @@ public final class Engine {
         return nestState == null ? OptionalLong.empty() : OptionalLong.of(nestState.count(namespace));
     }
 
-    /** Whether a measurement belongs to a serve-sink vertex, which the builder names by that prefix. */
-    private static boolean isServeSink(Measurement measurement) {
+    /**
+     * Whether a measurement belongs to an output-sink vertex, which the builder names by one of two
+     * prefixes: a serve sink delivering outward, or a view materializing into the state store. Both
+     * are places records reach, and a pipeline may carry either alone - counting only the serve
+     * prefix would report zero for a view-only pipeline whose data is flowing correctly.
+     */
+    private static boolean isOutputSink(Measurement measurement) {
         String vertex = measurement.tag(MetricTags.VERTEX);
-        return vertex != null && vertex.startsWith(PipelineDagBuilder.SERVE_VERTEX_PREFIX);
+        return vertex != null
+                && (vertex.startsWith(PipelineDagBuilder.SERVE_VERTEX_PREFIX)
+                        || vertex.startsWith(PipelineDagBuilder.VIEW_VERTEX_PREFIX));
     }
 
     /**

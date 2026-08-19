@@ -318,18 +318,42 @@ if [ "$RUN_RC" -eq 0 ] && [ -f "$RUN/.cli-argv" ] && ! grep -Fq "$RUN_PW" "$RUN/
 else
   bad "password handling (rc=$RUN_RC, argv=$(grep -Fq "$RUN_PW" "$RUN/.cli-argv" 2>/dev/null && echo LEAK || echo ok), stdin=$(grep -Fq "$RUN_PW" "$RUN/.cli-stdin" 2>/dev/null && echo ok || echo MISSING)): $RUN_OUT"
 fi
+# Failure branches print the driven command stream to say what went wrong -- and that stream contains
+# the admin password by design (the assertion above requires it there). Print it redacted, always.
+redacted_stdin() { sed "s/$RUN_PW/<redacted>/g" "$RUN/.cli-stdin" 2>/dev/null; }
 if grep -q 'register \.\./postgres-connector.jar' "$RUN/.cli-stdin" 2>/dev/null \
    && grep -q 'discover-schema db_shipments' "$RUN/.cli-stdin" 2>/dev/null \
    && grep -q 'start sync_shipments' "$RUN/.cli-stdin" 2>/dev/null; then
   ok "drives the second engine's connector, discovery and pipeline too"
 else
-  bad "the second engine is not driven: $(cat "$RUN/.cli-stdin" 2>/dev/null)"
+  bad "the second engine is not driven: $(redacted_stdin)"
 fi
 if grep -q 'register \.\./mysql-connector.jar' "$RUN/.cli-stdin" 2>/dev/null && grep -q '^apply' "$RUN/.cli-stdin" 2>/dev/null && grep -q 'start sync_orders' "$RUN/.cli-stdin" 2>/dev/null; then
   ok "drives register / apply / start through the REPL"
 else
-  bad "online verbs not driven: $(cat "$RUN/.cli-stdin" 2>/dev/null)"
+  bad "online verbs not driven: $(redacted_stdin)"
 fi
+# The order, not just the presence. Each pipeline maps a row field, which the server refuses to apply
+# until the source it reads has a discovered schema -- while the discovery needs the source applied.
+# So the stream must apply the source alone, discover it, and only then apply the workspace. Presence
+# checks matched the old broken stream just as happily; only the line order pins the fix.
+#
+# Both engines are held to it, separately. The second engine's pipeline maps a row field exactly like
+# the first's, so it is under the same rule -- and checking only the first would pass a stream that
+# discovers db_shipments after the workspace apply, which is the same defect wearing the other engine.
+check_apply_order() {   # $1 = source id
+  _src="$(grep -n "^apply source/$1.tap.yml\$" "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+  _disc="$(grep -n "^discover-schema $1\$" "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+  _full="$(grep -n '^apply$' "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
+  if [ -n "$_src" ] && [ -n "$_disc" ] && [ -n "$_full" ] \
+      && [ "$_src" -lt "$_disc" ] && [ "$_disc" -lt "$_full" ]; then
+    ok "applies $1 alone, discovers it, then applies the workspace -- in that order"
+  else
+    bad "apply/discover ordering for $1 (source-apply=$_src discover=$_disc full-apply=$_full): $(redacted_stdin)"
+  fi
+}
+check_apply_order db_src
+check_apply_order db_shipments
 if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -q 'rm -rf'; then
   ok "prints teardown on completion (down -v + rm -rf, images noted)"
 else

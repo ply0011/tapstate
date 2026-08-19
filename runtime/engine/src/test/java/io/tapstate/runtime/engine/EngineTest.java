@@ -309,6 +309,17 @@ class EngineTest {
     }
 
     @Test
+    void recordCount_counts_records_that_reached_a_view_materialization_too() {
+        // A pipeline that only declares a view has no serve sink at all. Counting serve sinks alone
+        // would report zero while the data is flowing correctly - a status face that lies.
+        Engine engine = new Engine(member);
+        engine.submit("orders-pipe", countingDag(3, "view.order_state"));
+        awaitStatus(member.getJet().getJob("orders-pipe"), JobStatus.RUNNING);
+
+        awaitRecordCount(engine, "orders-pipe", 3);
+    }
+
+    @Test
     void recordCount_is_empty_for_a_pipeline_with_no_live_job() {
         Engine engine = new Engine(member);
         // An unknown pipeline has no job at all.
@@ -442,12 +453,16 @@ class EngineTest {
      * the records that actually reached a sink.
      */
     private static DAG countingDag(int total) {
+        return countingDag(total, "serve.out");
+    }
+
+    private static DAG countingDag(int total, String sinkVertexName) {
         DAG dag = new DAG();
         Vertex source = dag.newVertex("src", ProcessorMetaSupplier.forceTotalParallelismOne(
                 ProcessorSupplier.of((SupplierEx<Processor>) () -> new EmitThenIdleSource(total))));
         Vertex transform = dag.newVertex("xform", ProcessorMetaSupplier.forceTotalParallelismOne(
                 ProcessorSupplier.of((SupplierEx<Processor>) Passthrough::new)));
-        Vertex sink = dag.newVertex("serve.out", ProcessorMetaSupplier.forceTotalParallelismOne(
+        Vertex sink = dag.newVertex(sinkVertexName, ProcessorMetaSupplier.forceTotalParallelismOne(
                 ProcessorSupplier.of((SupplierEx<Processor>) DrainingSink::new)));
         dag.edge(Edge.between(source, transform));
         dag.edge(Edge.between(transform, sink));

@@ -1,0 +1,9 @@
+version: tapstate/v1
+kind: pipeline
+id: e2e_pipeline
+source: src_file
+settings: { read_mode: snapshot_and_cdc }
+view:
+  id: order_state
+  from: orders
+  primary_key: id

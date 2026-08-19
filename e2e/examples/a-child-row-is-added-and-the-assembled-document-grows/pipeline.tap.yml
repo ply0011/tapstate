@@ -1,0 +1,18 @@
+version: tapstate/v1
+kind: pipeline
+id: grown_orders
+source: [ src_grow_orders, src_grow_items ]
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: grow_doc
+    type: nest
+    from: { o: grow_orders, i: grow_items }
+    root:
+      from: o
+      key: [ id ]
+      embed:
+        - { from: i, on: { order_id: id }, as: array, path: items, arrayKey: [ id ] }
+view:
+  id: grow_state
+  from: grow_doc
+  primary_key: id

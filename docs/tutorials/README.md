@@ -1,12 +1,14 @@
 # Tutorials
 
-Worked scenarios you can run end to end. Each one loads its own sample data, builds something real,
-and says what to look at afterwards. They assume the stack from the
-[online quickstart](../quickstart-online.md) is up.
+Worked scenarios you can run end to end. Each one builds something real and says what to look at
+afterwards. Most load their own sample data and assume the stack from the
+[online quickstart](../quickstart-online.md) is up; the one that stands the processes up from an IDE
+instead says so, and is where to start if you are working on Tapstate itself rather than using it.
 
 | Tutorial | What you build | Time |
 |---|---|---|
 | [Assembling one document out of many tables](nest-document-assembly/) | Three live documents - order, customer and product - assembled from the same nine relational tables with a `nest` transform and kept current by change data capture. Includes the rule that decides which document shapes a nest can express. | ~30 min |
+| [Running the server and CLI from an IDE](running-from-an-ide/) | The server out of IntelliJ IDEA against a MongoDB you supply, and the CLI driving it from a terminal, ending at a connected and authenticated CLI. Carries no sample data: it stops before anything moves, and hands over to the tutorial above. | ~20 min |
 
 ## Adding a tutorial
 

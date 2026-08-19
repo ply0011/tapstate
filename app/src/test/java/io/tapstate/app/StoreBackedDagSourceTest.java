@@ -12,12 +12,15 @@ import io.tapstate.core.model.FromRef;
 import io.tapstate.core.model.PipelineResource;
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.ServeBlock;
+import io.tapstate.core.model.ServeResource;
 import io.tapstate.core.model.SourceMode;
 import io.tapstate.core.model.SourceResource;
 import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
 import io.tapstate.core.model.TableRef;
 import io.tapstate.core.model.TransformBody;
+import io.tapstate.core.model.ViewBlock;
+import io.tapstate.core.model.ViewResource;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.CatalogStore;
 import io.tapstate.spi.store.ConnectionTestResultStore;
@@ -69,6 +72,80 @@ class StoreBackedDagSourceTest {
         assertThat(edges(dag)).containsExactlyInAnyOrder(
                 edge("orders_src", "keep_even"),
                 edge("keep_even", "serve.sync_1"));
+    }
+
+    @Test
+    void a_view_declared_by_reference_materializes_like_an_inline_one() {
+        // The wizard writes this form whenever an author reuses an existing view, so it is not a
+        // grammar curiosity: the reference must reach the builder already expanded.
+        FakeStorePort store = new FakeStorePort();
+        store.artifacts().save(cdcSource("orders_src", "orders"));
+        store.artifacts().save(connectionSupplier(ViewTargetResolver.STATE_STORE_SOURCE_ID));
+        store.artifacts().save(new ViewResource("order_state", null, "order_id", null, null, null));
+        store.artifacts().save(new PipelineResource(
+                "p", null, List.of("orders_src"), null,
+                new ViewBlock.Use(null, "order_state", FromRef.literal("orders_src")),
+                null, null, null));
+
+        DAG dag = new StoreBackedDagSource(store).dagFor("p");
+
+        assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "view.order_state");
+        assertThat(edges(dag)).containsExactly(edge("orders_src", "view.order_state"));
+    }
+
+    @Test
+    void a_serve_declared_by_reference_writes_like_an_inline_one() {
+        FakeStorePort store = new FakeStorePort();
+        store.artifacts().save(cdcSource("orders_src", "orders"));
+        store.artifacts().save(connectionSupplier("orders_dest"));
+        store.artifacts().save(new ServeResource(
+                "publish", null, List.of(sync("sync_1", "orders_dest")), null, null, null));
+        store.artifacts().save(new PipelineResource(
+                "p", null, List.of("orders_src"), null, null,
+                new ServeBlock.Use(null, "publish", FromRef.literal("orders_src")),
+                null, null));
+
+        DAG dag = new StoreBackedDagSource(store).dagFor("p");
+
+        assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "serve.sync_1");
+        assertThat(edges(dag)).containsExactly(edge("orders_src", "serve.sync_1"));
+    }
+
+    @Test
+    void a_view_without_a_managed_store_to_land_in_says_so_by_name() {
+        // The store is the deployment's rather than the author's, so its absence is a deployment
+        // condition an operator can act on - not an invariant that should crash bare.
+        FakeStorePort store = new FakeStorePort();
+        store.artifacts().save(cdcSource("orders_src", "orders"));
+        store.artifacts().save(new PipelineResource(
+                "p", null, List.of("orders_src"), null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders_src"), "id", null, null),
+                null, null, null));
+
+        assertThatThrownBy(() -> new StoreBackedDagSource(store).dagFor("p"))
+                .isInstanceOf(TapstateException.class)
+                .satisfies(e -> assertThat(((TapstateException) e).code().code())
+                        .isEqualTo("actuation.view-store-not-configured"));
+    }
+
+    @Test
+    void a_declared_view_materializes_into_the_managed_state_store() {
+        // No serve block anywhere: declaring the view is the whole instruction, and the store it lands
+        // in is the deployment's own rather than anything the pipeline names.
+        FakeStorePort store = new FakeStorePort();
+        store.artifacts().save(cdcSource("orders_src", "orders"));
+        store.artifacts().save(connectionSupplier(ViewTargetResolver.STATE_STORE_SOURCE_ID));
+        store.artifacts().save(new PipelineResource(
+                "p", null,
+                List.of("orders_src"),
+                null,
+                new ViewBlock.Inline("order_state", FromRef.literal("orders_src"), "id", null, null),
+                null, null, null));
+
+        DAG dag = new StoreBackedDagSource(store).dagFor("p");
+
+        assertThat(vertexNames(dag)).containsExactlyInAnyOrder("orders_src", "view.order_state");
+        assertThat(edges(dag)).containsExactly(edge("orders_src", "view.order_state"));
     }
 
     @Test
