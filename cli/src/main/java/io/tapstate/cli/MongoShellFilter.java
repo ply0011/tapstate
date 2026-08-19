@@ -85,6 +85,12 @@ final class MongoShellFilter {
     /** One translated member as the conjuncts it contributes, unwrapping a conjunction it came back as. */
     private static List<Object> flatten(Object member) {
         Object translated = translate(member);
+        if (translated == null) {
+            // Only a written `null` reaches here, and it is the one member that has no condition in it.
+            // Left alone it leaves as a bare crash out of a class whose whole job is to name what it
+            // would not take.
+            throw new Unreadable("`$and` takes conditions; one of its entries is `null`");
+        }
         if (translated instanceof Map<?, ?> map && map.get("all") instanceof List<?> nested) {
             return new ArrayList<>(nested);
         }

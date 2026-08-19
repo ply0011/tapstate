@@ -1,7 +1,9 @@
 package io.tapstate.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -143,5 +145,15 @@ class MongoShellFilterTest {
 
         assertThat(call).isInstanceOf(DataBrowserCall.Malformed.class);
         assertThat(((DataBrowserCall.Malformed) call).reason()).contains("$and");
+    }
+
+    @Test
+    void refusesANullMemberOfAConjunctionRatherThanCrashing() {
+        Map<String, Object> written = new LinkedHashMap<>();
+        written.put("$and", java.util.Arrays.asList((Object) null));
+
+        assertThatThrownBy(() -> MongoShellFilter.translate(written))
+                .isInstanceOf(DataBrowserCall.Unreadable.class)
+                .hasMessageContaining("`null`");
     }
 }
