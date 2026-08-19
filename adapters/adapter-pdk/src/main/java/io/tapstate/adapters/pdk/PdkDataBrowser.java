@@ -241,17 +241,65 @@ public final class PdkDataBrowser implements DataBrowser {
      * about that -- folding them together would be this layer deciding they are not.
      */
     private static DataBrowserChange project(Envelope event) {
-        // Both rows are passed through exactly as the connector supplied them, including their
-        // absence. How completely a change describes itself is the connector's business, and a layer
-        // that filled a gap here would hand the reader an answer that looks like the stream's.
+        // Both rows are passed through as the connector supplied them, including their absence. How
+        // completely a change describes itself is the connector's business, and a layer that filled a
+        // gap here would hand the reader an answer that looks like the stream's. The one thing done to
+        // them is giving each value a spelling JSON has; nothing is added, dropped or filled in.
         return switch (event.op()) {
             case INSERT, READ -> new DataBrowserChange(
-                    DataBrowserChange.Kind.INSERT, null, event.after(), event.ts());
+                    DataBrowserChange.Kind.INSERT, null, writable(event.after()), event.ts());
             case UPDATE -> new DataBrowserChange(
-                    DataBrowserChange.Kind.UPDATE, event.before(), event.after(), event.ts());
+                    DataBrowserChange.Kind.UPDATE, writable(event.before()), writable(event.after()),
+                    event.ts());
             case DELETE -> new DataBrowserChange(
-                    DataBrowserChange.Kind.DELETE, event.before(), null, event.ts());
+                    DataBrowserChange.Kind.DELETE, writable(event.before()), null, event.ts());
             case DDL -> null;
+        };
+    }
+
+    /**
+     * The row with every value in a form JSON has a spelling for. A connector hands on whatever its
+     * driver produced, and a document store's own key is a driver object rather than a string or a
+     * number - so a row can arrive holding values no writer of JSON can write.
+     *
+     * <p>Rendering it here rather than where it is written is what keeps the failure from being
+     * invisible: everything past this seam runs on the connector's stream thread, where a value that
+     * cannot be written ends the stream, and a reader following a collection cannot tell an ended
+     * stream from a collection nobody is changing.
+     *
+     * <p>The rule is deliberately connector-blind: anything outside map / list / string / number /
+     * boolean is rendered as its own text, whatever its type. A rule per driver type would be exact
+     * for the drivers it knew and would go on producing this same failure for the first one it did
+     * not. The cost is that such a value reads as text here while the same column read one row at a
+     * time carries whatever shape the connector chose to convert it to; that difference is stated
+     * where the two faces are documented, not papered over here.
+     */
+    private static Map<String, Object> writable(Map<String, Object> row) {
+        if (row == null) {
+            return null;
+        }
+        Map<String, Object> written = new LinkedHashMap<>();
+        row.forEach((name, value) -> written.put(String.valueOf(name), writableValue(value)));
+        return written;
+    }
+
+    private static Object writableValue(Object value) {
+        return switch (value) {
+            case null -> null;
+            case Map<?, ?> nested -> {
+                Map<String, Object> written = new LinkedHashMap<>();
+                nested.forEach((name, held) -> written.put(String.valueOf(name), writableValue(held)));
+                yield written;
+            }
+            case List<?> held -> {
+                List<Object> written = new ArrayList<>(held.size());
+                held.forEach(each -> written.add(writableValue(each)));
+                yield written;
+            }
+            case String text -> text;
+            case Number number -> number;
+            case Boolean flag -> flag;
+            default -> String.valueOf(value);
         };
     }
 

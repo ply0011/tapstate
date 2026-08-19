@@ -78,6 +78,49 @@ class PdkDataBrowserTest {
                 .containsExactly(DataBrowserChange.Kind.INSERT, DataBrowserChange.Kind.INSERT);
     }
 
+    @Test
+    void followRendersAValueNoJsonWriterKnowsAsItsOwnTextRatherThanHandingTheObjectOn(@TempDir Path dir)
+            throws Exception {
+        // A connector hands on whatever its driver produced, and a document store's key arrives as a
+        // driver object. Everything downstream of this seam writes rows as JSON, where such a value has
+        // no spelling: passing it on ends the stream on the connector's own thread, which reads from
+        // outside exactly like a collection nobody is changing. So the rendering happens here, at the
+        // seam that knows a value came from a connector, rather than being caught where it breaks.
+        PdkDataBrowser reader = reader(Synthetic.opaqueValueSource(dir), "synthetic.OpaqueValue");
+        List<DataBrowserChange> handed = java.util.Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch delivered = new CountDownLatch(1);
+
+        try (DataBrowserSubscription following = reader.tail(config(),
+                new DataBrowserTailRequest("t1"), change -> {
+                    handed.add(change);
+                    delivered.countDown();
+                })) {
+            assertThat(delivered.await(5, TimeUnit.SECONDS))
+                    .as("the insert reached the follower")
+                    .isTrue();
+        }
+
+        Map<String, Object> after = handed.get(0).after();
+        assertThat(after.get("key"))
+                .as("the driver's own value is handed on as its text, not as the object")
+                .isEqualTo("00000000-0000-0000-0000-00000000002a");
+        assertThat(((Map<?, ?>) after.get("meta")).get("ref"))
+                .as("a value nested in a document is rendered too, not only a top-level one")
+                .isEqualTo("00000000-0000-0000-0000-00000000002a");
+        assertThat(((List<?>) after.get("refs")).get(0))
+                .as("a value inside a list is rendered too")
+                .isEqualTo("00000000-0000-0000-0000-00000000002a");
+        // The half that discriminates: rendering every value as text would satisfy the three above
+        // while turning a number into a string, which no reader of this face could tell from a column
+        // that really holds text.
+        // The box is the PDK's business (an int arrives widened); what this pins is that it is still a
+        // number rather than the text of one.
+        assertThat(after.get("id")).as("a number stays a number").isInstanceOf(Number.class);
+        assertThat(((Number) after.get("id")).longValue()).isEqualTo(7L);
+        assertThat(after.get("flag")).as("a boolean stays a boolean").isEqualTo(Boolean.TRUE);
+        assertThat(after.get("name")).as("text stays text").isEqualTo("row-7");
+    }
+
     /** A reader over a provisioner that hands back one fixed connector ref, whatever id is asked for. */
     private PdkDataBrowser reader(Path jar, String className) {
         return reader(jar, className, ConnectorInstancePool.DEFAULTS);

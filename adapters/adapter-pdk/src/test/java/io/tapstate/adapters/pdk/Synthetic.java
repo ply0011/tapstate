@@ -164,6 +164,41 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.ThrowingStream", source("ThrowingStream", "", register));
     }
 
+    /**
+     * Streams one insert whose row holds values no JSON writer knows, at three depths. A connector
+     * hands on whatever its driver produced, and a document store's own key arrives as a driver object
+     * rather than as a string or a number; {@code UUID} stands in for one here, because what matters is
+     * a value outside the map/list/string/number/boolean set and not which class it is.
+     *
+     * <p>The plain values beside them are the half that discriminates: a projection that renders every
+     * value as text would satisfy "the driver object became a string" while quietly turning a number
+     * into one.
+     */
+    static Path opaqueValueSource(Path dir) {
+        String opaque = "java.util.UUID.fromString(\"00000000-0000-0000-0000-00000000002a\")";
+        String register = ""
+                + "functions.supportStreamRead((context, tables, offset, size, consumer) -> {"
+                + "  consumer.streamReadStarted();"
+                + "  Map<String,Object> r = new LinkedHashMap<>();"
+                + "  r.put(\"id\", 7);"
+                + "  r.put(\"flag\", Boolean.TRUE);"
+                + "  r.put(\"name\", \"row-7\");"
+                + "  r.put(\"key\", " + opaque + ");"
+                + "  Map<String,Object> nested = new LinkedHashMap<>();"
+                + "  nested.put(\"ref\", " + opaque + ");"
+                + "  r.put(\"meta\", nested);"
+                + "  List<Object> refs = new ArrayList<>();"
+                + "  refs.add(" + opaque + ");"
+                + "  r.put(\"refs\", refs);"
+                + "  List<TapEvent> evs = new ArrayList<>();"
+                + "  evs.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(r));"
+                + "  consumer.accept(evs, null);"
+                + "  consumer.streamReadEnded();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.OpaqueValue",
+                source("OpaqueValue", "", register));
+    }
+
     /** A connector whose batchRead emits a delete-shaped event — unprojectable as a snapshot row. */
     static Path badRowSource(Path dir) {
         String register = "functions.supportBatchRead((context, table, offset, size, consumer) -> {"
