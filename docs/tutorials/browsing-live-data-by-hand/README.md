@@ -119,7 +119,7 @@ It shows two versions of that row side by side:
 
 ```
 +- watching shop.orders - one row - polling every 1s -----------------+
-| field      | now                        | was                        |
+| field      | current                    | previous                   |
 |------------|----------------------------|----------------------------|
 |   order_no | "SO-1001"                  | "SO-1001"                  |
 | ~ status   | "paid"                     | "pending"                  |
@@ -127,10 +127,15 @@ It shows two versions of that row side by side:
 +------------+----------------------------+----------------------------+
 ```
 
-`now` is what the row holds; `was` is what it held one version ago. A change enters on the left and
-pushes the version it replaced across to the right, so `was` is always exactly one step behind -
-never the version the view opened on, which would drift further from useful the longer you watched.
-On the first frame `was` is empty, because there is nothing yet for a change to have replaced.
+`current` is what the row holds; `previous` is what it held one version ago. A change enters on the
+left and pushes the version it replaced across to the right, so `previous` is always exactly one step
+behind - never the version the view opened on, which would drift further from useful the longer you
+watched. On the first frame `previous` is empty, because there is nothing yet for a change to have
+replaced.
+
+A value too long for its column is cut in the middle rather than at the end, because what tells two
+long values of the same kind apart is usually where they stop being alike - at the end. Widen the
+window and more of it shows; the table re-measures on every redraw.
 
 Every field appears in both columns, whether or not it moved; the mark beside a field name says which
 ones did. A view that listed only what changed would make you work out which of two shapes you were
@@ -149,7 +154,7 @@ Now change that row from outside Tapstate and watch the screen follow.
 - **`Ctrl-C` leaves a clean screen.** No half-drawn row, no lost cursor, no shell prompt printed over
   the top of the view.
 - **Resizing the window mid-run does not garble it.** Drag the window narrower while it is running.
-  Narrow enough and the `was` column is dropped rather than wrapped - a table that wraps is harder to
+  Narrow enough and the `previous` column is dropped rather than wrapped - a table that wraps is harder to
   read than a table with one column less.
 
 Run `watch` with its output redirected and it refuses instead of running: a view that redraws one row

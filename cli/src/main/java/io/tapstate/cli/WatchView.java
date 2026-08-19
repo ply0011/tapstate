@@ -16,7 +16,7 @@ import java.util.stream.Stream;
  *
  * <p>It holds two versions of the row: the one showing now, and the one that was showing before the
  * most recent change. A change pushes the current version one place to the right and takes its place,
- * so the right-hand column is always exactly one step behind — not the version the view opened on,
+ * so the previous-version column is always exactly one step behind — not the version the view opened on,
  * which would drift further from useful the longer the view stayed up.
  *
  * <p><b>Anything it writes is the whole screen.</b> The caller redraws in place by erasing as many

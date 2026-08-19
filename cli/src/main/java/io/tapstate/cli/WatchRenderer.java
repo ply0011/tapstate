@@ -5,8 +5,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Renders the in-place view: one row as a bordered table of two versions side by side — what the row
- * holds now, and what it held one version ago. A new version enters on the left and pushes the one it
+ * Renders the in-place view: one row as a bordered table of two versions side by side — the row's
+ * current version, and the one before it. A new version enters on the left and pushes the one it
  * replaced to the right, so the right column is always exactly one step behind and never the version
  * the view started on.
  *
@@ -94,8 +94,8 @@ final class WatchRenderer {
         List<String> lines = new ArrayList<>();
         lines.add(titledTop(title, columns));
         lines.add(row(bothColumns
-                ? new String[] {"field", "now", "was"}
-                : new String[] {"field", "now"}, columns));
+                ? new String[] {"field", "current", "previous"}
+                : new String[] {"field", "current"}, columns));
         lines.add(rule("├", "┼", "┤", columns));
         for (String[] cells : rows) {
             lines.add(row(bothColumns ? cells : new String[] {cells[0], cells[1]}, columns));

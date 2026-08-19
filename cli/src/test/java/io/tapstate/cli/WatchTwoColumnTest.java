@@ -121,6 +121,18 @@ class WatchTwoColumnTest {
     }
 
     @Test
+    @DisplayName("the columns are headed by what they hold: the current version and the one before it")
+    void theColumnsSayWhichVersionTheyHold() {
+        List<String> written = view().onPoll(new WatchPoll.Row(row("order_no", "SO-1001"), 36L), START);
+
+        assertThat(written.get(1))
+                .as("the two columns are two versions of one row, not two rows; heading them anything "
+                        + "that reads as a comparison between records misnames what the reader is seeing")
+                .contains("current")
+                .contains("previous");
+    }
+
+    @Test
     @DisplayName("the frame is boxed: an outer border and a rule between the columns")
     void theFrameIsBoxed() {
         List<String> written = view().onPoll(new WatchPoll.Row(row("order_no", "SO-1001"), 36L), START);
