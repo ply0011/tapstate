@@ -12,6 +12,8 @@ import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionConfig;
 import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSubscription;
+import io.tapstate.spi.store.DataBrowserChange;
+import io.tapstate.spi.store.DataBrowserChangeListener;
 import io.tapstate.spi.store.DataBrowserTailRequest;
 import io.tapstate.spi.store.DiscoveredSourceModel;
 import io.tapstate.spi.store.SchemaStore;
@@ -249,12 +251,25 @@ public final class DataBrowserService {
         ConnectionConfig config = requireBrowsable(connection(sourceId));
         requireHolds(config, sourceId, collection);
         DataBrowserSubscription subscription = tailProbe.tail(
-                config, new DataBrowserTailRequest(collection), change -> {
-            // Tested against the row as it now is, or as it was when that is all the change carries.
-            // A change with neither is admitted: withholding it because there was nothing to test
-            // would drop an event the store really made, which is what a follow exists to report.
-            if (filter == null || change.subject() == null || filter.matches(change.subject())) {
-                sink.onChange(DataBrowserChangeEvent.from(change));
+                config, new DataBrowserTailRequest(collection), new DataBrowserChangeListener() {
+            @Override
+            public void onChange(DataBrowserChange change) {
+                // Tested against the row as it now is, or as it was when that is all the change
+                // carries. A change with neither is admitted: withholding it because there was
+                // nothing to test would drop an event the store really made, which is what a follow
+                // exists to report.
+                if (filter == null || change.subject() == null || filter.matches(change.subject())) {
+                    sink.onChange(DataBrowserChangeEvent.from(change));
+                }
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                // The stream ended and cannot be restarted from here. What the face is told is that
+                // it ended, not what broke: this reaches somebody watching a collection, while the
+                // connector's own account of the failure belongs in the log, where the words it used
+                // survive intact.
+                sink.onEnded(DataBrowserError.FOLLOW_STOPPED);
             }
         });
         return subscription::close;

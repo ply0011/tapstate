@@ -4,6 +4,7 @@ import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceResource;
 import io.tapstate.spi.store.ArtifactStore;
+import io.tapstate.core.common.TapstateErrorCode;
 import io.tapstate.spi.store.DataBrowserChange;
 import io.tapstate.spi.store.DataBrowserChangeListener;
 import io.tapstate.spi.store.DataBrowserSubscription;
@@ -126,6 +127,39 @@ class DataBrowserServiceTailTest {
                         + "store really made and there was nothing to judge it by")
                 .containsExactly(3L, 4L);
         assertThat(seen.get(0).kind()).isEqualTo(DataBrowserChangeEvent.Kind.DELETE);
+    }
+
+    @Test
+    @DisplayName("a stream that fails ends the follow through the sink instead of going quiet")
+    void aStreamThatFailsIsReportedRatherThanLeftAsSilence() {
+        AtomicReference<DataBrowserChangeListener> opened = new AtomicReference<>();
+        DataBrowserService service = service(List.of("order_state"), opened, new AtomicInteger());
+        List<DataBrowserChangeEvent> seen = new ArrayList<>();
+        List<TapstateErrorCode> ended = new ArrayList<>();
+
+        service.tail(VIEWS, "order_state", null, new DataBrowserChangeSink() {
+            @Override
+            public void onChange(DataBrowserChangeEvent change) {
+                seen.add(change);
+            }
+
+            @Override
+            public void onEnded(TapstateErrorCode reason) {
+                ended.add(reason);
+            }
+        });
+        opened.get().onChange(new DataBrowserChange(
+                DataBrowserChange.Kind.INSERT, null, Map.of("status", "Paid"), 1L));
+        opened.get().onError(new IllegalStateException("the driver went away"));
+
+        assertThat(ended)
+                .as("the stream runs on its own thread, so a failure has nowhere to be returned to; "
+                        + "unreported, the reader keeps an open connection to a stream that ended, "
+                        + "which is what a collection nobody is changing looks like")
+                .containsExactly(DataBrowserError.FOLLOW_STOPPED);
+        assertThat(seen)
+                .as("the change that did arrive before the failure is still the reader's")
+                .hasSize(1);
     }
 
     @Test

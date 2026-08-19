@@ -3773,6 +3773,27 @@ class ReplTest {
     }
 
     @Test
+    void tailSaysWhyItStoppedRatherThanNamingACodeAndNothingElse() {
+        // A follow that ends by itself - its stream failed, or it was reclaimed after showing nothing
+        // for long enough - arrives as a code and nothing else, because a close frame carries one
+        // field. The reader is somebody watching a screen that just stopped updating, so the code has
+        // to be turned back into a sentence here; there is nowhere else it could be done.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailRefusal = "data-browser.follow-idle";
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("data-browser.follow-idle");
+        assertThat(output)
+                .as("the catalog sentence, not the literal text of a missing one")
+                .contains("no changes")
+                .doesNotContain("null");
+    }
+
+    @Test
     void tailNeedsNoTerminalBecauseItOnlyEverAppends() {
         // The opposite of the in-place view, and the reason both exist: this one is the pipeable half.
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));

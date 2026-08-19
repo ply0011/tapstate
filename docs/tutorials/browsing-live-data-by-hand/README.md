@@ -154,6 +154,19 @@ The count should go up while the `tail` is open and come back down after the win
 stays up, the session leaked - the symptom of which, much later, is reads refused because every
 instance is busy.
 
+A follow that shows nothing for ten minutes is ended by the server, which says so rather than going
+quiet:
+
+```
+error: data-browser.follow-idle
+  Following stopped after 10 minutes with no changes; the connector instance it held was given back.
+```
+
+Ten minutes of *changes*, not of the connection being alive: somebody who walked away leaves a
+connection that answers perfectly well, and that is the case the limit exists for. A collection that
+is genuinely quiet ends the same way, which is the trade - the instance is worth more to the next
+reader than to a screen nobody is watching. Follow it again to keep watching.
+
 ## 6. The same data, from an agent
 
 Wire the sidecar into an MCP client exactly as the

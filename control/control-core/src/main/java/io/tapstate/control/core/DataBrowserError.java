@@ -45,7 +45,29 @@ public enum DataBrowserError implements TapstateErrorCode {
      * connector's own table names and table info, and they answer correctly for every connector here.
      * Refusing them too would hide a source a reader can perfectly well look at the outline of.
      */
-    CONNECTOR_NOT_BROWSABLE("data-browser.connector-not-browsable", Set.of("connector", "browsable"));
+    CONNECTOR_NOT_BROWSABLE("data-browser.connector-not-browsable", Set.of("connector", "browsable")),
+
+    /**
+     * The source being followed was deleted, so the follow was stopped and its connection closed. The
+     * close is the whole point: a stopped stream on an open connection is a collection nothing is
+     * happening to, and a reader cannot tell those apart.
+     */
+    SOURCE_DELETED("data-browser.source-deleted", Set.of()),
+
+    /**
+     * The follow's stream failed, so it was stopped and its connection closed. Carries no detail of the
+     * failure on purpose - it reaches a reader who asked to watch a collection, not the operator of the
+     * connector that broke; the failure itself is logged where the connector's own words survive.
+     */
+    FOLLOW_STOPPED("data-browser.follow-stopped", Set.of()),
+
+    /**
+     * The follow was reclaimed after a long stretch with nothing to show. A follow holds a connector
+     * instance for as long as it is open and the host's ceiling counts it, so one left running by
+     * somebody who walked away is a place nobody else can have. A reader who is still there asks
+     * again; nothing is lost but the connection.
+     */
+    FOLLOW_IDLE("data-browser.follow-idle", Set.of());
 
     private final String code;
     private final Set<String> placeholders;

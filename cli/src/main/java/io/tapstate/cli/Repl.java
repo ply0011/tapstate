@@ -761,7 +761,11 @@ final class Repl {
                 },
                 this::isStreamCancelled);
         if (refusal != null) {
-            return renderRejection(refusal, null);
+            // A follow that ended by itself arrives as a code and nothing else - the close frame has
+            // room for one. Rendering it from the bundled catalog is what turns "the screen stopped
+            // updating" into a sentence; handed on as a bare code with no message, the reader is told
+            // that something has a name and not what happened.
+            return renderRejection(refusal, MessageCatalog.bundled().render(refusal, Map.of()).message());
         }
         // A stream ends because the user stopped it, which is the way it is meant to end.
         return Cli.EXIT_OK;

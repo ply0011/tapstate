@@ -74,7 +74,10 @@ control.malformed-request
 control.unauthenticated
 control.unreachable
 data-browser.connector-not-browsable
+data-browser.follow-idle
+data-browser.follow-stopped
 data-browser.invalid-limit
+data-browser.source-deleted
 data-browser.unknown-collection
 data-browser.unorderable-field
 dsl.ambiguous-reference

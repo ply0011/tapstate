@@ -6,7 +6,10 @@ import io.tapstate.core.common.JsonWriter;
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.control.core.DataBrowserChangeEvent;
 import io.tapstate.control.core.DataBrowserFollow;
+import io.tapstate.control.core.DataBrowserChangeSink;
+import io.tapstate.control.core.DataBrowserError;
 import io.tapstate.control.core.DataBrowserFollows;
+import io.tapstate.core.common.TapstateErrorCode;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -20,7 +23,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * The followed-collection stream: {@code /api/data-browser/{source}/{collection}/tail}.
@@ -54,6 +63,18 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
     /** The websocket close code for a refusal the client cannot fix by reconnecting. */
     private static final int POLICY_VIOLATION = 1008;
 
+    /**
+     * How long a follow may show nothing before it is reclaimed. What it holds is a connector
+     * instance and a place in the host's ceiling, and nothing evicts one to make room, so a follow
+     * left running by somebody who walked away is a place no other reader can ever have. Idleness is
+     * measured in changes shown, not in the connection being alive: a reader who walked away leaves a
+     * connection that answers perfectly well, which is exactly the case this exists to end.
+     */
+    private static final Duration IDLE_LIMIT = Duration.ofMinutes(10);
+
+    /** How often the idle sweep looks. Fine enough that the limit means roughly what it says. */
+    private static final Duration SWEEP_INTERVAL = Duration.ofSeconds(30);
+
     private final DataBrowserService browser;
 
     /** The live follow per open session, so the close callback releases exactly that session's. */
@@ -67,8 +88,45 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
      */
     private final Map<String, String> sources = new ConcurrentHashMap<>();
 
+    /** When each open session was last shown a change, so the sweep can tell which have gone quiet. */
+    private final Map<String, Instant> lastShown = new ConcurrentHashMap<>();
+
+    private final Clock clock;
+
+    private final Duration idleLimit;
+
+    private final ScheduledExecutorService sweeps;
+
     DataBrowserTailHandler(DataBrowserService browser) {
+        this(browser, Clock.systemUTC(), IDLE_LIMIT);
+    }
+
+    DataBrowserTailHandler(DataBrowserService browser, Clock clock, Duration idleLimit) {
         this.browser = Objects.requireNonNull(browser, "browser");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.idleLimit = Objects.requireNonNull(idleLimit, "idleLimit");
+        this.sweeps = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "data-browser-follow-sweep");
+            thread.setDaemon(true);
+            return thread;
+        });
+        this.sweeps.scheduleWithFixedDelay(this::sweepIdle,
+                SWEEP_INTERVAL.toMillis(), SWEEP_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Ends every follow that has shown nothing for longer than the limit, telling each reader why.
+     *
+     * <p>Package-private and driven by the scheduler rather than being the scheduler: a limit measured
+     * in minutes is not a thing to prove by waiting, so the case sets the clock and calls this.
+     */
+    void sweepIdle() {
+        Instant deadline = clock.instant().minus(idleLimit);
+        lastShown.entrySet().stream()
+                .filter(shown -> shown.getValue().isBefore(deadline))
+                .map(Map.Entry::getKey)
+                .toList()
+                .forEach(session -> endFollow(session, DataBrowserError.FOLLOW_IDLE));
     }
 
     @Override
@@ -78,11 +136,27 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
         String path = session.getUri().getPath();
         try {
             String source = segmentBefore(path, "data-browser", 1);
+            lastShown.put(session.getId(), clock.instant());
             DataBrowserFollow follow = browser.tail(
                     source,
                     segmentBefore(path, "data-browser", 2),
                     filterOf(session.getUri()),
-                    change -> send(buffered, frame(change)));
+                    new DataBrowserChangeSink() {
+                        @Override
+                        public void onChange(DataBrowserChangeEvent change) {
+                            lastShown.put(session.getId(), clock.instant());
+                            send(buffered, frame(change));
+                        }
+
+                        @Override
+                        public void onEnded(TapstateErrorCode reason) {
+                            // The stream is over; the connection is not, and a reader on an open
+                            // connection to an ended stream is watching what looks like a collection
+                            // nobody is changing. Closing it is what tells them, the same as a
+                            // deleted source does.
+                            endFollow(session.getId(), reason);
+                        }
+                    });
             follows.put(session.getId(), follow);
             sources.put(session.getId(), source);
             sessions.put(session.getId(), session);
@@ -96,6 +170,7 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        lastShown.remove(session.getId());
         sources.remove(session.getId());
         sessions.remove(session.getId());
         DataBrowserFollow follow = follows.remove(session.getId());
@@ -117,17 +192,24 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
                 .filter(watching -> watching.getValue().equals(sourceId))
                 .map(Map.Entry::getKey)
                 .toList()
-                .forEach(session -> {
-                    sources.remove(session);
-                    DataBrowserFollow follow = follows.remove(session);
-                    if (follow != null) {
-                        follow.close();
-                    }
-                    WebSocketSession open = open(session);
-                    if (open != null) {
-                        closeQuietly(open);
-                    }
-                });
+                .forEach(session -> endFollow(session, DataBrowserError.SOURCE_DELETED));
+    }
+
+    /**
+     * Stops one follow and closes the connection carrying it, naming why. Every way a follow ends
+     * without the reader letting go comes through here, so none of them can end in silence.
+     */
+    private void endFollow(String sessionId, TapstateErrorCode reason) {
+        lastShown.remove(sessionId);
+        sources.remove(sessionId);
+        DataBrowserFollow follow = follows.remove(sessionId);
+        if (follow != null) {
+            follow.close();
+        }
+        WebSocketSession open = open(sessionId);
+        if (open != null) {
+            closeQuietly(open, reason);
+        }
     }
 
     /** The open session behind an id, or null once it has gone. */
@@ -135,9 +217,9 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
         return sessions.get(sessionId);
     }
 
-    private static void closeQuietly(WebSocketSession session) {
+    private static void closeQuietly(WebSocketSession session, TapstateErrorCode reason) {
         try {
-            session.close(new CloseStatus(POLICY_VIOLATION, "data-browser.source-deleted"));
+            session.close(new CloseStatus(POLICY_VIOLATION, reason.code()));
         } catch (IOException alreadyGone) {
             // The peer is already away; there is nothing left to tell.
         }
@@ -149,9 +231,11 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
         follows.clear();
         // And the sockets, for the reason a deleted source closes them: a stopped follow on an open
         // connection is a collection nothing is happening to, and the reader cannot tell the two apart.
-        sessions.values().forEach(DataBrowserTailHandler::closeQuietly);
+        sessions.values().forEach(session -> closeQuietly(session, DataBrowserError.FOLLOW_STOPPED));
         sources.clear();
         sessions.clear();
+        lastShown.clear();
+        sweeps.shutdownNow();
     }
 
     /** The open sessions, so a deleted source's watchers can be told rather than left in silence. */
