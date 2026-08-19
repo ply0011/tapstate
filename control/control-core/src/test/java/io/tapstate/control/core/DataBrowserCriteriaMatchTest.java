@@ -34,6 +34,18 @@ class DataBrowserCriteriaMatchTest {
     }
 
     @Test
+    @DisplayName("a negated term over a list asks whether the list holds the value, not whether some entry differs")
+    void negatesOverTheWholeListRatherThanPerEntry() {
+        Map<String, Object> holdsPaid = row("tags", List.of("paid", "priority"));
+        Map<String, Object> withoutPaid = row("tags", List.of("shipped", "priority"));
+
+        // The bounded read of the same filter reaches the store as {tags: {$ne: "paid"}}, which does not
+        // return a row whose list holds "paid". Any-entry-differs would return it here and nowhere else.
+        assertThat(match("tags", DataBrowserCriteria.Operator.NE, "paid").matches(holdsPaid)).isFalse();
+        assertThat(match("tags", DataBrowserCriteria.Operator.NE, "paid").matches(withoutPaid)).isTrue();
+    }
+
+    @Test
     @DisplayName("equality holds on the value itself")
     void matchesAScalarField() {
         Map<String, Object> paid = row("status", "Paid", "total", 12);

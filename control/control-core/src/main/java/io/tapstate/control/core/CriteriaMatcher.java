@@ -42,6 +42,14 @@ final class CriteriaMatcher {
         if (found.isEmpty()) {
             return false;
         }
+        // A negated term is the negation over the whole path, never any-entry-satisfies: the store reads
+        // `ne` against a list as "this list does not hold that value", so asking whether some entry
+        // differs shows the reader a row holding exactly the value they excluded — and the same row is
+        // absent from the bounded read of the same filter, with nothing reporting the disagreement.
+        if (term.operator() == DataBrowserCriteria.Operator.NE) {
+            return found.stream()
+                    .noneMatch(value -> holds(DataBrowserCriteria.Operator.EQ, value, term.value()));
+        }
         // Any one of the values found under the path satisfying the term is the whole term satisfied:
         // a path that crossed a list resolves to one value per entry.
         return found.stream().anyMatch(value -> holds(term.operator(), value, term.value()));
