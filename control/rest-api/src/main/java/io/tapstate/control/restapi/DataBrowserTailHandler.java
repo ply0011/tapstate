@@ -14,6 +14,7 @@ import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorato
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -80,7 +81,7 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
             DataBrowserFollow follow = browser.tail(
                     source,
                     segmentBefore(path, "data-browser", 2),
-                    filterOf(session),
+                    filterOf(session.getUri()),
                     change -> send(buffered, frame(change)));
             follows.put(session.getId(), follow);
             sources.put(session.getId(), source);
@@ -183,13 +184,23 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
     }
 
     /** The filter a follow was opened with, read from the handshake query, or null when none was given. */
-    private static DataBrowserCriteria filterOf(WebSocketSession session) {
-        String query = session.getUri().getQuery();
-        if (query == null || !query.startsWith("filter=")) {
+    static DataBrowserCriteria filterOf(URI handshake) {
+        String query = handshake.getRawQuery();
+        if (query == null) {
             return null;
         }
-        String written = URLDecoder.decode(query.substring("filter=".length()), StandardCharsets.UTF_8);
-        return WrittenFilter.of(written);
+        // Read as one parameter among however many were sent, rather than as a prefix of the whole
+        // query. Matched on the prefix, a filter that is not written first is silently not a filter at
+        // all — the follow streams every row and says nothing — and one that is written first swallows
+        // every parameter after it into its own text.
+        for (String parameter : query.split("&")) {
+            int assigned = parameter.indexOf('=');
+            if (assigned > 0 && parameter.substring(0, assigned).equals("filter")) {
+                return WrittenFilter.of(URLDecoder.decode(
+                        parameter.substring(assigned + 1), StandardCharsets.UTF_8));
+            }
+        }
+        return null;
     }
 
     /**
@@ -197,11 +208,16 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
      * because a collection name may itself hold characters a pattern would have to escape, and the
      * only two segments here are the source and the collection.
      */
-    private static String segmentBefore(String path, String marker, int offset) {
+    static String segmentBefore(String path, String marker, int offset) {
+        // Taken as it is: getPath() has already decoded the escapes, so decoding again reads a name that
+        // holds a plus as one holding a space, and one holding a percent as a broken escape — which
+        // leaves through this handler as a bare failure rather than as a coded close. The read verbs bind
+        // the same two segments through the container, which decodes exactly once, so a second decode
+        // here is also the two faces disagreeing about which collection was named.
         String[] segments = path.split("/");
         for (int i = 0; i + offset < segments.length; i++) {
             if (segments[i].equals(marker)) {
-                return URLDecoder.decode(segments[i + offset], StandardCharsets.UTF_8);
+                return segments[i + offset];
             }
         }
         throw new IllegalStateException("no source and collection in follow path: " + path);

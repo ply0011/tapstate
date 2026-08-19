@@ -972,7 +972,7 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
     @Override
     public String tail(URI baseUrl, String credential, String sourceId, String collection, Object filter,
             TailStream sink, BooleanSupplier stop) {
-        String path = "/api/data-browser/" + encode(sourceId) + "/" + encode(collection) + "/tail";
+        String path = "/api/data-browser/" + urlSegment(sourceId) + "/" + urlSegment(collection) + "/tail";
         // The filter travels in the handshake query because a handshake has no body. It goes as the same
         // JSON a read would have sent, so both faces meet the identical reading on the far side.
         String query = filter == null ? "" : "?filter=" + encode(JsonOut.compact(filter));
