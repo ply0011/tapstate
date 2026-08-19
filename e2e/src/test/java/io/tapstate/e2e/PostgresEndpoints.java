@@ -154,6 +154,91 @@ final class PostgresEndpoints implements Endpoints {
         return row;
     }
 
+    /**
+     * Sets the given columns on the one row the equality settings locate, leaving its other columns
+     * alone. Plain equality on both halves, so unlike this driver's row-count changes there is no
+     * {@code ORDER BY} to place and nothing about it is dialect - what differs from the MySQL driver is
+     * only how an identifier is quoted.
+     */
+    @Override
+    public void update(
+            EndpointAddress address, String table, Map<String, Object> where, Map<String, Object> set) {
+        List<String> columns = List.copyOf(set.keySet());
+        List<String> settings = List.copyOf(where.keySet());
+        String sql = "UPDATE " + quoted(table)
+                + " SET " + String.join(", ", columns.stream().map(c -> quoted(c) + " = ?").toList())
+                + " WHERE " + String.join(" AND ", settings.stream().map(s -> quoted(s) + " = ?").toList());
+        List<Object> values = new ArrayList<>();
+        columns.forEach(column -> values.add(set.get(column)));
+        settings.forEach(setting -> values.add(where.get(setting)));
+        change(address, table, sql, values, where, "update");
+    }
+
+    /** Removes the one row the settings locate; matching none is an error, as it is for an update. */
+    @Override
+    public void delete(EndpointAddress address, String table, Map<String, Object> where) {
+        List<String> settings = List.copyOf(where.keySet());
+        String sql = "DELETE FROM " + quoted(table) + " WHERE "
+                + String.join(" AND ", settings.stream().map(s -> quoted(s) + " = ?").toList());
+        List<Object> values = settings.stream().map(where::get).toList();
+        change(address, table, sql, values, where, "delete");
+    }
+
+    /**
+     * Adds the given rows to a table that is already seeded, leaving what it held alone.
+     *
+     * <p>An unseeded table is refused by name rather than left to the database. A case that adds rows
+     * to a table nobody laid down is about to wait for them downstream, and "no such table" surfacing
+     * from the driver reads as a store that is unreachable rather than as a specification that skipped
+     * its seed.
+     */
+    @Override
+    public void insert(EndpointAddress address, String table, List<Map<String, Object>> rows) {
+        Connection connection = connection(address);
+        if (!exists(connection, address, table)) {
+            throw new EnvelopeException(
+                    "the table " + table + " at " + address.text(HOST)
+                            + " has not been seeded, so there is nothing to add to");
+        }
+        insertRows(connection, table, rows);
+    }
+
+    /**
+     * Runs one valued change and holds it to having moved exactly one row.
+     *
+     * <p>Zero rows is refused rather than passed over: the case that wrote the change is about to wait
+     * for its effect downstream, and a silent no-op turns that wait into a timeout that reads like the
+     * product dropped a change nobody actually made. More than one row is refused for the same reason a
+     * document read refuses it - the specification named a row, and moving several is not what it asked.
+     */
+    private void change(
+            EndpointAddress address,
+            String table,
+            String sql,
+            List<Object> values,
+            Map<String, Object> where,
+            String what) {
+        Connection connection = connection(address);
+        if (!exists(connection, address, table)) {
+            throw new EnvelopeException(
+                    "cannot " + what + " a row of " + table + ": the table does not exist");
+        }
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < values.size(); i++) {
+                statement.setObject(i + 1, values.get(i));
+            }
+            int moved = statement.executeUpdate();
+            if (moved != 1) {
+                throw new EnvelopeException(
+                        "a " + what + " of " + table + " matching " + where + " moved " + moved
+                                + " rows; a valued change names exactly one");
+            }
+        } catch (SQLException e) {
+            throw new EnvelopeException(
+                    "cannot " + what + " the row of " + table + " matching " + where, e);
+        }
+    }
+
     @Override
     public void cdc(EndpointAddress address, String table, CdcOp op, long rows) {
         Connection connection = connection(address);

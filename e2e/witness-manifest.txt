@@ -12,6 +12,8 @@ a-cdc-failure-is-observable on IN_PROCESS
 a-cdc-failure-is-observable on REAL_PROCESS
 a-child-collection-arrives-from-another-engine on IN_PROCESS
 a-child-collection-arrives-from-another-engine on REAL_PROCESS
+a-child-collection-from-another-engine-lands-in-the-managed-store on IN_PROCESS
+a-child-collection-from-another-engine-lands-in-the-managed-store on REAL_PROCESS
 a-child-row-is-added-and-the-assembled-document-grows on IN_PROCESS
 a-child-row-is-added-and-the-assembled-document-grows on REAL_PROCESS
 a-child-row-is-deleted-and-the-assembled-document-shrinks on IN_PROCESS
