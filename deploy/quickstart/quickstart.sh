@@ -288,7 +288,18 @@ main() {
     printf '%s\n' "$repl_out"
     case "$repl_out" in
         *control.auth-failed*|*cli.not-authenticated*)
-            die "the CLI could not log in, so no verb after it ran; inspect it with: docker compose logs bootstrap" ;;
+            # Ask the bootstrap what it actually did. "Created it" and "found one already there" are both
+            # successes to that step -- an admin exists either way, which is what makes a re-run safe --
+            # but only the second can explain a password that does not work: the store outlived the .env
+            # the admin was made from. The two failures need different answers, and prescribing a volume
+            # wipe for the wrong one destroys a user's data to fix nothing.
+            bootstrap_said="$(docker compose logs --no-log-prefix --tail 1 bootstrap 2>/dev/null || true)"
+            case "$bootstrap_said" in
+                *"already exists"*)
+                    die "the CLI could not log in: this stack already had an admin from an earlier run, and the password in .env is not the one it was created with. Start clean with: docker compose down -v && sh quickstart.sh" ;;
+                *)
+                    die "the CLI could not log in, so no verb after it ran; inspect it with: docker compose logs bootstrap" ;;
+            esac ;;
     esac
 
     # Snapshot verification, printed automatically: the demo's payoff is a real row count in the target,

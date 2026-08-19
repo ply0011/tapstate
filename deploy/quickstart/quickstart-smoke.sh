@@ -294,6 +294,9 @@ bs="${FAKE_BOOTSTRAP_PS:-}"
 # Which container is being asked about is decided before the subcommand is, because `ps` appears in the
 # bootstrap query too -- answering on the subcommand alone would hand the server's Health line back for
 # every query and quietly make the two indistinguishable.
+# `logs` is answered before the container is looked at, because the bootstrap log query names the
+# container too -- deciding on the container alone would hand a ps line back to a log query.
+case " $* " in *" logs "*) echo "${FAKE_BOOTSTRAP_LOG:-bootstrap: first admin created}"; exit 0 ;; esac
 case " $* " in *" bootstrap "*) echo "$bs"; exit 0 ;; esac
 for a in "$@"; do
   [ "$a" = ps ] && { echo '{"Health":"healthy"}'; exit 0; }
@@ -307,6 +310,7 @@ DOCK
     TAPSTATE_QUICKSTART_BASE_URL="file://$QS_STUB" TAPSTATE_CONNECTORS_URL="file://$QS_STUB/connectors-preview" \
     FAKE_TARGET_ROWS="${1:-5}" \
     FAKE_BOOTSTRAP_PS="${FAKE_BOOTSTRAP_PS:-}" FAKE_CLI_OUT="${FAKE_CLI_OUT:-}" \
+    FAKE_BOOTSTRAP_LOG="${FAKE_BOOTSTRAP_LOG:-}" \
     TAPSTATE_QUICKSTART_POLL_SECONDS=0 \
     sh "$RUN/quickstart.sh" 2>&1)"; RUN_RC=$?
   rm -rf "$shim"
@@ -391,6 +395,30 @@ if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'could not log in' \
   ok "an auth failure is diagnosed as an auth failure, not as an empty target"
 else
   bad "auth failure not named at the point it happened (rc=$RUN_RC): $RUN_OUT"
+fi
+
+# An admin left over from an earlier run is the likely reason a demo whose password is generated cannot
+# log in, and it is the one case the user can act on without reading anything. The bootstrap step reports
+# success either way -- creating the admin and finding one already there are both "an admin exists" -- so
+# a run against a stack whose volume outlived its .env fails at login with both facts true and filed in
+# different places. Reported here as the remedy rather than as a log to go and read.
+FAKE_CLI_OUT='error: control.auth-failed' \
+  FAKE_BOOTSTRAP_LOG='bootstrap: an admin already exists, nothing to do' run_phase_fakes
+unset FAKE_CLI_OUT FAKE_BOOTSTRAP_LOG
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'down -v'; then
+  ok "an auth failure against a pre-existing admin names the reset that fixes it"
+else
+  bad "stale-admin auth failure did not name the remedy (rc=$RUN_RC): $RUN_OUT"
+fi
+# ...and the generic message is kept for an auth failure with no such history, which is a different
+# situation with a different answer: wiping the volume there would destroy data to fix nothing.
+FAKE_CLI_OUT='error: control.auth-failed' \
+  FAKE_BOOTSTRAP_LOG='bootstrap: first admin created' run_phase_fakes
+unset FAKE_CLI_OUT FAKE_BOOTSTRAP_LOG
+if [ "$RUN_RC" -ne 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'down -v'; then
+  ok "an auth failure with a freshly created admin does not prescribe wiping the volume"
+else
+  bad "the stale-admin remedy leaked into an unrelated auth failure (rc=$RUN_RC): $RUN_OUT"
 fi
 
 # A run whose online verbs did not take must fail, loudly and non-zero. The REPL is the reason this
