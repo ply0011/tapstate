@@ -123,8 +123,26 @@ jobs:
           script="$GITHUB_WORKSPACE/deploy/quickstart/quickstart.sh"
           cd "$RUNNER_TEMP"
           cat "$script" | sh 2>&1 | tee run.log
-          grep -q 'the target now holds' run.log
+          # Read the count line off the script's own summary. The wording is taken from the script rather
+          # than restated here: it has drifted once already -- the line became "the view now holds" when the
+          # demo started declaring a view, and this grep went on looking for the old words, so the lane
+          # could only fail even on a run that delivered every row.
+          grep -qE 'the (view|target) now holds [0-9]+ rows' run.log
           test -d tapstate-demo || { echo "the piped run did not make its own directory" >&2; exit 1; }
+
+          # The managed store is the deployment's, not the workspace's: nothing here applied it, and the
+          # generated workspace does not even contain it. Asserted on the compose stack rather than an
+          # in-process server because "installed and it was already there" is a claim about the thing a
+          # user actually starts.
+          test ! -e tapstate-demo/work/source/views.tap.yml \
+            || { echo "the demo workspace declares the store; this assertion would prove nothing" >&2; exit 1; }
+          cd tapstate-demo
+          admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
+          printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nls\nexit\n' "$admin_pw" \
+            | ./tapstate -w work > ls.log 2>&1
+          grep -q 'source  views' ls.log \
+            || { echo "the store was not registered by the deployment; ls said:" >&2; cat ls.log >&2; exit 1; }
+          echo "the deployment registered the store: nothing applied it and it is listed"
 
       - name: The server came from where this leg says it did
         # A registry pull leaves a repo digest; a local build has none. That single fact separates the two
