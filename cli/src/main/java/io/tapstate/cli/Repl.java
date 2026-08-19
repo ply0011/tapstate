@@ -9,6 +9,7 @@ import io.tapstate.core.model.canonical.CanonicalHash;
 import io.tapstate.core.schema.SchemaNavigator;
 import io.tapstate.messages.MessageCatalog;
 import org.jline.reader.EndOfFileException;
+import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
@@ -3035,6 +3036,27 @@ final class Repl {
         return words;
     }
 
+    /**
+     * The interactive reader, as a seam the line-reading rules can be exercised against — the rest of
+     * the REPL is tested through {@link #dispatch}, which is downstream of everything this decides.
+     *
+     * <p>History expansion is off. It rewrites the line before anyone parses it: it consumes
+     * backslashes as escapes, and takes {@code !} as a reference to an earlier command. Both belong to
+     * an interactive shell's own language, and a line here is not in that language -- it carries field
+     * names and values that are the user's data. A field whose name holds a dot is addressed by
+     * escaping the dot, so the expansion silently turned the one spelling that reaches that column
+     * into the spelling that reaches a nested path instead.
+     */
+    static LineReader readerFor(Terminal terminal, Completer completer) {
+        LineReaderBuilder builder = LineReaderBuilder.builder()
+                .terminal(terminal)
+                .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true);
+        if (completer != null) {
+            builder.completer(completer);
+        }
+        return builder.build();
+    }
+
     /** Runs the interactive read loop until {@code exit} / {@code quit} or end-of-input. */
     void run() {
         PrintWriter out = commandLine.getOut();
@@ -3048,10 +3070,8 @@ final class Repl {
                 // bind the masked-input reader to the REPL's own terminal (which this try owns and closes)
                 prompter = new JLinePrompter(terminal, false);
             }
-            LineReader reader = LineReaderBuilder.builder()
-                    .terminal(terminal)
-                    .completer(TapstateCompleter.forRepl(commandLine, SchemaNavigator.bundled()))
-                    .build();
+            LineReader reader = readerFor(terminal,
+                    TapstateCompleter.forRepl(commandLine, SchemaNavigator.bundled()));
             // Ctrl-C stops an in-flight watch/follow stream. The line reader saves and restores the signal
             // handlers around readLine (where Ctrl-C stays "clear the line"), so this handler is active only
             // while a dispatched verb runs -- exactly when a stream is blocking the loop.
