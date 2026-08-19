@@ -219,13 +219,14 @@ class ControlPlaneConfiguration {
 
     @Bean
     ArtifactMutationService artifactMutationService(
-            ArtifactStore artifactStore, StorePort storePort, AuditGate auditGate) {
+            ArtifactStore artifactStore, StorePort storePort, AuditGate auditGate,
+            ObjectProvider<DataBrowserFollows> follows) {
         // The removal takes the same artifact store bean apply writes through, so both paths see one
         // view of a resource. The dependent bookkeeping a removed pipeline owns is reclaimed straight
         // off the store port: those facets have no service in front of them.
         return new ArtifactMutationService(
                 artifactStore, storePort.desired(), storePort.state(), storePort.observations(),
-                storePort.meta(), auditGate);
+                storePort.meta(), auditGate, follows.getIfAvailable(() -> DataBrowserFollows.NONE));
     }
 
     @Bean

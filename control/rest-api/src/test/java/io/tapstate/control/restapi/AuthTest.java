@@ -17,6 +17,7 @@ import io.tapstate.control.core.ConnectorCatalogView;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.DataBrowserFollows;
 import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.LoginService;
@@ -622,7 +623,7 @@ class AuthTest {
         ArtifactMutationService artifactMutationService(InMemoryArtifactStore store, AuditGate auditGate) {
             return new ArtifactMutationService(
                     store, NoReclaimStores.desired(), NoReclaimStores.state(),
-                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate);
+                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate, DataBrowserFollows.NONE);
         }
 
         // The connection-test controller comes in with the whole ControlHttpFace bundle, so its service must
