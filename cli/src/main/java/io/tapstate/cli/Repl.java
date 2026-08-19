@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.BooleanSupplier;
+import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -77,6 +78,9 @@ final class Repl {
      * coded {@code cli.not-connected} and {@code ls} browses the local workspace. {@code validate} is not here — it
      * runs the full local stack in either state until a server validate endpoint exists.
      */
+    /** The screen width assumed when there is no terminal to ask, or it answers nothing useful. */
+    private static final int DEFAULT_SCREEN_WIDTH = 100;
+
     /** How often the in-place view asks again. Stated in its own header, because it is a poll. */
     private static final Duration WATCH_INTERVAL = Duration.ofSeconds(1);
 
@@ -110,6 +114,13 @@ final class Repl {
      * test process has no terminal, so the refusal would be the only branch ever reached.
      */
     private BooleanSupplier terminal = () -> System.console() != null;
+
+    /**
+     * How wide the screen is. Asked again on every frame rather than captured once, so a window
+     * resized while the in-place view is running is picked up by the next redraw. Falls back to a
+     * conventional width when there is no terminal to ask -- a dumb terminal answers zero.
+     */
+    private IntSupplier screenWidth = () -> DEFAULT_SCREEN_WIDTH;
 
     /** The connection state, carried across read-loop iterations (offline until {@code connect}). */
     private final Session session = new Session();
@@ -169,6 +180,11 @@ final class Repl {
             }
         }
         return null;
+    }
+
+    /** Answers how wide the screen is; overridden so the narrow layout can be exercised. */
+    void screenWidth(IntSupplier width) {
+        this.screenWidth = width;
     }
 
     /** Answers whether this process has a terminal; overridden so both branches can be exercised. */
@@ -710,7 +726,7 @@ final class Repl {
             return Cli.EXIT_VERB_UNAVAILABLE;
         }
         String namespace = live.sourceId() + "." + live.collection();
-        WatchView view = new WatchView(namespace);
+        WatchView view = new WatchView(namespace, screenWidth);
         streamCancelled = false;
         int drawn = 0;
         while (!isStreamCancelled()) {
@@ -3040,6 +3056,9 @@ final class Repl {
             // handlers around readLine (where Ctrl-C stays "clear the line"), so this handler is active only
             // while a dispatched verb runs -- exactly when a stream is blocking the loop.
             terminal.handle(Terminal.Signal.INT, signal -> cancelStream());
+            // A dumb terminal answers zero rather than failing, which would render every frame at
+            // nothing wide; the conventional width stands in for it.
+            screenWidth = () -> terminal.getWidth() > 0 ? terminal.getWidth() : DEFAULT_SCREEN_WIDTH;
             while (true) {
                 String line;
                 try {

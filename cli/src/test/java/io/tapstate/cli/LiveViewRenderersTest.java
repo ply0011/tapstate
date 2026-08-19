@@ -23,6 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class LiveViewRenderersTest {
 
+    /** A width with room for both value columns, so the narrow fallback is not what is under test. */
+    private static final int WIDE = 100;
+
     private static Map<String, Object> row(Object... pairs) {
         Map<String, Object> row = new LinkedHashMap<>();
         for (int i = 0; i + 1 < pairs.length; i += 2) {
@@ -38,8 +41,8 @@ class LiveViewRenderersTest {
         @Test
         @DisplayName("says it polls, and says so in the header rather than looking like a push")
         void headerSaysItPolls() {
-            List<String> frame = WatchRenderer.frame("views.order_state", row("id", "ord_123"),
-                    DocumentDiff.between(null, row("id", "ord_123")), 5L);
+            List<String> frame = WatchRenderer.frame("views.order_state", row("id", "ord_123"), null,
+                    DocumentDiff.between(null, row("id", "ord_123")), 5L, WIDE);
 
             assertThat(frame.get(0))
                     .as("a view that refreshes by asking again says so; a reader who thinks it is pushed "
@@ -51,23 +54,27 @@ class LiveViewRenderersTest {
         @Test
         @DisplayName("the footer says what the view cannot promise, word for word")
         void footerAdmitsWhatItCannotPromise() {
-            List<String> frame = WatchRenderer.frame("views.order_state", row("id", "ord_123"),
-                    DocumentDiff.between(null, row("id", "ord_123")), 5L);
+            List<String> frame = WatchRenderer.frame("views.order_state", row("id", "ord_123"), null,
+                    DocumentDiff.between(null, row("id", "ord_123")), 5L, WIDE);
 
-            assertThat(frame.get(frame.size() - 1))
+            assertThat(WatchRenderer.footer(5L))
                     .as("the row on screen is the database's first, which is not a stable pick and not "
                             + "the newest — a footer that said either would be a lie the reader cannot check")
                     .startsWith("showing 1 of ~5 (first in natural order — not stable, not the newest)")
                     .endsWith("· use `tail` for the whole table");
+            assertThat(frame)
+                    .as("and it is under the table, where the reader meets it")
+                    .anySatisfy(line -> assertThat(line).startsWith("showing 1 of ~5"));
         }
 
         @Test
         @DisplayName("a filtered read gets no count, and renders as no count rather than as zero")
         void filteredReadShowsNoCount() {
-            List<String> frame = WatchRenderer.frame("views.order_state", row("id", "ord_123"),
-                    DocumentDiff.between(null, row("id", "ord_123")), null);
+            List<String> frame = WatchRenderer.frame("views.order_state", row("id", "ord_123"), null,
+                    DocumentDiff.between(null, row("id", "ord_123")), null, WIDE);
 
-            String footer = frame.get(frame.size() - 1);
+            String footer = WatchRenderer.footer(null);
+            assertThat(frame).anySatisfy(line -> assertThat(line).startsWith("showing 1 (first"));
             assertThat(footer)
                     .as("counting a filtered collection is a full scan, so the count is not offered — "
                             + "and an absent count rendered as 0 would be a number that is simply wrong")
@@ -82,24 +89,30 @@ class LiveViewRenderersTest {
             Map<String, Object> before = row("id", "ord_123", "status", "Paid");
             Map<String, Object> after = row("id", "ord_123", "status", "Shipped");
             List<String> frame = WatchRenderer.frame(
-                    "views.order_state", after, DocumentDiff.between(before, after), 5L);
+                    "views.order_state", after, before, DocumentDiff.between(before, after), 5L, WIDE);
 
             assertThat(frame)
                     .as("the unchanged field keeps an empty slot, so the marked one is the one that moved")
-                    .anySatisfy(line -> assertThat(line).startsWith("  id"))
-                    .anySatisfy(line -> assertThat(line).startsWith("~ status"));
+                    .anySatisfy(line -> assertThat(line).contains("\u2502   id"))
+                    .anySatisfy(line -> assertThat(line).contains("\u2502 ~ status"));
         }
 
         @Test
-        @DisplayName("a frame with nothing new writes nothing at all in the data area")
-        void anUnchangedFrameWritesNothing() {
+        @DisplayName("a frame is always the whole table, so a caller redrawing in place cannot erase more")
+        void everyFrameIsTheWholeTable() {
             Map<String, Object> unchanged = row("id", "ord_123", "status", "Paid");
 
-            assertThat(WatchRenderer.frame("views.order_state", unchanged,
-                    DocumentDiff.between(unchanged, unchanged), 5L))
-                    .as("redrawing an identical frame every second makes the byte stream never idle and "
-                            + "tells the reader nothing; the status line is what says the view is alive")
-                    .isEmpty();
+            List<String> frame = WatchRenderer.frame("views.order_state", unchanged, unchanged,
+                    DocumentDiff.between(unchanged, unchanged), 5L, WIDE);
+
+            assertThat(frame)
+                    .as("the caller erases as many lines as it last wrote; a frame that left the "
+                            + "unchanged fields out would take them off the screen and leave the rest")
+                    .anySatisfy(line -> assertThat(line).contains("id"))
+                    .anySatisfy(line -> assertThat(line).contains("status"));
+            assertThat(frame.get(0)).startsWith("\u250c");
+            // Whether an unchanged screen is rewritten at all is the view's decision, not this one's:
+            // it is the only place that knows when the screen was last written to.
         }
 
         @Test

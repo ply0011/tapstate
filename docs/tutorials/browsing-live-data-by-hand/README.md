@@ -115,6 +115,27 @@ tapstate(admin@127.0.0.1:8080)> watch shop.orders
 footer says so, including that the row it is holding may be replaced by a different one, because
 "first in natural order" is not a promise about which row that is.
 
+It shows two versions of that row side by side:
+
+```
++- watching shop.orders - one row - polling every 1s -----------------+
+| field      | now                        | was                        |
+|------------|----------------------------|----------------------------|
+|   order_no | "SO-1001"                  | "SO-1001"                  |
+| ~ status   | "paid"                     | "pending"                  |
+| ~ amount   | 696                        | 27                         |
++------------+----------------------------+----------------------------+
+```
+
+`now` is what the row holds; `was` is what it held one version ago. A change enters on the left and
+pushes the version it replaced across to the right, so `was` is always exactly one step behind -
+never the version the view opened on, which would drift further from useful the longer you watched.
+On the first frame `was` is empty, because there is nothing yet for a change to have replaced.
+
+Every field appears in both columns, whether or not it moved; the mark beside a field name says which
+ones did. A view that listed only what changed would make you work out which of two shapes you were
+looking at before you could read either.
+
 Now change that row from outside Tapstate and watch the screen follow.
 
 **Look at this (2 of 4): three things only a person at a terminal can see.**
@@ -122,9 +143,14 @@ Now change that row from outside Tapstate and watch the screen follow.
 - **It redraws in place.** The screen updates where it is, rather than printing a fresh copy under
   the old one. If it scrolls, that is the failure - and it is invisible to any assertion about what
   was written to the stream, because both look identical in a captured buffer.
+- **The row stays up while nothing is happening.** Leave it alone for a minute. The `checked` time
+  keeps moving and the table stays where it is; a screen that empties out to a single line after a
+  few quiet seconds is the failure this replaced.
 - **`Ctrl-C` leaves a clean screen.** No half-drawn row, no lost cursor, no shell prompt printed over
   the top of the view.
 - **Resizing the window mid-run does not garble it.** Drag the window narrower while it is running.
+  Narrow enough and the `was` column is dropped rather than wrapped - a table that wraps is harder to
+  read than a table with one column less.
 
 Run `watch` with its output redirected and it refuses instead of running: a view that redraws one row
 in place has nothing to say to a file. The refusal names both alternatives rather than just stopping

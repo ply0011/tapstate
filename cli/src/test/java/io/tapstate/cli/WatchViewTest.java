@@ -30,7 +30,7 @@ class WatchViewTest {
     }
 
     private static WatchView view() {
-        return new WatchView("views.order_state");
+        return new WatchView("views.order_state", () -> 100);
     }
 
     @Test
@@ -70,8 +70,10 @@ class WatchViewTest {
         assertThat(view.onPoll(new WatchPoll.Row(same, 5L), START.plus(Duration.ofSeconds(6))))
                 .as("but going silent forever is how a reader stops being able to tell a still row from "
                         + "a view that died")
-                .singleElement(org.assertj.core.api.InstanceOfAssertFactories.STRING)
-                .contains("checked");
+                .anySatisfy(line -> assertThat(line).contains("checked"))
+                .as("and the refresh carries the whole screen: the caller erases what it last drew, so a "
+                        + "status line on its own would take the row down with it")
+                .anySatisfy(line -> assertThat(line).contains("ord_123"));
     }
 
     @Test
@@ -83,7 +85,7 @@ class WatchViewTest {
         List<String> written = view.onPoll(
                 new WatchPoll.Row(row("id", "ord_123", "status", "Shipped"), 5L), START.plusSeconds(4));
 
-        assertThat(written).anySatisfy(line -> assertThat(line).startsWith("~ status"));
+        assertThat(written).anySatisfy(line -> assertThat(line).contains("\u2502 ~ status"));
         assertThat(written).last(org.assertj.core.api.InstanceOfAssertFactories.STRING)
                 .contains("~status");
     }
@@ -98,13 +100,12 @@ class WatchViewTest {
 
         assertThat(written)
                 .as("the reason the view is not looking is a change of state, and throttling it would "
-                        + "hold back the one line that explains a screen that stopped moving")
-                .singleElement(org.assertj.core.api.InstanceOfAssertFactories.STRING)
-                .contains("busy");
+                        + "hold back the line that explains a screen that stopped moving")
+                .anySatisfy(line -> assertThat(line).contains("busy"));
     }
 
     @Test
-    @DisplayName("a frame it could not take leaves the last good one on screen")
+    @DisplayName("a frame it could not take redraws the last good one, rather than letting it be erased")
     void aSkippedFrameKeepsTheLastGoodData() {
         WatchView view = view();
         view.onPoll(new WatchPoll.Row(row("id", "ord_123", "status", "Paid"), 5L), START);
@@ -112,9 +113,10 @@ class WatchViewTest {
         List<String> written = view.onPoll(new WatchPoll.Skipped("unreachable"), START.plusSeconds(1));
 
         assertThat(written)
-                .as("clearing the screen to report a blip throws away the only data the reader has")
-                .noneSatisfy(line -> assertThat(line).contains("polling every 1s"))
-                .noneSatisfy(line -> assertThat(line).contains("ord_123"));
+                .as("clearing the screen to report a blip throws away the only data the reader has, and "
+                        + "writing the reason alone does exactly that: the caller erases what it drew")
+                .anySatisfy(line -> assertThat(line).contains("ord_123"))
+                .anySatisfy(line -> assertThat(line).contains("unreachable"));
     }
 
     @Test
