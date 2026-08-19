@@ -169,7 +169,7 @@ jobs:
           cd "$RUNNER_TEMP/tapstate-demo"
           rows="$(docker compose exec -T mongo mongosh --quiet \
             'mongodb://mongo:27017/views?directConnection=true' \
-            --eval 'db.orders.countDocuments()' | tr -d '[:space:]')"
+            --eval 'db.order_state.countDocuments()' | tr -d '[:space:]')"
           [ "$rows" = 5 ] || { echo "target holds $rows rows, expected the 5 seeded ones" >&2; exit 1; }
           echo "snapshot: $rows rows in the target"
 
@@ -196,13 +196,13 @@ jobs:
             exit 1
           }
           docker compose exec -T mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
-          await insert 'db.orders.countDocuments({id:6})'
+          await insert 'db.order_state.countDocuments({id:6})'
           # The mapped fields have to follow the change too: a target row that merely exists proves the
           # insert landed, not that the transform is still being applied to later changes.
           docker compose exec -T mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
-          await update '(db.orders.findOne({id:6})||{}).customer_name=="franky" && (db.orders.findOne({id:6})||{}).label=="franky <orders>"'
+          await update '(db.order_state.findOne({id:6})||{}).customer_name=="franky" && (db.order_state.findOne({id:6})||{}).label=="franky <orders>"'
           docker compose exec -T mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
-          await delete '!db.orders.countDocuments({id:6})'
+          await delete '!db.order_state.countDocuments({id:6})'
 
       - name: Server log on failure
         if: failure()
