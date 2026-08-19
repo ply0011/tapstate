@@ -12,6 +12,14 @@ window. Run the page for what it teaches, and stop at those four.
 Time: about 30 minutes. You need the stack from the [online quickstart](../../quickstart-online.md)
 running - or the server and CLI from [an IDE](../running-from-an-ide/) - plus one MCP-capable client.
 
+**Which build you are running matters, and it is easy to get wrong.** The quickstart stands up the
+last *published* image, which is the right thing when you are using Tapstate. If you are checking a
+change - your own, or a branch on its way to a release - that stack will not contain it, and every
+observation you make will be about the released build while your notes say otherwise. Stand it up
+from the source you mean to check instead: `docker compose -f docker-compose.yml -f
+docker-compose.dev.yml up -d` from `deploy/quickstart` builds the server image from the checkout, or
+run it [from an IDE](../running-from-an-ide/).
+
 ## 1. What you are going to run
 
 | Verb | Form | What it answers |
