@@ -143,7 +143,7 @@ final class WatchRenderer {
         StringBuilder line = new StringBuilder("│");
         for (int i = 0; i < columns.size(); i++) {
             int width = columns.get(i);
-            String cell = fit(i < cells.length ? cells[i] : "", width);
+            String cell = fitCell(i < cells.length ? cells[i] : "", width);
             line.append(' ').append(cell).append(" ".repeat(width - cell.length())).append(" │");
         }
         return line.toString();
@@ -170,7 +170,26 @@ final class WatchRenderer {
         return Math.max(low, Math.min(value, high));
     }
 
-    /** Cuts an over-long cell rather than wrapping it, marking that something was cut. */
+    /**
+     * Cuts an over-long value out of the middle, keeping both ends. What distinguishes two long values
+     * of the same kind is usually at the end -- two rendered ids share a long prefix and differ in the
+     * last few characters -- so cutting the tail off is what makes them unreadable, while cutting the
+     * middle leaves both the kind and the identity legible. Wrapping is not the alternative here: the
+     * caller counts the lines it wrote in order to redraw over them.
+     */
+    private static String fitCell(String text, int width) {
+        if (text.length() <= width) {
+            return text;
+        }
+        if (width <= 1) {
+            return "…";
+        }
+        int head = width / 2;
+        int tail = width - 1 - head;
+        return text.substring(0, head) + "…" + text.substring(text.length() - tail);
+    }
+
+    /** Cuts an over-long title rather than wrapping it, marking that something was cut. */
     private static String fit(String text, int width) {
         if (text.length() <= width) {
             return text;

@@ -153,6 +153,27 @@ class WatchTwoColumnTest {
     }
 
     @Test
+    @DisplayName("a value too long for its column keeps both ends, cutting the middle out")
+    void anOverlongValueIsCutInTheMiddle() {
+        WatchView view = new WatchView("shop.orders", () -> 100);
+        // The shape a Mongo _id actually arrives in: an object, not a string.
+        Map<String, Object> id = row("date", "2026-08-19T04:03:39.000Z", "timestamp", 1787112219);
+
+        List<String> written = view.onPoll(new WatchPoll.Row(row("_id", id), 36L), START);
+        String cell = cells(written, "_id").get(1);
+
+        assertThat(cell)
+                .as("the tail of a long value is what tells two of them apart; cutting it off leaves "
+                        + "every long value looking like every other one with the same prefix")
+                .startsWith("{\"date\": \"2026")
+                .endsWith("1787112219}")
+                .contains("…");
+        assertThat(written)
+                .as("and it still fits the screen, or the table overflows it")
+                .allSatisfy(l -> assertThat(l.length()).isLessThanOrEqualTo(100));
+    }
+
+    @Test
     @DisplayName("a terminal too narrow for two columns drops the was column instead of overflowing")
     void aNarrowTerminalDropsTheWasColumn() {
         WatchView narrow = new WatchView("shop.orders", () -> 30);
