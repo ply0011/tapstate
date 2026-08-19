@@ -50,7 +50,7 @@ jobs:
         # proving something weaker than "a user starting from nothing".
         run: |
           set -eu
-          if docker image inspect ghcr.io/tapstate/tapstate:0.2.0 >/dev/null 2>&1; then
+          if docker image inspect ghcr.io/tapstate/tapstate:0.2.1 >/dev/null 2>&1; then
             echo "the server image is already present; this run would not prove it can be pulled" >&2
             exit 1
           fi
@@ -81,7 +81,7 @@ jobs:
         # reduces to once the run is over, and it is checkable after the fact rather than by watching.
         run: |
           set -eu
-          digests="$(docker image inspect ghcr.io/tapstate/tapstate:0.2.0 --format '{{join .RepoDigests ","}}')"
+          digests="$(docker image inspect ghcr.io/tapstate/tapstate:0.2.1 --format '{{join .RepoDigests ","}}')"
           [ -n "$digests" ] || { echo "the server image carries no repo digest -- it was not pulled" >&2; exit 1; }
           echo "pulled: $digests"
 
