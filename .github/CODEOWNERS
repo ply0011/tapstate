@@ -1,11 +1,16 @@
 # Code owners for this repository.
 #
 # Entries are matched last-to-first: the last matching pattern wins.
-# Owning every path means a review request goes to the owner on every pull
+# Owning every path means a review request goes to the owners on every pull
 # request, and — once branch protection enables "Require review from Code
 # Owners" — no pull request merges without that review.
 #
 # An owner must have write access to this repository, or the entry is ignored.
+#
+# There is more than one owner because an author is never asked to review their
+# own pull request. A single owner who is also the usual author therefore leaves
+# every one of their pull requests with no reviewer requested at all, while
+# branch protection still requires an approving review.
 
-# Repository-wide owner.
-*   @ply0011
+# Repository-wide owners.
+*   @ply0011 @feynmx

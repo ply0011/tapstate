@@ -92,10 +92,10 @@ transforms:
     fields:
       customer_name: $customer
       label: "=after.customer + ' <' + src + '>'"
-serve:
+view:
+  id: order_state
   from: shape_orders
-  sync:
-    - source: warehouse
+  primary_key: id
 YAML
 }
 
@@ -112,22 +112,22 @@ quickstart: pipeline started. The stack is running.
 Watch it (from this directory):
   ./tapstate -w work        then: connect http://127.0.0.1:8080 ; login admin ; status sync_orders --watch
 
-See change-data-capture: change the source in MySQL, watch the target in MongoDB follow (run in this
+See change-data-capture: change the source in MySQL, watch the view in MongoDB follow (run in this
 directory). A change reaches the target in about a second, so each read waits for it rather than guessing.
 
   # insert a row, then wait for it to appear in the target
   docker compose exec mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
-  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.orders.countDocuments({id:6})?0:1)'; do sleep 1; done
-  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.orders.find({id:6}).pretty()'
+  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?0:1)'; do sleep 1; done
+  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:6}).pretty()'
 
   # update it, and watch the mapped label follow the change
   docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
-  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.orders.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
-  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.orders.find({id:6}).pretty()'
+  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
+  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:6}).pretty()'
 
   # delete it, and watch it leave the target too
   docker compose exec mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
-  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.orders.countDocuments({id:6})?1:0)'; do sleep 1; done
+  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
   echo "row 6 is gone from MongoDB, too"
 
 Tear down (run in this directory):
@@ -269,7 +269,7 @@ main() {
     while [ "$i" -lt 30 ]; do
         rows="$(docker compose exec -T mongo mongosh --quiet \
             'mongodb://mongo:27017/warehouse?directConnection=true' \
-            --eval 'db.orders.countDocuments()' 2>/dev/null | tr -d '[:space:]')"
+            --eval 'db.order_state.countDocuments()' 2>/dev/null | tr -d '[:space:]')"
         case "$rows" in ''|*[!0-9]*) rows=0 ;; esac
         [ "$rows" -ge "$seeded" ] && break
         i=$((i + 1)); sleep 2
@@ -282,7 +282,7 @@ main() {
     # than torn down -- the server log is the next thing to read, and a teardown would take it along.
     [ "$rows" -ge "$seeded" ] \
         || die "the snapshot did not reach the target ($rows of $seeded rows); inspect it with: docker compose logs server"
-    printf 'quickstart: the target now holds %s rows (MySQL orders -> MongoDB warehouse.orders)\n' "$rows"
+    printf 'quickstart: the view now holds %s rows (MySQL orders -> MongoDB warehouse.order_state)\n' "$rows"
 
     print_next_steps
 }

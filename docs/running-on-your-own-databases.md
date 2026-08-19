@@ -44,10 +44,13 @@ What each one is for:
 - `--tapstate.connectors.plugins-dir` is where registered connector jars are unpacked. Point it at a
   directory that survives a restart and the connectors registered once stay registered.
 
-It is up in a few seconds. Check it, and check it the right way:
+It is up in a few seconds. Check it, and check it the right way. The server binds 8080
+unless `SERVER_PORT` says otherwise; export its address once and the commands below follow
+it:
 
 ```sh
-curl -s --noproxy '*' http://127.0.0.1:8080/healthz     # -> ok
+export TAPSTATE_URL=http://127.0.0.1:8080              # match SERVER_PORT if you set one
+curl -s --noproxy '*' "$TAPSTATE_URL/healthz"           # -> ok
 ```
 
 > **`--noproxy '*'` is not decoration.** `curl` does not bypass a proxy for loopback addresses. With
@@ -58,7 +61,7 @@ curl -s --noproxy '*' http://127.0.0.1:8080/healthz     # -> ok
 Then point the CLI at it and carry on with any tutorial:
 
 ```sh
-tapstate -c http://127.0.0.1:8080 -u admin ls
+tapstate -c "$TAPSTATE_URL" -u admin ls
 ```
 
 ## Addresses are resolved from the server, not from you
