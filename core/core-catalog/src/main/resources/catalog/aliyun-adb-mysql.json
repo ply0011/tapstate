@@ -266,7 +266,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/aliyun-adb-mysql-connector/src/main/resources/aliyun-adb-mysql-spec.json",
     "specContentHash": "5f9fd672984a3ab6",
     "pdkApiVersion": null,

@@ -328,7 +328,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/polar-db-postgres-connector/src/main/resources/polar-db-postgres-spec.json",
     "specContentHash": "0d53e3066888e58f",
     "pdkApiVersion": null,

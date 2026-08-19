@@ -14,21 +14,41 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SourceWizardTest {
 
+    /**
+     * A connector the catalog resolves no source mode for, so the wizard skips the mode question and
+     * builds a pure connection supplier. Which connector that is belongs to the checked-in catalog,
+     * not to the wizard.
+     */
+    private static final String NO_MODE_CONNECTOR = "elasticsearch";
+
     private static String yaml(SourceResource src) {
         return new CanonicalWriter().write(src);
     }
 
     @Test
+    void theConnectionSupplierFixtureStillHasNoModes() {
+        // The two connection-supplier tests need a connector the catalog gives no modes at all, and
+        // that is a property of the checked-in catalog rather than of the wizard: a refresh can take
+        // it away. postgres was this fixture until its capabilities became derivable, and the way
+        // that surfaced was unreadable - the wizard asked one extra question, every scripted answer
+        // shifted by one, and the id looked wrong for no visible reason. Assert the premise directly
+        // so the next time it changes there is one failure that says what to do.
+        assertThat(TapstateCatalog.load().byId(NO_MODE_CONNECTOR).modes())
+                .as("pick another connector with no modes for the connection-supplier fixture")
+                .isEmpty();
+    }
+
+    @Test
     void buildsAConnectionSupplierSourceWhenTheConnectorHasNoModes() {
-        // postgres has an empty capability matrix -> no mode question -> a pure connection supplier
-        ScriptedPrompter p = new ScriptedPrompter("postgres", "src_pg");
+        // an empty capability matrix -> no mode question -> a pure connection supplier
+        ScriptedPrompter p = new ScriptedPrompter(NO_MODE_CONNECTOR, "src_es");
         SourceResource src = new SourceWizard(p, TapstateCatalog.load()).run();
         assertThat(yaml(src)).isEqualTo(
                 """
                 version: tapstate/v1
                 kind: source
-                id: src_pg
-                connector: postgres
+                id: src_es
+                connector: elasticsearch
                 """);
     }
 
@@ -85,12 +105,12 @@ class SourceWizardTest {
 
     @Test
     void asksNoTablesForAConnectionSupplierSource() {
-        // postgres has no modes -> no read mode -> no tables question. Were tables wrongly asked, the
-        // "src_pg" answer would be eaten as a table name and the id would fall back to its default.
-        ScriptedPrompter p = new ScriptedPrompter("postgres", "src_pg");
+        // no modes -> no read mode -> no tables question. Were tables wrongly asked, the "src_es"
+        // answer would be eaten as a table name and the id would fall back to its default.
+        ScriptedPrompter p = new ScriptedPrompter(NO_MODE_CONNECTOR, "src_es");
         SourceResource src = new SourceWizard(p, TapstateCatalog.load()).run();
         assertThat(src.tables()).isNull();
-        assertThat(src.id()).isEqualTo("src_pg");
+        assertThat(src.id()).isEqualTo("src_es");
     }
 }
 

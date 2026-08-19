@@ -69,7 +69,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/quickapi-connector/src/main/resources/spec.json",
     "specContentHash": "88a4cce7065308ba",
     "pdkApiVersion": null,

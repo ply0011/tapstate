@@ -462,12 +462,24 @@
       "secret": false,
       "options": [],
       "visibleWhen": null
+    },
+    {
+      "name": "streamReadReconnectInterval",
+      "type": "string",
+      "label": {
+        "en_US": "Incremental Reconnect Interval(minute)"
+      },
+      "required": false,
+      "default": "120",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/excel-connector/src/main/resources/spec_excel.json",
-    "specContentHash": "88b7499e02ef9ea0",
+    "specContentHash": "2c84eeee598f2afe",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {

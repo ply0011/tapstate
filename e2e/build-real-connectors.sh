@@ -90,21 +90,15 @@ fi
 
 modules="$(IFS=,; echo "${CONNECTOR_MODULES[*]}")"
 echo "Building $modules"
-# exec.skip turns off one upstream build step: the postgres connector, alone among every module in
-# that repository, runs an encryptor over its own shaded jar at package time. The result is not a zip
-# - it has no end-of-central-directory record - and this product opens a connector artifact with
-# java.util.jar.JarFile to read its specification before anything else happens. So a stock postgres
-# jar cannot be registered at all: it fails at the first read, long before reaching the PDK runtime
-# that knows how to decrypt it. Building it unencrypted produces the same shape the other connectors
-# already ship in, which is the shape this product reads.
-#
-# Scoped by luck rather than by design, so it is worth stating: this flag turns off exec-plugin
-# executions across the whole build, and the only active one in this module set is that encryptor
-# (mysql declares the plugin but its execution is commented out upstream). If a future connector
-# joins this lane with a real exec step, this becomes too blunt and has to move to a postgres-only
-# invocation.
+# No exec.skip here, and that is load-bearing rather than an omission: the postgres connector used to
+# run an encryptor over its own shaded jar at package time, and the result was not a zip - no
+# end-of-central-directory record - while this product opens a connector artifact with
+# java.util.jar.JarFile to read its specification before anything else happens. That step is gone
+# upstream, so the build produces the same readable shape every other connector already ships in.
+# A checkout old enough to still carry it fails here in a way that points somewhere else entirely:
+# the jar stages fine and the failure lands much later, at the first read of the artifact.
 # The odd expansion keeps an empty array from tripping set -u on the bash a Mac ships.
-mvn -B -f "$workspace/tapdata-connectors/pom.xml" -pl "$modules" -am -DskipTests -Dexec.skip=true \
+mvn -B -f "$workspace/tapdata-connectors/pom.xml" -pl "$modules" -am -DskipTests \
     ${protoc_flags[@]+"${protoc_flags[@]}"} package
 
 # Stage one jar per connector, and insist on exactly one.

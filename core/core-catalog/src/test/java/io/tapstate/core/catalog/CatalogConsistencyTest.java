@@ -106,6 +106,20 @@ class CatalogConsistencyTest {
     }
 
     @Test
+    void derivesModesForPostgres() {
+        // Both modes must come from the capability probe rather than a spec declaration. A
+        // hand-written declaration would satisfy an assertion on modes alone while proving nothing
+        // about the jar being readable, which is the thing that was broken: an encrypted artifact is
+        // not a zip, so it cannot be classloaded to probe at all.
+        ConnectorCatalogEntry postgres = catalog.byId("postgres");
+        assertThat(postgres.group()).isEqualTo(ConnectorGroup.DATABASE);
+        assertThat(postgres.modes()).contains(SourceMode.SNAPSHOT, SourceMode.CDC);
+        assertThat(postgres.provenance().modeSource())
+                .containsEntry(SourceMode.SNAPSHOT, ModeSource.DERIVED)
+                .containsEntry(SourceMode.CDC, ModeSource.DERIVED);
+    }
+
+    @Test
     void everyIndexedIdIsResolvable() {
         List<String> ids = catalog.ids();
         assertThat(ids).allSatisfy(id -> assertThat(catalog.byId(id)).isNotNull());
