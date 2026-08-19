@@ -17,7 +17,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -39,6 +38,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       there is nothing to attach them to at the moment they arrive - and the root, when it does come,
  *       is written with an empty array that nothing ever fills.
  * </ul>
+ *
+ * <p><b>Those children are seeded before the run rather than written during it</b>, so that the snapshot
+ * reads them while the root they name still does not exist. Writing them during the run and then writing
+ * the root orders the two <em>writes</em>, which says nothing about the order the two engines' streams
+ * reach the assembly: the engines are independent, and measured here, the root won that race and the
+ * case went on passing against an implementation that drops what preceded a root. Ordering by
+ * construction is what makes this half discriminate; the alternative was a fixed pause guessing at how
+ * long a read takes, which is the settle this module keeps a gate against.
  *
  * <p><b>What the assertions have to discriminate.</b> Counting documents sees neither failure: the roots
  * arrive whether or not their children did, so a count is satisfied by an implementation that honoured
@@ -64,8 +71,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class CrossEngineLateArrivalIT {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(180);
-    private static final Duration POLL = Duration.ofMillis(250);
+    /**
+     * Wider than the shared default, for the reason {@link Await} gives for taking a bound at all: this
+     * drives two real engines through a snapshot and a change stream before the first reading is due.
+     */
+    private static final Duration BOUND = Duration.ofSeconds(180);
 
     private static final String ROOT_TABLE = "orders";
     private static final String CHILD_TABLE = "shipments";
@@ -92,6 +102,13 @@ class CrossEngineLateArrivalIT {
         Map<String, Object> shipments = SharedPostgres.settings("late_shipments_" + suffix);
         createTables(orders, shipments);
         seedRoots(orders);
+        // The children of a root that does not exist, seeded before the run so the snapshot reads them.
+        // Ordering by construction rather than by waiting: these are read while the run starts, and the
+        // root they name is not written until several assertions later. Inserting them at that later
+        // point instead would only order the two writes, which says nothing about the order the two
+        // engines' streams reach the assembly - measured: with the writes ordered and nothing else, the
+        // root wins the race and the case stops discriminating at all.
+        insertShipments(shipments, List.of(shipment(7, LATE_ROOT, "dhl"), shipment(8, LATE_ROOT, "ups")));
 
         String storeUri = SharedMongo.replicaSetUrl("late_store_" + suffix);
         String targetUri = SharedMongo.replicaSetUrl("late_target_" + suffix);
@@ -120,7 +137,11 @@ class CrossEngineLateArrivalIT {
             // The leading stream runs to completion and its documents are written out, with the other
             // engine's table still empty. Waiting for the scalar column - not merely for three documents
             // - is what makes the rest of this a statement about a document that already exists.
-            await(() -> documentsIn(mongo, targetUri).size() == 3);
+            // Three, not four: the children seeded for the fourth root have been read by now, and a
+            // document is not written for a key whose root row has never arrived.
+            Await.until("the three roots to be assembled and written", BOUND,
+                    () -> documentsIn(mongo, targetUri).size() == 3,
+                    () -> String.valueOf(documentsIn(mongo, targetUri)));
             assertThat(scalarOf(mongo, targetUri, LATE_CHILDREN_ROOT, "customer"))
                     .as("the roots have to be assembled and written before any child exists, or the lag "
                             + "this drives is not a lag at all")
@@ -138,9 +159,11 @@ class CrossEngineLateArrivalIT {
                     shipment(5, 3, "ups"),
                     shipment(6, 3, "fedex")));
 
-            await(() -> sizeOf(mongo, targetUri, 1) == 2
-                    && sizeOf(mongo, targetUri, 2) == 1
-                    && sizeOf(mongo, targetUri, 3) == 3);
+            Await.until("the late children to reach the documents already written", BOUND,
+                    () -> sizeOf(mongo, targetUri, 1) == 2
+                            && sizeOf(mongo, targetUri, 2) == 1
+                            && sizeOf(mongo, targetUri, 3) == 3,
+                    () -> String.valueOf(documentsIn(mongo, targetUri)));
 
             assertThat(List.of(sizeOf(mongo, targetUri, 1), sizeOf(mongo, targetUri, 2),
                             sizeOf(mongo, targetUri, 3)))
@@ -156,18 +179,12 @@ class CrossEngineLateArrivalIT {
                             + "no assertion about the array notices it")
                     .isEqualTo("alice");
 
-            // Direction two: children naming a root that does not exist yet, then the root.
-            insertShipments(shipments, List.of(
-                    shipment(7, LATE_ROOT, "dhl"),
-                    shipment(8, LATE_ROOT, "ups")));
-            // A settle rather than a condition, because what is being waited for - these rows having
-            // been read while no root of theirs exists - is not observable from here. The assertion below
-            // does not depend on it: an implementation that loses them loses them whenever the root
-            // arrives. It buys only that the two events are genuinely ordered rather than racing.
-            settle();
+            // Direction two: the root of the children that were read at the start of the run.
             insertRoot(orders, LATE_ROOT, "dave");
 
-            await(() -> sizeOf(mongo, targetUri, LATE_ROOT) == 2);
+            Await.until("the children that arrived before their root to appear under it", BOUND,
+                    () -> sizeOf(mongo, targetUri, LATE_ROOT) == 2,
+                    () -> String.valueOf(documentsIn(mongo, targetUri)));
             assertThat(sizeOf(mongo, targetUri, LATE_ROOT))
                     .as("children that arrived before their root have to be waiting for it, not dropped. "
                             + "An implementation attaching a child to whichever root is present has "
@@ -179,7 +196,9 @@ class CrossEngineLateArrivalIT {
             // A value carried by the lagging stream, asserted on the field it changed.
             updateShipmentCarrier(shipments, 1, "maersk");
 
-            await(() -> carriersOf(mongo, targetUri, LATE_CHILDREN_ROOT).contains("maersk"));
+            Await.until("the changed carrier to reach the document", BOUND,
+                    () -> carriersOf(mongo, targetUri, LATE_CHILDREN_ROOT).contains("maersk"),
+                    () -> String.valueOf(documentsIn(mongo, targetUri)));
             assertThat(carriersOf(mongo, targetUri, LATE_CHILDREN_ROOT))
                     .as("the changed field itself, in the document the change had to reach. The size stays "
                             + "two either way, so a length assertion cannot see this one; and the value it "
@@ -390,34 +409,4 @@ class CrossEngineLateArrivalIT {
                 .formatted(pipelineId, ROOT_TABLE, CHILD_TABLE, CHILD_TABLE);
     }
 
-    // ---- waiting ------------------------------------------------------------------------
-
-    private static void await(BooleanSupplier reached) {
-        long deadline = System.nanoTime() + TIMEOUT.toNanos();
-        while (System.nanoTime() - deadline < 0) {
-            if (reached.getAsBoolean()) {
-                return;
-            }
-            sleep();
-        }
-    }
-
-    /** A bounded pause where the thing being waited for cannot be read from outside the product. */
-    private static void settle() {
-        try {
-            Thread.sleep(Duration.ofSeconds(5).toMillis());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError("interrupted while letting the lagging stream be read", e);
-        }
-    }
-
-    private static void sleep() {
-        try {
-            Thread.sleep(POLL.toMillis());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError("interrupted while waiting for the lagging stream", e);
-        }
-    }
 }

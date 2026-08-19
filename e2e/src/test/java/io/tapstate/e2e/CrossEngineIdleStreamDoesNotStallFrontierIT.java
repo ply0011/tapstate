@@ -17,7 +17,6 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,8 +58,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class CrossEngineIdleStreamDoesNotStallFrontierIT {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(180);
-    private static final Duration POLL = Duration.ofMillis(250);
+    /**
+     * Wider than the shared default, for the reason {@link Await} gives for taking a bound at all: this
+     * drives two real engines through a snapshot and a change stream before the first reading is due.
+     */
+    private static final Duration BOUND = Duration.ofSeconds(180);
 
     private static final String ROOT_TABLE = "orders";
     private static final String CHILD_TABLE = "shipments";
@@ -118,13 +120,17 @@ class CrossEngineIdleStreamDoesNotStallFrontierIT {
 
             control.lifecycle(pipelineId, LifecycleVerb.START);
 
-            await(() -> mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE).size() == ROOTS);
+            Await.until("every root to be assembled and written", BOUND,
+                    () -> mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE).size() == ROOTS,
+                    () -> mongo.documents(EndpointAddress.uri(targetUri), ROOT_TABLE).size() + " documents");
 
             // Traffic on both streams, so both chains exist and carry an offset to compare against.
             changeOrders(orders, 1, WARMUP_PER_STREAM);
             insertShipments(shipments, 1, WARMUP_PER_STREAM);
 
-            await(() -> offsets(mongo, storeUri).size() >= 2);
+            Await.until("both chains to be carrying a durable offset", BOUND,
+                    () -> offsets(mongo, storeUri).size() >= 2,
+                    () -> String.valueOf(mongo.documents(EndpointAddress.uri(storeUri), CHAIN_RECORDS)));
             Map<String, String> before = offsets(mongo, storeUri);
             assertThat(before)
                     .as("both chains have to be carrying an offset before one of them is asked to go "
@@ -137,7 +143,9 @@ class CrossEngineIdleStreamDoesNotStallFrontierIT {
             // The narrow traffic: orders only. The shipments database is not touched again.
             changeOrders(orders, WARMUP_PER_STREAM + 1, NARROW_CHANGES);
 
-            await(() -> !changed(before, offsets(mongo, storeUri)).isEmpty());
+            Await.until("a chain's durable offset to move while the other engine stays quiet", BOUND,
+                    () -> !changed(before, offsets(mongo, storeUri)).isEmpty(),
+                    () -> "before " + before + ", now " + offsets(mongo, storeUri));
             Map<String, String> after = offsets(mongo, storeUri);
             assertThat(changed(before, after))
                     .as("what the run would resume from, after %d changes that all belong to one of the "
@@ -329,24 +337,4 @@ class CrossEngineIdleStreamDoesNotStallFrontierIT {
                 .formatted(pipelineId, ROOT_TABLE, CHILD_TABLE, CHILD_TABLE);
     }
 
-    // ---- waiting ------------------------------------------------------------------------
-
-    private static void await(BooleanSupplier reached) {
-        long deadline = System.nanoTime() + TIMEOUT.toNanos();
-        while (System.nanoTime() - deadline < 0) {
-            if (reached.getAsBoolean()) {
-                return;
-            }
-            sleep();
-        }
-    }
-
-    private static void sleep() {
-        try {
-            Thread.sleep(POLL.toMillis());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError("interrupted while waiting for the frontier to move", e);
-        }
-    }
 }
