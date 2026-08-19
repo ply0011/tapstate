@@ -45,7 +45,7 @@ once at startup, while the flatten plugin re-reads the pom on disk per module. I
 checkout to a different version mid-build, you get this:
 
 ```
-Non-resolvable import POM: io.tapstate:bom:pom:0.2.0 (absent)
+Non-resolvable import POM: io.tapstate:bom:pom:0.2.1 (absent)
 'dependencies.dependency.version' for org.junit.jupiter:junit-jupiter:jar is missing.
 ```
 
@@ -192,8 +192,8 @@ thin jar for manual verification* - with its dependencies in `target/lib` beside
 
 ```sh
 cd <your-checkout>/tapstate
-java -jar cli/target/cli-0.2.0.jar --version        # -> tapstate 0.2.0
-java -jar cli/target/cli-0.2.0.jar -w ./work -c 127.0.0.1:8080 -u admin -p admin
+java -jar cli/target/cli-0.2.1.jar --version        # -> tapstate 0.2.1
+java -jar cli/target/cli-0.2.1.jar -w ./work -c 127.0.0.1:8080 -u admin -p admin
 ```
 
 With no subcommand it opens a REPL - one session holding a workspace and a connection. With a
