@@ -17,6 +17,25 @@ actuation.not-a-pipeline:
 actuation.source-schema-not-discovered:
   message: "Source `{source}` needs a discovered schema before its tables can be selected."
   solution: "Run schema discovery for the source, then apply or start the pipeline again."
+actuation.view-key-missing:
+  message: "View `{view}` declares no primary key."
+  solution: "Give the view a primaryKey naming the column that identifies one record, so updates converge on it instead of appending a copy."
+actuation.view-storage-tier-unsupported:
+  message: "View `{view}` declares the `{tier}` storage tier, which this release does not materialize."
+  solution: "Remove the tier from the view. Only the warm tier is materialized today; hot and cold are reserved."
+actuation.view-store-not-configured:
+  message: "The managed state store `{store}` a view materializes into is not configured."
+  solution: "Start the deployment's managed state store, or register a source under that id for views to materialize into."
+actuation.view-key-not-feed-identity:
+  message: "View `{view}` declares key `{key}`, but what feeds it is identified by `{identity}`."
+  solution: "Declare the view's primaryKey as that identity column. An identity spanning several columns cannot be served by a view today - a view's key is a single column, and materializing on fewer columns than the identity collapses distinct records."
+actuation.view-fed-by-many-tables:
+  message: "View `{view}` is fed by more than one stream: {tables}."
+  solution: "Feed the view from a single table, or assemble the streams into one document with a nest step and feed the view from that."
+actuation.view-store-is-a-capture-source:
+  message: "The resource under the managed state store id `{store}` declares capture settings, so it is an authored source, not the deployment's store."
+  solution: "Rename your source so it does not occupy the managed store's id, or remove its mode/tables if it really is the deployment's state store."
+
 actuation.source-table-not-discovered:
   message: "Source `{source}` does not declare discovered table `{table}`."
   solution: "Discover the source again or change the pipeline table selector to a discovered table."

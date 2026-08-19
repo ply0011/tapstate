@@ -1,0 +1,63 @@
+# A child row is deleted after the document is assembled, and the array inside the document loses that
+# one element while the document itself stays. This is the other direction of the same claim its siblings
+# make: one proves scattered rows become a document, another proves a parent's own column keeps following
+# it, and this one proves the collection is maintained rather than merely built once.
+#
+# What the assertions have to discriminate:
+#
+# - Counting sees none of this. Deleting a child removes no document, so the two documents a count
+#   expects are there before and after, and an implementation that ignores child deletions entirely holds
+#   that count forever. The assertion is on the array's length.
+#
+# - Length alone is not enough either, in two directions. An implementation that answered a child
+#   deletion by dropping the whole document would also stop reporting three elements - so the parent's own
+#   column is read back in the same breath, which only a document that still exists can satisfy. And an
+#   implementation that removed some other element would satisfy the length while corrupting the
+#   document, so the second root is held to the size it started with: its child was never touched, and a
+#   deletion that reached across documents shows up there and nowhere else.
+#
+# - The middle child is the one deleted, not the first or the last. An implementation holding the array
+#   as a list and removing by position rather than by key passes on an end element and fails here.
+#
+# - The first assertion is the control: it holds the array at three before the deletion, so a run where
+#   the delete never reached the source cannot be mistaken for a run where the product handled it.
+#
+# The order of the remaining elements is deliberately not asserted, for the reason its siblings give: a
+# snapshot read is free to return child rows in any order, and what this example is about is which
+# elements survive, not the order they sit in.
+#
+# Every name here is this example's own - tables, pipeline, view - rather than the names its siblings use.
+# Sharing them lets one example's changes surface inside another's run, where the failure reads as a
+# fault in a pipeline that did nothing wrong.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips this
+# example, naming a directory whose jars do not resolve fails it.
+name: a-child-row-is-deleted-and-the-assembled-document-shrinks
+setup:
+  databases:
+    src: { kind: mysql }
+    store: { kind: mongo }
+  connectors: [mysql, mongodb]
+  apply: [src_shrink_orders.tap.yml, src_shrink_items.tap.yml, warehouse.tap.yml, pipeline.tap.yml]
+  discover: [src_shrink_orders, src_shrink_items]
+pipeline: pipeline.tap.yml
+seed:
+  src_shrink_orders.shrink_orders:
+    values:
+      - { id: 1, customer: ada }
+      - { id: 2, customer: grace }
+  src_shrink_items.shrink_items:
+    values:
+      - { id: 1, order_id: 1, sku: sku-1 }
+      - { id: 2, order_id: 1, sku: sku-2 }
+      - { id: 3, order_id: 1, sku: sku-3 }
+      - { id: 4, order_id: 2, sku: sku-4 }
+steps:
+  - start
+  - await: { count: { warehouse.shrink_state: 2 } }
+  - await: { doc: { warehouse.shrink_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
+  - await: { doc: { warehouse.shrink_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
+  - cdc: { src_shrink_items.shrink_items: { delete: { where: { id: 2 } } } }
+  - await: { doc: { warehouse.shrink_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 2 } } } }
+  - assert: { doc: { warehouse.shrink_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
+  - assert: { count: { warehouse.shrink_state: 2 } }

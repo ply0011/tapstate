@@ -1,0 +1,18 @@
+version: tapstate/v1
+kind: pipeline
+id: assembled_orders
+source: [ src_orders, src_items ]
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: order_doc
+    type: nest
+    from: { o: orders, i: order_items }
+    root:
+      from: o
+      key: [ id ]
+      embed:
+        - { from: i, on: { order_id: id }, as: array, path: items, arrayKey: [ id ] }
+view:
+  id: order_state
+  from: order_doc
+  primary_key: id
