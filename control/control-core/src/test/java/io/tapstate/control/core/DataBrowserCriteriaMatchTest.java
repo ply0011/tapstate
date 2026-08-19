@@ -1,5 +1,6 @@
 package io.tapstate.control.core;
 
+import io.tapstate.core.common.TapstateException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -8,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Evaluating the read vocabulary against a row in this process, which the followed stream needs
@@ -43,6 +45,15 @@ class DataBrowserCriteriaMatchTest {
         // return a row whose list holds "paid". Any-entry-differs would return it here and nowhere else.
         assertThat(match("tags", DataBrowserCriteria.Operator.NE, "paid").matches(holdsPaid)).isFalse();
         assertThat(match("tags", DataBrowserCriteria.Operator.NE, "paid").matches(withoutPaid)).isTrue();
+    }
+
+    @Test
+    @DisplayName("a malformed escape in a filter field is a coded refusal, not a bare crash")
+    void refusesAFieldSpellingWithACode() {
+        assertThatThrownBy(() -> match("price\\usd", DataBrowserCriteria.Operator.EQ, 1))
+                .isInstanceOf(TapstateException.class)
+                .extracting(failure -> ((TapstateException) failure).code().code())
+                .isEqualTo("control.malformed-request");
     }
 
     @Test

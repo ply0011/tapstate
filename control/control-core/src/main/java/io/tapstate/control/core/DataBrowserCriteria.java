@@ -46,6 +46,9 @@ public sealed interface DataBrowserCriteria {
             Objects.requireNonNull(field, "field");
             Objects.requireNonNull(operator, "operator");
             Objects.requireNonNull(value, "value");
+            // The spelling, before anything reads it: a malformed escape refuses bare below this ring,
+            // and there is no road from a bare refusal here to anything a caller can be told.
+            ReadableField.of(field);
             operator.requireUsable(field, value);
         }
     }

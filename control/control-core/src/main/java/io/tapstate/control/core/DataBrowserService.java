@@ -14,7 +14,6 @@ import io.tapstate.spi.store.DataBrowserQuery;
 import io.tapstate.spi.store.DataBrowserSubscription;
 import io.tapstate.spi.store.DataBrowserTailRequest;
 import io.tapstate.spi.store.DiscoveredSourceModel;
-import io.tapstate.spi.store.FieldPath;
 import io.tapstate.spi.store.SchemaStore;
 import io.tapstate.spi.store.SourceField;
 import io.tapstate.spi.store.SourceTable;
@@ -215,7 +214,7 @@ public final class DataBrowserService {
      * be served should not pay for a round trip to the connector first.
      */
     private static void requireOrderable(DataBrowserSortOrder sort) {
-        if (sort == null || FieldPath.of(sort.field()).isPlainPath()) {
+        if (sort == null || ReadableField.of(sort.field()).isPlainPath()) {
             return;
         }
         throw new TapstateException(

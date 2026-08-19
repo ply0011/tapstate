@@ -68,6 +68,19 @@ class DataBrowserServiceTest {
     }
 
     @Test
+    void refusesAnOrderFieldWhoseSpellingIsMalformedWithACode() {
+        DataBrowserService service = service(store(VIEWS), config -> List.of("order_state"));
+
+        // Below this ring the spelling refuses bare, and nothing maps a bare refusal: unturned it is a
+        // 500 for something the caller typed.
+        assertThatThrownBy(() -> service.find("views", "order_state", null,
+                new DataBrowserSortOrder("price\\usd", DataBrowserSortOrder.Direction.ASC), 10))
+                .isInstanceOf(TapstateException.class)
+                .extracting(failure -> ((TapstateException) failure).code().code())
+                .isEqualTo("control.malformed-request");
+    }
+
+    @Test
     void refusesASourceIdThatIsNotStored() {
         DataBrowserService service = service(store(VIEWS), config -> List.of());
 
