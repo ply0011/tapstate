@@ -469,4 +469,86 @@ class ConnectorInstancePoolTest {
                 .as("and the pooled instance is still there, not closed on the way to refusing")
                 .isEqualTo(1);
     }
+
+    // ---- forgetting a connection nobody uses any more ---------------------------------------------
+
+    @Test
+    @DisplayName("a connection whose last instance was evicted stops being tracked")
+    void forgetsAConnectionOnceItsLastInstanceIsEvicted() {
+        // Every distinct set of settings ever queried filed a slot here -- a fair semaphore and a deque
+        // -- and nothing ever removed one. Editing a source's connection settings is an ordinary act, so
+        // the bookkeeping grew for the life of the process while the instances behind it were long gone,
+        // and every eviction had to walk the whole of it to find the instance idle longest.
+        ConnectorInstancePool<FakeInstance> pool = pool(limits().withIdle(Duration.ofMinutes(5)));
+        pool.call(config("conn-1", "mongodb://host/db"), instance -> instance);
+        pool.call(config("conn-1", "mongodb://host/other"), instance -> instance);
+        assertThat(pool.trackedConnections())
+                .as("two distinct settings were queried, so both are held before anything is evicted")
+                .isEqualTo(2);
+
+        clock.advance(Duration.ofMinutes(5));
+        pool.sweep();
+
+        assertThat(pool.trackedConnections()).isZero();
+    }
+
+    @Test
+    @DisplayName("a connection someone is still holding an instance of survives a sweep")
+    void keepsAConnectionWhoseInstanceIsCheckedOut() throws Exception {
+        // The control for the one above, and the reason the obvious fix is wrong: a slot is not free to
+        // drop merely because it has nothing idle in it. Dropping one out from under a caller leaves the
+        // instance to come back to bookkeeping nothing tracks, and the host-wide count never falls again.
+        ConnectorInstancePool<FakeInstance> pool = pool(limits().withIdle(Duration.ofMinutes(5)));
+        CountDownLatch release = new CountDownLatch(1);
+        Thread holder = run(() -> pool.call(config("conn-1", "mongodb://host/db"), instance -> {
+            release.await();
+            return instance;
+        }));
+        awaitParked(holder);
+
+        clock.advance(Duration.ofMinutes(5));
+        pool.sweep();
+        int trackedWhileHeld = pool.trackedConnections();
+        release.countDown();
+        joinAll();
+
+        assertThat(trackedWhileHeld)
+                .as("the caller is still inside that instance, so its connection is still in use")
+                .isEqualTo(1);
+        assertThat(pool.liveInstances())
+                .as("and the instance it hands back is still counted against the host-wide ceiling")
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("sweeps running against live callers leave the instance count honest")
+    void keepsTheInstanceCountHonestWhenSweepsRaceCallers() throws Exception {
+        // A caller looks its connection up and only then waits its turn, so a sweep can land in between.
+        // Reclaiming the slot in that window hands the caller bookkeeping the pool has already let go of:
+        // the instance it opens is counted on the way in and belongs to nothing on the way out, so the
+        // host-wide count only ever rises and the ceiling eventually closes on an empty pool. Nothing
+        // here is timing-sensitive to assert -- the count either comes back to zero or it does not.
+        ConnectorInstancePool<FakeInstance> pool = pool(limits().withIdle(Duration.ZERO));
+        for (int caller = 0; caller < 8; caller++) {
+            int which = caller;
+            run(() -> {
+                for (int round = 0; round < 60; round++) {
+                    pool.call(config("conn-1", "mongodb://host/db-" + (which % 3)), instance -> instance);
+                }
+            });
+        }
+        for (int pass = 0; pass < 400; pass++) {
+            pool.sweep();
+        }
+        joinAll();
+
+        pool.sweep();
+
+        assertThat(pool.liveInstances())
+                .as("every instance opened during the race was either pooled and evicted, or handed back")
+                .isZero();
+        assertThat(pool.trackedConnections())
+                .as("and no connection is left behind holding bookkeeping for instances that are gone")
+                .isZero();
+    }
 }

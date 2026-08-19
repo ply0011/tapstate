@@ -153,7 +153,15 @@ final class ConnectorInstancePool<T> implements AutoCloseable {
         return result;
     }
 
-    /** Closes every instance that has been idle at least as long as the idle limit. */
+    /**
+     * Closes every instance that has been idle at least as long as the idle limit, and lets go of any
+     * connection left holding nothing afterwards.
+     *
+     * <p>The second half is why this runs even when nothing is idle to close. A slot is filed the first
+     * time a set of settings is queried and outlives every instance behind it, so editing a source's
+     * connection settings — an ordinary act — left one more semaphore and deque behind for the life of
+     * the process, and made every ceiling eviction walk a list that only ever grew.
+     */
     void sweep() {
         long now = clock.millis();
         List<T> evicted = new ArrayList<>();
@@ -170,10 +178,24 @@ final class ConnectorInstancePool<T> implements AutoCloseable {
                     return true;
                 });
             }
+            slots.values().removeIf(this::unused);
         } finally {
             lock.unlock();
         }
         evicted.forEach(this::disposeQuietly);
+    }
+
+    /**
+     * Whether a slot can be let go: it holds no instance at all, neither idle nor checked out.
+     *
+     * <p>A caller on its way in may still hold a reference to it, and that deliberately does not count
+     * here — whether someone is about to arrive is a question with no answer, since a caller reads the
+     * slot before it does anything this class could observe. What makes dropping it safe sits on the
+     * caller's side instead: it settles membership and books its room without letting go of the lock in
+     * between, so a slot already let go is recognised rather than written to.
+     */
+    private boolean unused(Slot slot) {
+        return slot.live == 0;
     }
 
     /** Closes every idle instance and refuses further calls; a call in flight keeps its instance. */
@@ -248,6 +270,16 @@ final class ConnectorInstancePool<T> implements AutoCloseable {
         };
     }
 
+    /** How many connections this pool is still keeping bookkeeping for. */
+    int trackedConnections() {
+        lock.lock();
+        try {
+            return slots.size();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** How many instances this host is holding, pooled and reserved alike. */
     int liveInstances() {
         lock.lock();
@@ -264,71 +296,74 @@ final class ConnectorInstancePool<T> implements AutoCloseable {
      */
     private Lease acquire(ConnectionConfig config) {
         String key = ConnectionFingerprint.of(config);
-        Slot slot = slotFor(key);
-        // Fair, so the turn goes to whoever has waited longest rather than to whoever asks most often.
-        boolean permitted;
-        try {
-            permitted = slot.turns.tryAcquire(limits.acquire().toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw busy(config, e);
-        }
-        if (!permitted) {
-            throw busy(config, null);
-        }
-        boolean handedOut = false;
-        try {
-            T pooled = takeIdle(slot);
-            if (pooled != null) {
-                handedOut = true;
-                return new Lease(slot, pooled);
-            }
-            T evicted = reserve(slot);
-            disposeQuietly(evicted);
-            T fresh;
+        // One deadline across every attempt, so re-reading a reclaimed slot cannot multiply the wait a
+        // caller was promised.
+        long deadline = System.nanoTime() + limits.acquire().toNanos();
+        while (true) {
+            Slot slot = slotFor(key);
+            // Fair, so the turn goes to whoever has waited longest rather than to whoever asks most often.
+            boolean permitted;
             try {
-                fresh = open.apply(config);
-            } catch (RuntimeException | Error e) {
-                unreserve(slot);
-                throw e;
+                permitted = slot.turns.tryAcquire(
+                        Math.max(0L, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw busy(config, e);
             }
-            handedOut = true;
-            return new Lease(slot, fresh);
-        } finally {
-            if (!handedOut) {
-                slot.turns.release();
+            if (!permitted) {
+                throw busy(config, null);
             }
-        }
-    }
-
-    private Slot slotFor(String key) {
-        lock.lock();
-        try {
-            return slots.computeIfAbsent(key, ignored -> new Slot(limits.perConnection()));
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    /** The warmest idle instance of {@code slot}, or null when it holds none. */
-    private T takeIdle(Slot slot) {
-        lock.lock();
-        try {
-            Idle<T> entry = slot.idle.pollFirst();
-            return entry == null ? null : entry.instance;
-        } finally {
-            lock.unlock();
+            boolean handedOut = false;
+            try {
+                Claim<T> claim = claim(key, slot);
+                if (claim == null) {
+                    // The slot was let go between looking it up and this turn becoming ours. Nothing was
+                    // counted against it, so the turn goes back and the next pass takes its replacement.
+                    continue;
+                }
+                if (claim.pooled() != null) {
+                    handedOut = true;
+                    return new Lease(slot, claim.pooled());
+                }
+                disposeQuietly(claim.evicted());
+                T fresh;
+                try {
+                    fresh = open.apply(config);
+                } catch (RuntimeException | Error e) {
+                    unreserve(slot);
+                    throw e;
+                }
+                handedOut = true;
+                return new Lease(slot, fresh);
+            } finally {
+                if (!handedOut) {
+                    slot.turns.release();
+                }
+            }
         }
     }
 
     /**
-     * Books room for one more instance, returning the instance evicted to make it — the one idle
-     * longest across every connection — or null when none had to go. Refuses with a code when the
-     * ceiling is reached and nothing is idle to give up.
+     * What one turn is worth: an idle instance to reuse, or room booked for a fresh one — together with
+     * whatever the ceiling had to give up to make that room. Null when the slot is no longer the one
+     * filed under {@code key}, so this turn buys nothing.
+     *
+     * <p>Settling all of that without letting go of the lock is the point. Checking membership and then
+     * booking room in a second lock hold leaves a gap a sweep fits inside, and a slot dropped in that gap
+     * takes a booked instance with it: counted on the way in, belonging to nothing on the way out, and
+     * invisible to every later sweep — so the host-wide count never falls again, and the ceiling
+     * eventually closes on a pool that is actually empty.
      */
-    private T reserve(Slot slot) {
+    private Claim<T> claim(String key, Slot slot) {
         lock.lock();
         try {
+            if (slots.get(key) != slot) {
+                return null;
+            }
+            Idle<T> pooled = slot.idle.pollFirst();
+            if (pooled != null) {
+                return new Claim<>(pooled.instance(), null);
+            }
             T evicted = null;
             if (live >= limits.total()) {
                 evicted = takeIdleLongest();
@@ -339,7 +374,17 @@ final class ConnectorInstancePool<T> implements AutoCloseable {
             }
             slot.live++;
             live++;
-            return evicted;
+            return new Claim<>(null, evicted);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+
+    private Slot slotFor(String key) {
+        lock.lock();
+        try {
+            return slots.computeIfAbsent(key, ignored -> new Slot(limits.perConnection()));
         } finally {
             lock.unlock();
         }
@@ -497,6 +542,11 @@ final class ConnectorInstancePool<T> implements AutoCloseable {
             this.coded = coded;
         }
     }
+
+    /** What a turn bought: an instance to reuse, or room for a fresh one plus whatever was evicted. */
+    private record Claim<X>(X pooled, X evicted) {
+    }
+
 
     /** One caller's exclusive hold on one instance. */
     private final class Lease {
