@@ -147,6 +147,9 @@ final class DataBrowserTailHandler extends TextWebSocketHandler implements DataB
     void closeAll() {
         follows.values().forEach(DataBrowserFollow::close);
         follows.clear();
+        // And the sockets, for the reason a deleted source closes them: a stopped follow on an open
+        // connection is a collection nothing is happening to, and the reader cannot tell the two apart.
+        sessions.values().forEach(DataBrowserTailHandler::closeQuietly);
         sources.clear();
         sessions.clear();
     }
