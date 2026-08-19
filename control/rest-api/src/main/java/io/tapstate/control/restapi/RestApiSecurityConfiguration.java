@@ -96,7 +96,8 @@ class RestApiSecurityConfiguration {
                 .sessionManagement(sessions -> sessions.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(entryPoint))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/healthz", "/auth/login", "/auth/bootstrap", "/error").permitAll()
+                        .requestMatchers("/healthz", "/auth/login", "/auth/bootstrap", "/connector-icons/*", "/error")
+                        .permitAll()
                         .anyRequest().denyAll());
         return http.build();
     }
