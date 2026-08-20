@@ -25,12 +25,19 @@ import tools.jackson.databind.DeserializationFeature;
  * to bring the verb controllers into a production context is through this configuration, and its security
  * configuration requires the operation registry and both credential verifiers. A production context cannot
  * come up with this HTTP face but without the guard.
+ *
+ * <p>The streaming channels are imported here too, and being here is the only thing that mounts them. A
+ * websocket configuration left out of this list does not fail anything: no context misses a bean, no
+ * projection gate covers a websocket path, and the one caller that asks for a follow registry asks
+ * optionally and settles for a registry that does nothing. It shows up only as a handshake answered 404
+ * by a product whose client, handler and tests all work.
  */
 @Configuration
 @Import({RestApiConfiguration.class, RestApiSecurityConfiguration.class, ArtifactController.class, ConnectionController.class,
-        ConnectorController.class, PipelineController.class, PipelineObservationController.class,
-        PipelineLogsController.class, PipelineStreamConfiguration.class, ClusterController.class,
-        HealthController.class, AuthController.class, TokenController.class, SourceController.class,
+        ConnectorController.class, DataBrowserController.class, DataBrowserStreamConfiguration.class,
+        PipelineController.class, PipelineObservationController.class, PipelineLogsController.class,
+        PipelineStreamConfiguration.class, ClusterController.class, HealthController.class,
+        AuthController.class, TokenController.class, SourceController.class,
         SourceDraftController.class,
         ApiExceptionHandler.class})
 public class ControlHttpFace {

@@ -48,6 +48,8 @@ final class PdkConnector implements AutoCloseable {
     private final ConnectorFunctions functions;
     private final TapConnectorContext context;
     private final DefaultExpressionMatchingMap dataTypesMap;
+    /** Volatile because the thread that stops an instance is rarely the thread that drove it. */
+    private volatile boolean stopped;
 
     private PdkConnector(String connectorId, ConnectorClassLoader loader, TapConnector connector,
                          ConnectorFunctions functions, TapConnectorContext context,
@@ -238,6 +240,7 @@ final class PdkConnector implements AutoCloseable {
 
     /** Stops the connector, swallowing failures — used on the cleanup path where the real error already won. */
     void stopQuietly() {
+        stopped = true;
         try {
             underLoader(() -> {
                 connector.stop(context);
@@ -246,6 +249,22 @@ final class PdkConnector implements AutoCloseable {
         } catch (Throwable ignore) {
             // best-effort cleanup: a stop failure must not mask the outcome that is already being returned or thrown
         }
+    }
+
+    /**
+     * Whether this connector would still consider itself running, as judged from the two facts the
+     * host owns: that it has not been stopped, and that the thread driving it has not been interrupted.
+     *
+     * <p>Those are the same two facts a connector reads to answer the question for itself — a running
+     * read asks between batches and abandons quietly when either has changed — but that answer is not
+     * on the frozen interface and cannot be asked for. Reconstructing it here reaches the same
+     * judgement without reflecting into a connector's own class, and stays true of every connector
+     * rather than of one.
+     *
+     * <p>Only meaningful on the thread that drove the read: the interrupt half is that thread's.
+     */
+    boolean isAlive() {
+        return !stopped && !Thread.currentThread().isInterrupted();
     }
 
     @Override

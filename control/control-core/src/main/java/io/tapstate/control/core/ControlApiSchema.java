@@ -68,6 +68,9 @@ public final class ControlApiSchema {
         bind(refs, "pipeline.metrics", "PipelineMetrics");
         bind(refs, "pipeline.snapshot", "PipelineSnapshot");
         bind(refs, "pipeline.logs", "PipelineLogs");
+        bind(refs, "data-browser.collections", "DataBrowserCollections");
+        bind(refs, "data-browser.find", "DataBrowserFind");
+        bind(refs, "data-browser.stats", "DataBrowserStats");
         return immutableMap(refs);
     }
 
@@ -184,7 +187,118 @@ public final class ControlApiSchema {
                 Map.of("id", id, "limit", integer(1, 200, "Maximum lines, capped by the server")),
                 false);
         pair(defs, "PipelineLogs", logsRequest, opaque);
+
+        Map<String, Object> sourceId = string("Declared Source whose own database is read");
+        Map<String, Object> collection = string("Collection in that source's database");
+        pair(defs, "DataBrowserCollections",
+                object(List.of("sourceId"), Map.of("sourceId", sourceId), false),
+                object(List.of("collections"),
+                        Map.of("collections", array(collectionEntry())), false));
+        pair(defs, "DataBrowserStats",
+                object(List.of("sourceId", "collection"),
+                        Map.of("sourceId", sourceId, "collection", collection), false),
+                opaque);
+
+        Map<String, Object> findProperties = new LinkedHashMap<>();
+        findProperties.put("sourceId", sourceId);
+        findProperties.put("collection", collection);
+        findProperties.put("filter", filter());
+        findProperties.put("sort", object(
+                List.of("field", "dir"),
+                Map.of("field", string(
+                                "Field to order by. A nested one is reached by pathing to it. A field "
+                                        + "whose own name holds a dot cannot be ordered by at all and "
+                                        + "is refused rather than served in an order nobody applied."),
+                        "dir", enumString("asc", "desc")),
+                false));
+        findProperties.put("limit", integer(1, DataBrowserService.MAX_LIMIT,
+                "Rows to read, capped by the server. Absent reads " + DataBrowserService.DEFAULT_LIMIT
+                        + ". This is a preview of the first rows, not a page: there is no way to ask "
+                        + "for the next ones."));
+        pair(defs, "DataBrowserFind",
+                object(List.of("sourceId", "collection"), findProperties, false),
+                opaque);
         return immutableMap(defs);
+    }
+
+    /**
+     * One collection of a listing. Three of the four are answered only when something answered them,
+     * and the schema is where a caller with no person behind it is told what their absence means —
+     * read as an empty answer, an absent field list becomes "this collection has no fields", which is
+     * a claim nobody made and which stops the caller from looking any further.
+     */
+    private static Map<String, Object> collectionEntry() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("name", string("Collection name, as the connector reports it"));
+        properties.put("kind", Map.of(
+                "type", "string",
+                "enum", List.of("view"),
+                "description", "What this collection is, for the collections this workspace declares. "
+                        + "Absent for a collection no declaration covers — the listing shows "
+                        + "everything the database holds, and a database holds more than a workspace "
+                        + "authored, so an absent kind means this one was not made here rather than "
+                        + "that it is of some unknown class. Other kinds join this list as they "
+                        + "arrive."));
+        properties.put("fields", Map.of(
+                "type", "array",
+                "items", Map.of("type", "string"),
+                "description", "The collection's top-level fields, array fields included. Absent when "
+                        + "nothing has been discovered on this source's connection, or when the latest "
+                        + "discovery never named this collection — which is not the same as the "
+                        + "collection having no fields. To learn the shape anyway, read the "
+                        + "collection's first page and look at a row."));
+        properties.put("description", string(
+                "What whoever declared this collection wrote about it. Absent for a collection no view "
+                        + "declares, which is most of them — a database holds far more than a workspace "
+                        + "authored."));
+        return object(List.of("name"), properties, false);
+    }
+
+    /**
+     * A read's filter: one term, or one combination of them. Written out rather than referenced so the
+     * document stands alone wherever a protocol adapter hands it over — a local reference would dangle
+     * once the surrounding definitions are left behind.
+     *
+     * <p>The nesting stops where the vocabulary stops: a conjunction holds terms and alternatives, an
+     * alternative holds terms, and there is no third level to write.
+     */
+    private static Map<String, Object> filter() {
+        Map<String, Object> term = term();
+        Map<String, Object> alternative = object(
+                List.of("any"), Map.of("any", array(term)), false);
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.putAll(termProperties());
+        properties.put("all", array(oneOf(term, alternative)));
+        properties.put("any", array(term));
+        Map<String, Object> filter = new LinkedHashMap<>(object(List.of(), properties, false));
+        filter.put("description", "Either one term (`field`, `op`, `value`) or one combination of them "
+                + "(`all` or `any`), never both in the same object. This is the whole vocabulary; a "
+                + "query document in the database's own language is refused rather than forwarded.");
+        return immutableMap(filter);
+    }
+
+    private static Map<String, Object> term() {
+        return object(List.of("field", "op", "value"), termProperties(), false);
+    }
+
+    private static Map<String, Object> termProperties() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("field", string(
+                "Field to test. A dot steps into a nested document, so a field whose own name holds "
+                        + "one is named by escaping it: `price\\.usd`. Written here that is "
+                        + "\"price\\\\.usd\", because a lone backslash is not an escape JSON allows."
+                        + " Matching on such a field reads every row: an index is written the same way a "
+                        + "path is, so a name holding a dot cannot have one."));
+        properties.put("op", enumString(
+                "eq", "ne", "gt", "gte", "lt", "lte", "in", "exists", "contains"));
+        properties.put("value", Map.of("description",
+                "What to test against. `in` takes a non-empty list, `exists` takes true or false, "
+                        + "`contains` takes text; the rest take the value itself."));
+        return properties;
+    }
+
+    private static Map<String, Object> oneOf(Map<String, Object> left, Map<String, Object> right) {
+        return Map.of("oneOf", List.of(left, right));
     }
 
     private static void pair(

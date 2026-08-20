@@ -17,6 +17,8 @@ import io.tapstate.control.core.ConnectorCatalogView;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.DataBrowserFollows;
+import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.LoginService;
 import io.tapstate.control.core.OperationRegistry;
@@ -99,6 +101,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * exact assembly the running server uses.
  */
 class PipelineApiTest {
+
+    /** A follow probe that is never driven: nothing here streams, and one that answered
+     * would let a case pass by following instead of reading. */
+    private static final io.tapstate.runtime.probe.DataBrowserTailProbe NO_FOLLOWS =
+            (config, request, listener) -> {
+                throw new AssertionError("no case here opens a follow");
+            };
 
     private static final Instant NOW = Instant.parse("2026-07-11T12:00:00Z");
 
@@ -276,7 +285,7 @@ class PipelineApiTest {
     @Test
     void everyPipelineVerbProjectsARegisteredCliExposedVerb() {
         Set<String> cliExposed = ControlOperations.registry()
-                .exposedOn(io.tapstate.control.core.Frontend.CLI, io.tapstate.control.core.Maturity.POC).stream()
+                .exposedOn(io.tapstate.control.core.Frontend.CLI).stream()
                 .map(io.tapstate.control.core.Operation::id).collect(Collectors.toSet());
 
         RequestMappingHandlerMapping mapping =
@@ -453,7 +462,29 @@ class PipelineApiTest {
         ArtifactMutationService artifactMutationService(ArtifactStore store, AuditGate auditGate) {
             return new ArtifactMutationService(
                     store, NoReclaimStores.desired(), NoReclaimStores.state(),
-                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate);
+                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate, DataBrowserFollows.NONE);
+        }
+
+        // The data-browser controller is bundled too, so its service must be present for the context to
+        // stand up; this suite exercises the pipeline verbs, not the reads, so every probe is inert (their
+        // behaviour is proven in DataBrowserApiTest).
+        @Bean
+        DataBrowserService dataBrowserService(ArtifactStore store) {
+            return new DataBrowserService(
+                    store,
+                    new NoDiscoveries(),
+                    config -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.collections is not exercised in this test");
+                    },
+                    (config, collection) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.stats is not exercised in this test");
+                    },
+                    (config, query) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.find is not exercised in this test");
+                    }, NO_FOLLOWS);
         }
 
         // The connection / connector controllers come in with the whole ControlHttpFace bundle, so their

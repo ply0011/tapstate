@@ -4,7 +4,6 @@ import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
 import io.tapstate.control.core.Frontend;
 import io.tapstate.control.core.GeneratedSecret;
-import io.tapstate.control.core.Maturity;
 import io.tapstate.control.core.Operation;
 import io.tapstate.control.core.OperationRegistry;
 import io.tapstate.control.core.PipelineLogQueryService;
@@ -167,7 +166,7 @@ class PipelineLogsApiTest {
     @Test
     void theLogsFaceProjectsARegisteredCliExposedVerb() {
         Set<String> cliExposed = ControlOperations.registry()
-                .exposedOn(Frontend.CLI, Maturity.POC).stream()
+                .exposedOn(Frontend.CLI).stream()
                 .map(Operation::id).collect(Collectors.toSet());
 
         RequestMappingHandlerMapping mapping =

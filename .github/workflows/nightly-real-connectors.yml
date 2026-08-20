@@ -70,7 +70,7 @@ jobs:
           -Dapi.version=1.44
           -Dtapstate.e2e.connectors-dir="${{ runner.temp }}/connectors"
           -Dtest=ZzzNoSuchSurefireSelector -Dsurefire.failIfNoSpecifiedTests=false
-          -Dit.test=PublishedExamplesIT,RealMysqlToMongo*IT,Nest*IT
+          -Dit.test=PublishedExamplesIT,RealMysqlToMongo*IT,Nest*IT,DataBrowser*IT,Watch*IT
           -Dfailsafe.failIfNoSpecifiedTests=false
       - name: Witness gate
         # Aggregate counts cannot see a witness that never ran; this reads the manifest name by name

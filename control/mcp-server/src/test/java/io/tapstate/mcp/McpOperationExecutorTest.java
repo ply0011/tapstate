@@ -64,6 +64,7 @@ class McpOperationExecutorTest {
                     Map.entry(ControlOperations.CONNECTION_SCHEMA, Map.of("id", "orders")),
                     Map.entry(ControlOperations.ARTIFACT_VALIDATE, Map.of("drafts", List.of())),
                     Map.entry(ControlOperations.ARTIFACT_APPLY, Map.of("drafts", List.of())),
+                    Map.entry(ControlOperations.ARTIFACT_GET, Map.of("id", "orders")),
                     Map.entry(ControlOperations.ARTIFACT_DELETE,
                             Map.of("id", "orders", "expectedContentHash", "a".repeat(64))),
                     Map.entry(ControlOperations.PIPELINE_START, pipeline),
@@ -71,7 +72,19 @@ class McpOperationExecutorTest {
                     Map.entry(ControlOperations.PIPELINE_STATUS, pipeline),
                     Map.entry(ControlOperations.PIPELINE_METRICS, pipeline),
                     Map.entry(ControlOperations.PIPELINE_SNAPSHOT, pipeline),
-                    Map.entry(ControlOperations.PIPELINE_LOGS, logs));
+                    Map.entry(ControlOperations.PIPELINE_LOGS, logs),
+                    Map.entry(ControlOperations.DATA_BROWSER_COLLECTIONS, Map.of("sourceId", "views")),
+                    Map.entry(ControlOperations.DATA_BROWSER_STATS,
+                            Map.of("sourceId", "views", "collection", "order_state")),
+                    Map.entry(ControlOperations.DATA_BROWSER_FIND,
+                            Map.of("sourceId", "views", "collection", "order_state")));
+
+            // "Every" is derived, not counted by hand. The routing is a switch over operation ids, and
+            // the failure it has is silent in exactly this shape: a verb marked open on this face with
+            // no branch answers `unsupported MCP operation` to a caller who was told the tool exists.
+            assertThat(calls.stream().map(Map.Entry::getKey))
+                    .as("every operation the registry opens on MCP is exercised here")
+                    .containsExactlyInAnyOrderElementsOf(McpToolCatalog.operations(true));
 
             for (Map.Entry<io.tapstate.control.core.Operation, Map<String, Object>> call : calls) {
                 assertThat(executor.execute(call.getKey(), call.getValue()).error())
@@ -87,7 +100,67 @@ class McpOperationExecutorTest {
                     "/api/artifacts/orders",
                     "/api/pipelines/orders:start", "/api/pipelines/orders:stop",
                     "/api/pipelines/orders/status", "/api/pipelines/orders/metrics",
-                    "/api/pipelines/orders/snapshot", "/api/pipelines/orders/logs?limit=200");
+                    "/api/pipelines/orders/snapshot", "/api/pipelines/orders/logs?limit=200",
+                    "/api/sources/views/collections",
+                    "/api/sources/views/collections/order_state/stats",
+                    "/api/sources/views/collections/order_state:find");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void aReadThatAsksForNothingSendsNothingRatherThanThisFacesOwnDefaults() throws Exception {
+        // The plan's claim is that the four surfaces share one request shape, which holds only while none
+        // of them answers a question of its own. A face that filled in its own limit here would agree with
+        // the control plane today and drift the day the control plane's answer changed — and the drift
+        // would be invisible, because both sides would still be sending a number that works.
+        AtomicReference<Map<?, ?>> posted = new AtomicReference<>();
+        HttpServer server = server(exchange -> {
+            posted.set((Map<?, ?>) JsonReader.parse(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
+            answer(exchange, 200, "{}");
+        });
+        try (HttpControlClient client = new HttpControlClient(Duration.ofSeconds(1), Duration.ofSeconds(2))) {
+            McpOperationExecutor executor = new McpOperationExecutor(
+                    baseOf(server), "token", Map.of(), client);
+
+            executor.execute(ControlOperations.DATA_BROWSER_FIND,
+                    Map.of("sourceId", "views", "collection", "order_state"));
+
+            // Not "limit is 10" — an absent key, so the control plane's own answer is the only one there is.
+            assertThat(posted.get()).isEmpty();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void carriesOnlyWhatAReadActuallyAskedForAndLeavesTheTwoNamesInThePath() throws Exception {
+        AtomicReference<Map<?, ?>> posted = new AtomicReference<>();
+        AtomicReference<String> path = new AtomicReference<>();
+        HttpServer server = server(exchange -> {
+            path.set(exchange.getRequestURI().toString());
+            posted.set((Map<?, ?>) JsonReader.parse(new String(
+                    exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
+            answer(exchange, 200, "{}");
+        });
+        try (HttpControlClient client = new HttpControlClient(Duration.ofSeconds(1), Duration.ofSeconds(2))) {
+            McpOperationExecutor executor = new McpOperationExecutor(
+                    baseOf(server), "token", Map.of(), client);
+            Map<String, Object> arguments = new LinkedHashMap<>();
+            arguments.put("sourceId", "views");
+            arguments.put("collection", "order_state");
+            arguments.put("filter", Map.of("field", "status", "op", "eq", "value", "paid"));
+            arguments.put("limit", 25);
+
+            executor.execute(ControlOperations.DATA_BROWSER_FIND, arguments);
+
+            assertThat(path.get()).isEqualTo("/api/sources/views/collections/order_state:find");
+            List<String> keys = new ArrayList<>();
+            posted.get().keySet().forEach(key -> keys.add(String.valueOf(key)));
+            assertThat(keys).containsExactlyInAnyOrder("filter", "limit");
+            assertThat(posted.get().get("limit")).isEqualTo(25L);
         } finally {
             server.stop(0);
         }

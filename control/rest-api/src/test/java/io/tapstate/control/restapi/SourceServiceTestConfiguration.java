@@ -1,5 +1,6 @@
 package io.tapstate.control.restapi;
 
+import io.tapstate.control.core.DataBrowserFollows;
 import io.tapstate.control.core.SourceRepresentation;
 import io.tapstate.control.core.SourceService;
 import io.tapstate.core.catalog.TapstateCatalog;
@@ -17,7 +18,7 @@ final class SourceServiceTestConfiguration {
 
     @Bean
     SourceService sourceService(ArtifactStore store, SourceRepresentation representation) {
-        return new SourceService(TapstateCatalog::load, store, representation);
+        return new SourceService(TapstateCatalog::load, store, representation, DataBrowserFollows.NONE);
     }
 
 }
