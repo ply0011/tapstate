@@ -3,6 +3,7 @@ package io.tapstate.adapters.pdk;
 import io.tapstate.core.catalog.CatalogEntryAssembler;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
 import io.tapstate.core.catalog.NormalizedSpec;
+import io.tapstate.core.catalog.OfficialConnectors;
 import io.tapstate.core.catalog.SpecNormalizer;
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.common.JsonReader;
@@ -48,15 +49,6 @@ import java.util.Objects;
  */
 public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
 
-    /**
-     * The connectors this release officially supports, in the order a refusal message names them. A
-     * list rather than a set so that order — and therefore the message — is fixed; the membership test
-     * over two entries costs nothing. This is the default accepted set and the only one any shipped
-     * artifact uses; a test pins its exact contents, because a silent addition here would be a support
-     * promise nobody made.
-     */
-    static final List<String> OFFICIAL_CONNECTOR_IDS = List.of("mysql", "mongodb");
-
     private final ConnectorRegistry registry;
     private final ConnectorIntrospector introspector;
     private final CapabilityDeriver capabilityDeriver;
@@ -86,9 +78,20 @@ public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
         this.catalogStore = Objects.requireNonNull(catalogStore, "catalogStore");
         this.specStore = Objects.requireNonNull(specStore, "specStore");
         Objects.requireNonNull(alsoAccept, "alsoAccept");
-        List<String> accepted = new ArrayList<>(OFFICIAL_CONNECTOR_IDS);
-        accepted.addAll(alsoAccept);
-        this.acceptedConnectorIds = List.copyOf(accepted);
+        if (alsoAccept.isEmpty()) {
+            // The shipped path accepts that list itself rather than a copy of it, so no edit can move
+            // one without the other.
+            this.acceptedConnectorIds = OfficialConnectors.IDS;
+        } else {
+            List<String> accepted = new ArrayList<>(OfficialConnectors.IDS);
+            accepted.addAll(alsoAccept);
+            this.acceptedConnectorIds = List.copyOf(accepted);
+        }
+    }
+
+    /** The ids this registrar accepts: the official set, widened by whatever the deployment named. */
+    List<String> acceptedConnectorIds() {
+        return acceptedConnectorIds;
     }
 
     /** Registers the artifact at {@code artifact} if its content hash is not already registered. */

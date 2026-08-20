@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
+import io.tapstate.core.catalog.OfficialConnectors;
 import io.tapstate.core.common.Severity;
 import io.tapstate.core.common.TapstateErrorCode;
 import io.tapstate.core.common.TapstateException;
@@ -178,7 +179,7 @@ class ConnectorArtifactRegistrarTest {
     void theDefaultAcceptedSetIsExactlyTheTwoOfficialConnectors() {
         // The pin. Widening is a deployment's explicit act; the default must not drift, because every
         // shipped artifact leaves it alone and a silent addition here is a support promise nobody made.
-        assertThat(ConnectorArtifactRegistrar.OFFICIAL_CONNECTOR_IDS).containsExactly("mysql", "mongodb");
+        assertThat(OfficialConnectors.IDS).containsExactly("mysql", "mongodb");
     }
 
     @Test
