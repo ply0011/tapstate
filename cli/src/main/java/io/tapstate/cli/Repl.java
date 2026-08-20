@@ -773,7 +773,7 @@ final class Repl {
         String refusal = controlPlane.tail(session.landingNode(), session.credential(),
                 live.sourceId(), live.collection(), live.filter(),
                 change -> {
-                    TailRenderer.lines(change).forEach(out::println);
+                    TailRenderer.lines(change, screenWidth.getAsInt()).forEach(out::println);
                     out.flush();
                 },
                 this::isStreamCancelled);

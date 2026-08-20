@@ -168,10 +168,9 @@ class WatchTwoColumnTest {
     @DisplayName("an embedded value too long for its column is opened up rather than cut")
     void anOverlongEmbeddedValueIsOpenedUp() {
         WatchView view = new WatchView("shop.orders", () -> 100);
-        // The shape a Mongo _id actually arrives in: an object, not a string.
-        Map<String, Object> id = row("date", "2026-08-19T04:03:39.000Z", "timestamp", 1787112219);
+        Map<String, Object> stamp = row("date", "2026-08-19T04:03:39.000Z", "timestamp", 1787112219);
 
-        List<String> written = view.onPoll(new WatchPoll.Row(row("_id", id), 36L), START);
+        List<String> written = view.onPoll(new WatchPoll.Row(row("created", stamp), 36L), START);
 
         // This used to be cut in the middle, on the reasoning that both ends of a long value are what
         // tell two of them apart. That holds for a value with no parts. It fails for one with parts:
@@ -206,6 +205,39 @@ class WatchTwoColumnTest {
         assertThat(written)
                 .as("and it still fits the screen, or the table overflows it")
                 .allSatisfy(l -> assertThat(l.length()).isLessThanOrEqualTo(100));
+    }
+
+    @Test
+    @DisplayName("the identity field is cut rather than opened up, since it is on every single row")
+    void theIdentityFieldIsCutRatherThanOpenedUp() {
+        WatchView view = new WatchView("shop.orders", () -> 100);
+        // The shape a Mongo _id actually arrives in: an object, not a string.
+        Map<String, Object> id = row("date", "2026-08-19T04:03:39.000Z", "timestamp", 1787112219);
+
+        List<String> written = view.onPoll(new WatchPoll.Row(row("_id", id), 36L), START);
+        String cell = cells(written, "_id").get(1);
+
+        assertThat(cell)
+                .as("this field is on every row and its converted form carries only the second the id "
+                        + "was made in, so three further lines of it are spent on every frame for nothing")
+                .startsWith("{\"date\": \"2026")
+                .endsWith("1787112219}")
+                .contains("\u2026");
+    }
+
+    @Test
+    @DisplayName("the exception is the field's name, not its shape — the same value elsewhere opens up")
+    void theExceptionIsTheNameRatherThanTheShape() {
+        WatchView view = new WatchView("shop.orders", () -> 100);
+        Map<String, Object> sameShape = row("date", "2026-08-19T04:03:39.000Z", "timestamp", 1787112219);
+
+        List<String> written = view.onPoll(new WatchPoll.Row(row("created", sameShape), 36L), START);
+
+        // Pinned as a pair with the test above. Written instead as a rule about small embedded values,
+        // the exception would silently take the expansion back for every one of them.
+        assertThat(String.join("\n", written))
+                .as("a value the reader actually reads is still opened up")
+                .contains("\"timestamp\": 1787112219");
     }
 
     @Test

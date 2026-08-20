@@ -3,7 +3,6 @@ package io.tapstate.cli;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.IntFunction;
 
 /**
  * Renders the in-place view: one row as a bordered table of two versions side by side — the row's
@@ -38,17 +37,16 @@ final class WatchRenderer {
     private static final int TWO_COLUMN_CHROME = 10;
     private static final int ONE_COLUMN_CHROME = 7;
 
-    /**
-     * How many elements of an over-long embedded value survive, at each end. What is dropped is the
-     * middle, and how much was dropped is written where it was: an array shown short with no count
-     * reads as an array that is short.
-     */
-    private static final int KEEP_HEAD = 3;
-    private static final int INDENT = 2;
-    private static final int KEEP_TAIL = 2;
-
     /** A cell with no value at all, which is not the same as a cell holding null. */
     private static final Object ABSENT = new Object();
+
+    /**
+     * The one field never opened up. It is on every row, and the form a read reports it in carries the
+     * second the id was created in and nothing else -- so the lines an expansion spends on it buy the
+     * reader nothing, on every frame. Named rather than inferred from its shape: a rule about small
+     * embedded values would quietly take the expansion back for all of them.
+     */
+    private static final String IDENTITY_FIELD = "_id";
 
     private WatchRenderer() {
     }
@@ -64,73 +62,20 @@ final class WatchRenderer {
      * they differ in -- the view then marks the field as changed and shows two cells that read the
      * same.
      */
-    private static List<String> layout(Object value, int width) {
-        return value == ABSENT ? List.of("") : lay(value, width);
-    }
-
-    private static List<String> lay(Object value, int width) {
-        String flat = JsonOut.compact(value);
-        if (flat.length() <= width) {
-            return List.of(flat);
-        }
-        if (value instanceof List<?> list && !list.isEmpty()) {
-            return expand(list.size(), i -> "", i -> list.get(i), "[", "]",
-                    list.size() == 1 ? " (1 item)" : " (" + list.size() + " items)", width);
-        }
-        if (value instanceof Map<?, ?> map && !map.isEmpty()) {
-            List<? extends Map.Entry<?, ?>> entries = List.copyOf(map.entrySet());
-            return expand(entries.size(),
-                    i -> JsonOut.compact(String.valueOf(entries.get(i).getKey())) + ": ",
-                    i -> entries.get(i).getValue(), "{", "}",
-                    entries.size() == 1 ? " (1 field)" : " (" + entries.size() + " fields)", width);
-        }
-        // Nothing left to lay out: a single scalar too wide for its column is cut, and cut out of the
-        // middle so both ends survive.
-        return List.of(fitCell(flat, width));
-    }
-
     /**
-     * One level laid out a member per line, with the middle dropped when there are more members than
-     * both ends can hold. Where members were dropped it says how many, and the closing line carries
-     * the total: a value shown short with no count reads as a value that is short.
+     * The lines one cell occupies. The rule itself is {@link NestedLayout}; what this view adds is
+     * that it elides -- it redraws a frame whose height it counted, so a layout free to grow without
+     * limit is one it cannot draw over. The identity field is not laid out at all: it is cut, on every
+     * frame, for the reason named beside {@link #IDENTITY_FIELD}.
      */
-    private static List<String> expand(int size, IntFunction<String> prefix, IntFunction<Object> member,
-            String open, String close, String count, int width) {
-        List<String> lines = new ArrayList<>();
-        lines.add(open);
-        boolean elides = size > KEEP_HEAD + KEEP_TAIL;
-        int head = elides ? KEEP_HEAD : size;
-        for (int i = 0; i < head; i++) {
-            lines.addAll(memberLines(prefix.apply(i), member.apply(i), width, i < size - 1));
+    private static List<String> layout(Object value, int width, boolean cutOnly) {
+        if (value == ABSENT) {
+            return List.of("");
         }
-        if (elides) {
-            lines.add("  … " + (size - KEEP_HEAD - KEEP_TAIL) + " more …");
-            for (int i = size - KEEP_TAIL; i < size; i++) {
-                lines.addAll(memberLines(prefix.apply(i), member.apply(i), width, i < size - 1));
-            }
+        if (cutOnly) {
+            return List.of(NestedLayout.cut(JsonOut.compact(value), width));
         }
-        // The total is written only where something was left out. On a level shown whole the reader
-        // can see how many there are, and a count beside every closing brace is noise around the one
-        // place it carries information.
-        lines.add(elides ? close + " " + count : close);
-        return lines;
-    }
-
-    /**
-     * A member, indented one level and comma'd like JSON. It is laid out by the same rule as the value
-     * that holds it, so a member that fits its line stays on it and only one that does not is opened up
-     * -- which is what keeps a deep value from expanding every level it happens to have.
-     */
-    private static List<String> memberLines(String prefix, Object value, int width, boolean more) {
-        int inner = Math.max(width - INDENT, 1);
-        List<String> laid = lay(value, Math.max(inner - prefix.length() - (more ? 1 : 0), 1));
-        List<String> out = new ArrayList<>();
-        for (int i = 0; i < laid.size(); i++) {
-            String text = (i == 0 ? prefix : "") + laid.get(i)
-                    + (i == laid.size() - 1 && more ? "," : "");
-            out.add(" ".repeat(INDENT) + text);
-        }
-        return out;
+        return NestedLayout.lines(value, width, true);
     }
 
     /**
@@ -161,7 +106,8 @@ final class WatchRenderer {
             rows.add(new String[] {slot + " " + field, nowCell, wasCell});
             // The rendered text sizes the columns; the value itself is what a cell too small for it
             // gets laid out from, which cutting the text first would already have thrown away.
-            values.add(new Object[] {gone ? ABSENT : now.get(field), was == null ? ABSENT : was.get(field)});
+            values.add(new Object[] {gone ? ABSENT : now.get(field), was == null ? ABSENT : was.get(field),
+                    IDENTITY_FIELD.equals(field)});
         }
         return table("watching " + namespace + " · one row · polling every 1s", rows, values, width,
                 approximateTotal);
@@ -196,8 +142,10 @@ final class WatchRenderer {
         lines.add(rule("├", "┼", "┤", columns));
         for (int i = 0; i < rows.size(); i++) {
             String[] cells = rows.get(i);
-            List<String> left = layout(values.get(i)[0], columns.get(1));
-            List<String> right = bothColumns ? layout(values.get(i)[1], columns.get(2)) : List.of();
+            boolean cutOnly = (Boolean) values.get(i)[2];
+            List<String> left = layout(values.get(i)[0], columns.get(1), cutOnly);
+            List<String> right = bothColumns
+                    ? layout(values.get(i)[1], columns.get(2), cutOnly) : List.of();
             int tall = Math.max(left.size(), right.size());
             for (int line = 0; line < tall; line++) {
                 // The field is named once, beside the first line of its own value. Repeated down the
@@ -279,23 +227,8 @@ final class WatchRenderer {
         return Math.max(low, Math.min(value, high));
     }
 
-    /**
-     * Cuts an over-long value out of the middle, keeping both ends. What distinguishes two long values
-     * of the same kind is usually at the end -- two rendered ids share a long prefix and differ in the
-     * last few characters -- so cutting the tail off is what makes them unreadable, while cutting the
-     * middle leaves both the kind and the identity legible. Wrapping is not the alternative here: the
-     * caller counts the lines it wrote in order to redraw over them.
-     */
     private static String fitCell(String text, int width) {
-        if (text.length() <= width) {
-            return text;
-        }
-        if (width <= 1) {
-            return "…";
-        }
-        int head = width / 2;
-        int tail = width - 1 - head;
-        return text.substring(0, head) + "…" + text.substring(text.length() - tail);
+        return NestedLayout.cut(text, width);
     }
 
     /** Cuts an over-long title rather than wrapping it, marking that something was cut. */
