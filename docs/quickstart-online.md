@@ -84,6 +84,21 @@ builds the server from this checkout instead; every `docker compose …` below t
 picks up both without repeating them. Set it once per shell — a new terminal needs
 it again.
 
+> **Forgetting it fails silently, and the symptom points at the wrong thing.** Without
+> `COMPOSE_FILE`, `docker compose` reads `docker-compose.yml` alone: the stack comes up
+> on the *published* server image, and every change in your checkout is simply absent.
+> Nothing reports a missing variable — you see a product that behaves like an older
+> release, so the natural next move is to go debug the code you just changed. Ask the
+> stack which image it will actually run:
+>
+> ```sh
+> docker compose config --format json \
+>   | python3 -c 'import sys,json;print(json.load(sys.stdin)["services"]["server"]["image"])'
+> ```
+>
+> `tapstate:dev` is the image built from this checkout; a `ghcr.io/...` one is a published
+> release. Check this first whenever a change you know you made appears not to be there.
+
 ## 2. Bring up the stack
 
 > **Preview.** With the development override in play, the server image is built
