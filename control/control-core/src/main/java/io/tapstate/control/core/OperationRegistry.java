@@ -14,7 +14,7 @@ import java.util.Set;
  *
  * <p>Operations are registered from an explicit list of constants supplied by the caller — there is no
  * classpath or annotation scanning, so the registry is fixed at assembly time and native-image friendly.
- * Each face's operation surface is a derivation of this data (see {@link #exposedOn(Frontend, Maturity)}),
+ * Each face's operation surface is a derivation of this data (see {@link #exposedOn(Frontend)}),
  * which keeps the surfaces provable rather than hand-maintained.
  */
 public final class OperationRegistry {
@@ -76,11 +76,33 @@ public final class OperationRegistry {
     }
 
     /**
-     * The operation surface of a face: every operation whose stage on {@code frontend} is at or below
-     * {@code ceiling}. Operations not exposed on the face are omitted. This is how a face's verb / tool
-     * set is derived and asserted, rather than being listed by hand.
+     * The operation surface of a face: every operation whose stage on {@code frontend} is at or below the
+     * stage this build ships at ({@link Maturity#CURRENT}). Operations not exposed on the face are omitted.
+     * This is how a face's verb / tool set is derived and asserted, rather than being listed by hand.
+     *
+     * <p>This is the only form a face may use. The ceiling is deliberately absent from the signature: a
+     * caller that could name one could open a surface wider than the build ships, and that mistake would
+     * read as ordinary code at the call site rather than as the release decision it actually is.
      */
-    public List<Operation> exposedOn(Frontend frontend, Maturity ceiling) {
+    public List<Operation> exposedOn(Frontend frontend) {
+        return clip(frontend, Maturity.CURRENT);
+    }
+
+    /**
+     * The face surface at an arbitrary ceiling. Package-private on purpose: it exists so the clipping rule
+     * itself can be exercised across stages. A face lives in another package and therefore cannot reach it
+     * at all — which is the point, since a face able to name a ceiling is a face able to open a wider
+     * surface than the build ships.
+     *
+     * <p>It is not on the path {@link #exposedOn(Frontend)} takes, deliberately: both delegate to the same
+     * private clipping instead, so that "no production code calls the ceiling-taking form" is a statement
+     * with no exception in it, rather than one carrying a carve-out for this class.
+     */
+    List<Operation> exposedOn(Frontend frontend, Maturity ceiling) {
+        return clip(frontend, ceiling);
+    }
+
+    private List<Operation> clip(Frontend frontend, Maturity ceiling) {
         Objects.requireNonNull(frontend, "frontend");
         Objects.requireNonNull(ceiling, "ceiling");
         List<Operation> out = new ArrayList<>();

@@ -145,7 +145,57 @@ public enum ConnectorError implements TapstateErrorCode {
      * The connector failed while writing a batch. {@code connector} is the connector id;
      * {@code detail} is the failure the connector reported.
      */
-    WRITE_FAILED("connector.write-failed", Set.of("connector", "detail"));
+    WRITE_FAILED("connector.write-failed", Set.of("connector", "detail")),
+
+    /**
+     * The connector failed while reading the store — it threw out of the read, or reported the failure
+     * through the result it handed back. {@code connector} is the connector id; {@code detail} is the
+     * failure the connector reported. Distinct from a capture read: that one is a pipeline moving data,
+     * this one is a user looking at it, and the two fail for different reasons and reach different
+     * people.
+     */
+    READ_FAILED("connector.read-failed", Set.of("connector", "detail")),
+
+    /**
+     * The connector gave up part way through a read and returned as if it had not. {@code connector} is
+     * the connector id. A read loop asks whether it is still alive between batches and, when it is not,
+     * returns without throwing and without reporting — dropping the rows it had already gathered. That
+     * leaves a short answer no other signal contradicts, and a short answer is indistinguishable from a
+     * small collection, so it would otherwise be handed to a caller as a complete one.
+     */
+    READ_ABANDONED("connector.read-abandoned", Set.of("connector")),
+
+    /**
+     * The connector registers no function for the capability this read needs, so the read cannot be
+     * served at all. {@code connector} is the connector id; {@code capability} names the function that
+     * is absent. This is a user-facing refusal rather than an invariant violation: which connectors can
+     * serve a read is a property of the connector, not something the request was validated against, so
+     * a user can reach it by asking to read a source whose connector does not offer it.
+     */
+    CAPABILITY_MISSING("connector.capability-missing", Set.of("connector", "capability")),
+
+    /**
+     * Every live instance of this connection stayed busy for the whole wait, so the read was refused
+     * rather than queued behind a query that may never end. {@code connector} is the connector id;
+     * {@code timeout} is how long the read waited. A caller that sees this repeatedly is contending
+     * with other reads of the same connection, not with a broken one.
+     */
+    INSTANCES_BUSY("connector.instances-busy", Set.of("connector", "timeout")),
+
+    /**
+     * The host already holds as many live connector instances as it allows and every one of them is
+     * busy, so none could be closed to make room. {@code limit} is the ceiling that was reached. The
+     * ceiling is counted in instances because each one carries its connector's own connection pool;
+     * this is a host-wide condition rather than a property of the connection being read.
+     */
+    INSTANCE_LIMIT_REACHED("connector.instance-limit-reached", Set.of("limit")),
+
+    /**
+     * The read ran longer than the read face allows and was abandoned. {@code connector} is the
+     * connector id; {@code timeout} is how long it was given. The instance it ran on is closed rather
+     * than reused, because the abandoned read is still inside it.
+     */
+    READ_TIMEOUT("connector.read-timeout", Set.of("connector", "timeout"));
 
     private final String code;
     private final Set<String> placeholders;

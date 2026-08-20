@@ -51,6 +51,17 @@ public enum Domain {
     // observation read faces: reading a pipeline's store-backed status / metrics / snapshot;
     // diagnosable failures such as reading a pipeline that has published no observation (control)
     MONITOR,
+    // the read face over a declared source's own store: listing its collections, reading its
+    // documents back and following their changes. A lightweight look at what is there -- it serves
+    // no downstream consumer and passes no judgement on the data. Its codes are the ones this face
+    // decides for itself, before any connector is reached: a collection the source does not hold, a
+    // number of rows it will not serve. What goes wrong once a connector is driving belongs to
+    // CONNECTOR, which owns the whole of that (a read that failed, timed out, was abandoned, or
+    // found no free instance) whichever face asked for it. Distinct from IO, which reports that the
+    // storage mechanism itself failed, and from STORE, which polices reaching a backend at startup
+    // -- a code sitting next to store.unreachable would read as an operator's problem rather than a
+    // caller's
+    DATA_BROWSER,
     // resource-type-agnostic artifact operations: editing an already-applied resource under an
     // optimistic-concurrency precondition, and removing one — including the reference and lifecycle
     // grounds on which a removal is refused (control)
@@ -64,9 +75,13 @@ public enum Domain {
     CAPTURE;
 
 
-    /** The lower-case identifier used as the {@code <domain>} segment of a canonical code. */
+    /**
+     * The lower-kebab identifier used as the {@code <domain>} segment of a canonical code. A
+     * multi-word constant separates its words with {@code _} here and {@code -} in the id, because
+     * the code format admits kebab in either segment but never an underscore.
+     */
     public String id() {
-        return name().toLowerCase(Locale.ROOT);
+        return name().toLowerCase(Locale.ROOT).replace('_', '-');
     }
 
     /** Whether {@code domain} is a registered domain id (exact, case-sensitive). */

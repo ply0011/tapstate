@@ -1,0 +1,17 @@
+# Binary allowlist for the no-binary-bytes CI gate.
+#
+# Every tracked file in this repository is text. The gate rejects any tracked
+# file containing a NUL byte (0x00) — the byte that makes git and most text
+# tooling treat a file as binary, at which point grep -I skips it silently and
+# exits 0. This file is the ONLY escape hatch.
+#
+# Each non-comment line is a git pathspec (relative to the repo root) that is
+# excluded from the scan. Examples (do not enable without review):
+#   docs/img/architecture.png
+#   */src/test/resources/fixtures/*.bin
+#
+# It ships EMPTY on purpose, and that is currently a statement of fact rather
+# than an aspiration: all tracked files are text. A genuinely binary asset —
+# an image, a keystore, a compiled fixture — is the only thing that belongs
+# here. A source file with a stray control character does not: write the
+# character as a language-level escape instead.

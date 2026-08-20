@@ -30,6 +30,7 @@ import io.tapstate.spi.store.SchemaVersion;
 import io.tapstate.spi.store.SrsMeta;
 import io.tapstate.spi.store.SrsMetaStore;
 import io.tapstate.spi.store.StateStore;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -55,11 +56,42 @@ class ArtifactMutationServiceTest {
     private final InMemorySrsMetaStore srsMeta = new InMemorySrsMetaStore();
     private final List<String> reclaimOrder = new ArrayList<>();
     private final RecordingAuditStore auditStore = new RecordingAuditStore();
+    private final List<String> followsStopped = new ArrayList<>();
     private final ArtifactMutationService service = new ArtifactMutationService(
-            store, desired, state, observations, srsMeta, new AuditGate(auditStore, FIXED_CLOCK));
+            store, desired, state, observations, srsMeta, new AuditGate(auditStore, FIXED_CLOCK),
+            followsStopped::add);
 
     private static final Clock FIXED_CLOCK =
             Clock.fixed(Instant.parse("2026-08-11T09:00:00Z"), ZoneOffset.UTC);
+
+    @Test
+    @DisplayName("deleting a source stops whoever was following it, whichever door the delete came in")
+    void deletingASourceStopsItsFollows() {
+        SourceResource followed = source("src_a");
+        store.saveAll(List.of(followed, source("src_b")));
+
+        service.delete(PRINCIPAL, "src_a", hash(followed));
+
+        assertThat(followsStopped)
+                .as("a follow outlives the source it reads: nothing references it, so neither refusal "
+                        + "sees it, and left running it keeps handing over rows from a source the "
+                        + "caller has just been told is gone")
+                .containsExactly("src_a");
+    }
+
+    @Test
+    @DisplayName("deleting something that is not a source does not go near the follows")
+    void deletingANonSourceLeavesTheFollowsAlone() {
+        PipelineResource reader = pipelineReading("pl_1", "src_a");
+        store.saveAll(List.of(source("src_a"), reader));
+
+        service.delete(PRINCIPAL, "pl_1", hash(reader));
+
+        assertThat(followsStopped)
+                .as("the discriminating half: stopping every follow on any delete would pass the case "
+                        + "above while cutting off readers of a source nobody touched")
+                .isEmpty();
+    }
 
     /** An audit store that captures every record it is asked to write. */
     private static final class RecordingAuditStore implements AuditStore {
@@ -385,7 +417,7 @@ class ArtifactMutationServiceTest {
     void anUnavailableAuditBackendRefusesTheDeleteAndLeavesTheArtifactByteForByte() {
         ArtifactMutationService blocked = new ArtifactMutationService(
                 store, desired, state, observations, srsMeta,
-                new AuditGate(new FailingAuditStore(), FIXED_CLOCK));
+                new AuditGate(new FailingAuditStore(), FIXED_CLOCK), followsStopped::add);
         SourceResource orders = source("orders");
         store.save(orders);
         String before = hash(orders);

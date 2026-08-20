@@ -218,6 +218,18 @@ final class MongoEndpoints implements Endpoints {
     }
 
     /**
+     * Puts one document in exactly as written, from outside the product.
+     *
+     * <p>Beside {@link #seed} rather than folded into it, because the two answer different needs. Seeding
+     * says how many rows, and deliberately does not say what is in them. This says what is in one and
+     * nothing about how many - for a specification whose subject is a shape no write path of the
+     * product's could have produced, so no route through the product could put it there.
+     */
+    public void insert(EndpointAddress address, String table, Document document) {
+        collection(address, table).insertOne(document);
+    }
+
+    /**
      * Every index on the collection, read from the store itself rather than from the product's record of
      * what it asked for. An index the product believes it created and never did is exactly the failure
      * this is here to catch, so asking the product would answer the wrong question.

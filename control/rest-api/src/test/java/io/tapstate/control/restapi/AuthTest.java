@@ -17,6 +17,8 @@ import io.tapstate.control.core.ConnectorCatalogView;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.DataBrowserFollows;
+import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.LoginService;
 import io.tapstate.control.core.OperationRegistry;
@@ -101,6 +103,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * fakes; the control-core services and the wiring are real.
  */
 class AuthTest {
+
+    /** A follow probe that is never driven: nothing here streams, and one that answered
+     * would let a case pass by following instead of reading. */
+    private static final io.tapstate.runtime.probe.DataBrowserTailProbe NO_FOLLOWS =
+            (config, request, listener) -> {
+                throw new AssertionError("no case here opens a follow");
+            };
 
     private static final Instant NOW = Instant.parse("2026-07-08T12:00:00Z");
 
@@ -614,7 +623,7 @@ class AuthTest {
         ArtifactMutationService artifactMutationService(InMemoryArtifactStore store, AuditGate auditGate) {
             return new ArtifactMutationService(
                     store, NoReclaimStores.desired(), NoReclaimStores.state(),
-                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate);
+                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate, DataBrowserFollows.NONE);
         }
 
         // The connection-test controller comes in with the whole ControlHttpFace bundle, so its service must
@@ -686,6 +695,28 @@ class AuthTest {
                     return Optional.empty();
                 }
             });
+        }
+
+        // The three data-browser controller methods are bundled too, so their service must be present for
+        // the context to stand up; this suite exercises the auth matrix, not the reads, so every probe is
+        // inert (their behaviour is proven in DataBrowserApiTest).
+        @Bean
+        DataBrowserService dataBrowserService(InMemoryArtifactStore store) {
+            return new DataBrowserService(
+                    store,
+                    new NoDiscoveries(),
+                    config -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.collections is not exercised in this test");
+                    },
+                    (config, collection) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.stats is not exercised in this test");
+                    },
+                    (config, query) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.find is not exercised in this test");
+                    }, NO_FOLLOWS);
         }
 
         // The connector register controller is bundled with the whole ControlHttpFace, so its service must be

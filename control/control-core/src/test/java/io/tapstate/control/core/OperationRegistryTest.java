@@ -59,6 +59,31 @@ class OperationRegistryTest {
     }
 
     @Test
+    void exposedOn_withoutACeiling_clipsAtTheStageTheProductShipsAt() {
+        Operation poc = op("artifact.apply", Scope.WRITE, Map.of(Frontend.CLI, Maturity.POC));
+        Operation alpha = op("artifact.validate", Scope.READ, Map.of(Frontend.CLI, Maturity.ALPHA));
+        Operation beta = op("connector.register", Scope.ADMIN, Map.of(Frontend.CLI, Maturity.BETA));
+        Operation ga = op("connector.list", Scope.READ, Map.of(Frontend.CLI, Maturity.GA));
+        OperationRegistry registry = OperationRegistry.of(poc, alpha, beta, ga);
+
+        // The surface a caller gets when it does not name a ceiling: everything staged at or below the
+        // stage the product currently ships at. That stage is ALPHA today, so the two later entries are
+        // still behind it. Raising the shipped stage is a deliberate act and lands right here.
+        assertThat(registry.exposedOn(Frontend.CLI)).containsExactly(poc, alpha);
+        assertThat(registry.exposedOn(Frontend.CLI))
+                .as("the ceilingless form is the ceiling form read at the one shipped stage, not a second rule")
+                .isEqualTo(registry.exposedOn(Frontend.CLI, Maturity.CURRENT));
+    }
+
+    @Test
+    void exposedOn_withoutACeiling_rejectsANullFrontend() {
+        OperationRegistry registry =
+                OperationRegistry.of(op("artifact.apply", Scope.WRITE, Map.of(Frontend.CLI, Maturity.POC)));
+
+        assertThatThrownBy(() -> registry.exposedOn(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     void exposedOn_rejectsNullArgumentsConsistently() {
         // Only CLI is exposed; a null ceiling must fail the same way whether or not the face has an op,
         // instead of NPE-ing on the exposed face and silently returning empty on the unexposed one.
