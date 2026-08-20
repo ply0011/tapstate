@@ -1,0 +1,273 @@
+# Repository hygiene gate: the cheap, whole-tree scans, in one job.
+#
+# Four gates used to be four workflows - no-agent-footprint, no-cjk, no-binary-bytes and
+# e2e admission. Each scan takes seconds; each workflow paid a runner start and a
+# fetch-depth-0 checkout to get there, and each appeared as its own line on every pull
+# request. Merged, they share one checkout and report as one check. Nothing was dropped:
+# every scan below is the same command, with the same allowlist, the same message and the
+# same exit, as the workflow it came from.
+#
+# What the merge had to preserve, and how:
+#
+#   * LC_ALL differs per scan and is therefore set per step, never on the job. The CJK scan
+#     needs C.UTF-8 so PCRE reads the pattern as code points; the NUL scan asks about one
+#     specific byte and takes C. Hoisting a single job-level value is not symmetric, and the
+#     asymmetry runs the wrong way: measured on ubuntu-24.04, under LC_ALL=C the CJK scan
+#     exits 0 on a tree that does contain CJK - green, no output, gate gone - while the NUL
+#     scan still catches its byte under either locale. The value that looks harmless to hoist
+#     is exactly the one that disables a gate, and it disables it silently.
+#   * Every scan still reports, even after an earlier one fails. As separate jobs they ran
+#     in parallel, so one push surfaced a CJK violation and a NUL violation together. Steps
+#     stop at the first failure by default, which would turn that into fix-one-push-again.
+#     `!cancelled()` restores the parallel behaviour; the job is still red if any scan is.
+#   * The checkout is guarded explicitly. `!cancelled()` also keeps steps running after a
+#     failed checkout, where every scan would be reading an empty tree - so each step also
+#     requires the checkout to have succeeded, rather than scanning nothing and passing.
+#
+# The end-to-end admission steps are pull-request-only, as they were: they read the merge
+# base against the target branch and the pull request's labels, neither of which exists on
+# a push. The label types are on this workflow for the same reason they were on the one it
+# replaces - applying the waiver label has to re-evaluate the gate, or the only way to
+# clear a red check would be an empty push. The other scans re-run then too; they take
+# seconds and are idempotent.
+#
+# Like the workflows it replaces, this is meant to be a required status check on main
+# (branch protection); a workflow that merely runs is not a gate until merges depend on it.
+name: repo-hygiene
+
+on:
+  push:
+    branches:
+      - main
+      - "ws/**"
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the commit-message scans and the merge base
+
+      # --- zero agent footprint -------------------------------------------------------
+      # This is a public repository that must never carry agent-governance artifacts.
+      # Human-facing README.md / CONTRIBUTING.md are fine - they are not matched here.
+
+      - name: No agent instruction files
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          hits="$(find . -path ./.git -prune -o -type f \
+            \( -iname 'CLAUDE.md' -o -iname 'AGENTS.md' -o -iname 'GEMINI.md' \
+               -o -iname 'CODEX.md' -o -iname 'COPILOT.md' \) -print)"
+          if [ -n "$hits" ]; then
+            echo "::error::agent instruction file(s) found in a zero-footprint repo:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "clean: no agent instruction files."
+
+      - name: No .claude directory
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          hits="$(find . -path ./.git -prune -o -type d -name '.claude' -print)"
+          if [ -n "$hits" ]; then
+            echo "::error::.claude directory found in a zero-footprint repo:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "clean: no .claude directory."
+
+      - name: No agent footers in commits or PR body
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          # Common agent footers; case-insensitive.
+          pattern='Generated with \[?Claude Code|🤖 Generated with|Co-[Aa]uthored-[Bb]y:.*(Claude|GPT|Codex|Copilot|Gemini)|noreply@anthropic\.com'
+          fail=0
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+            git rev-parse --verify --quiet "$base" >/dev/null 2>&1 \
+              || git fetch --quiet --no-tags origin "${{ github.base_ref }}" || true
+            range="$base..HEAD"
+          else
+            range="${{ github.event.before }}..${{ github.sha }}"
+          fi
+
+          msgs="$(git log --format='%H %B' "$range" 2>/dev/null || true)"
+          if [ -n "$msgs" ] && printf '%s' "$msgs" | grep -qEi "$pattern"; then
+            echo "::error::agent footer found in commit message(s):"
+            printf '%s' "$msgs" | grep -Ei "$pattern" || true
+            fail=1
+          fi
+
+          if [ -n "${PR_BODY:-}" ] && printf '%s' "$PR_BODY" | grep -qEi "$pattern"; then
+            echo "::error::agent footer found in the PR body."
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "clean: no agent footers."
+
+      # --- English only, zero CJK -----------------------------------------------------
+      # Source, build files, scripts, docs, and commit messages must contain zero CJK
+      # characters. No directory is exempt by default - tests, data fixtures and locale
+      # resource bundles included. Escape hatch: .cjk-allowlist at the repo root (git
+      # pathspec syntax, one per line). It ships empty on purpose; adding a path is a
+      # reviewed decision, not a default.
+      #
+      # LC_ALL is per-step on purpose: a UTF-8 locale is required so PCRE treats the
+      # pattern as code points, not bytes.
+
+      - name: No CJK in tracked files
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        env:
+          LC_ALL: C.UTF-8
+        run: |
+          set -euo pipefail
+          # CJK Unified Ideographs + Ext-A + Ext-B, CJK symbols/punctuation, and
+          # full-width / half-width forms (catches full-width punctuation too).
+          cjk='[\x{3000}-\x{303f}\x{3400}-\x{4dbf}\x{4e00}-\x{9fff}\x{ff00}-\x{ffef}\x{20000}-\x{2a6df}]'
+
+          # Build pathspec exclusions from the allowlist; ignore comments / blanks.
+          pathspec=(':(top)')
+          if [ -f .cjk-allowlist ]; then
+            while IFS= read -r line; do
+              line="${line%%#*}"
+              line="$(printf '%s' "$line" | tr -d '[:space:]')"
+              [ -z "$line" ] && continue
+              pathspec+=(":(top,exclude)$line")
+            done < .cjk-allowlist
+          fi
+
+          if git grep -nP "$cjk" -- "${pathspec[@]}"; then
+            echo "::error::CJK character(s) found in an English-only repo (matches above)."
+            echo "tapstate is English-only. If a file legitimately needs CJK, add its path to .cjk-allowlist."
+            exit 1
+          fi
+          echo "clean: no CJK in tracked files."
+
+      - name: No CJK in commit messages or PR body
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        env:
+          LC_ALL: C.UTF-8
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          cjk='[\x{3000}-\x{303f}\x{3400}-\x{4dbf}\x{4e00}-\x{9fff}\x{ff00}-\x{ffef}\x{20000}-\x{2a6df}]'
+          fail=0
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+            git rev-parse --verify --quiet "$base" >/dev/null 2>&1 \
+              || git fetch --quiet --no-tags origin "${{ github.base_ref }}" || true
+            range="$base..HEAD"
+          else
+            range="${{ github.event.before }}..${{ github.sha }}"
+          fi
+
+          msgs="$(git log --format='%H %B' "$range" 2>/dev/null || true)"
+          if [ -n "$msgs" ] && printf '%s' "$msgs" | grep -qP "$cjk"; then
+            echo "::error::CJK found in commit message(s):"
+            printf '%s' "$msgs" | grep -nP "$cjk" || true
+            fail=1
+          fi
+
+          if [ -n "${PR_BODY:-}" ] && printf '%s' "$PR_BODY" | grep -qP "$cjk"; then
+            echo "::error::CJK found in the PR body."
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "clean: no CJK in commit messages or PR body."
+
+      # --- text only, zero NUL bytes --------------------------------------------------
+      # A NUL is the byte that decides, for git and for most text tooling, that a file is
+      # binary rather than text. grep -I then skips the whole file and exits 0 - silently,
+      # so "no matches in that file" and "the string is not there" become the same answer.
+      # The scan reads every file as text (-a), or it would itself be subject to the
+      # binary-skip it exists to catch. There is no commit-message scan: git rejects a NUL
+      # in a commit message itself, so there is no path to check.
+      #
+      # LC_ALL is per-step on purpose: byte semantics, not text semantics - this check is
+      # about one specific byte, so the pattern must not be reinterpreted as code points.
+
+      - name: No NUL bytes in tracked files
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        env:
+          LC_ALL: C
+        run: |
+          set -euo pipefail
+
+          # Build pathspec exclusions from the allowlist; ignore comments / blanks.
+          pathspec=(':(top)')
+          if [ -f .binary-allowlist ]; then
+            while IFS= read -r line; do
+              line="${line%%#*}"
+              line="$(printf '%s' "$line" | tr -d '[:space:]')"
+              [ -z "$line" ] && continue
+              pathspec+=(":(top,exclude)$line")
+            done < .binary-allowlist
+          fi
+
+          # -a forces every file to be read as text; see the note at the top.
+          if git grep -anP '\x00' -- "${pathspec[@]}"; then
+            echo "::error::NUL byte(s) found in a text-only repo (matches above; the NUL itself prints as a blank)."
+            echo "A NUL byte makes the whole file read as binary, so grep -I skips it silently and exits 0."
+            echo "Write the character as an escape instead (for example '\\0' in Java, rather than a raw 0x00)."
+            echo "If a file is legitimately binary, add its path to .binary-allowlist."
+            exit 1
+          fi
+          echo "clean: no NUL bytes in tracked files."
+
+      # --- end-to-end admission -------------------------------------------------------
+      # A change to product source is admitted only with an end-to-end case alongside it:
+      # a declarative specification (e2e/examples/<name>/spec.e2e.yml, the preferred form)
+      # or a bespoke end-to-end test (e2e/src/test/java/**/*IT.java), for behavior the
+      # specification vocabulary cannot yet say. In scope: a pull request touching any
+      # */src/main/ file. Documentation, build and CI configuration, scripts, and test-only
+      # changes pass without a case.
+      #
+      # This gate checks that a case is *present*. Whether it is *adequate* is the
+      # reviewer's call, and no workflow can take that over. Waiver: a maintainer applies
+      # the `no-e2e` label and says why in the review.
+      #
+      # The decision lives in a script rather than inline, so that it can be linted, run by
+      # hand, and above all held to its own cases - which run first, on every pull request.
+      # A gate is exactly as trustworthy as the last time something proved it still
+      # refuses; nobody notices a gate that has quietly started admitting everything.
+      #
+      # Pull-request-only, as before: the merge base against the target branch and the
+      # pull request's labels do not exist on a push.
+
+      - name: The gate still decides the way it is supposed to
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && github.event_name == 'pull_request' }}
+        run: |
+          shellcheck .github/scripts/e2e-admission.sh .github/scripts/e2e-admission-smoke.sh \
+            .github/scripts/witness-gate.sh .github/scripts/witness-gate-smoke.sh
+          bash .github/scripts/e2e-admission-smoke.sh
+          bash .github/scripts/witness-gate-smoke.sh
+
+      # The release contract's two file-level halves, which need no database and therefore no nightly:
+      # every published example is listed, and every listed one exists. Checked here so an example that
+      # ships unlisted is caught on the pull request that adds it, rather than the next night against
+      # main, where it belongs to nobody. Whether each witness actually ran is the nightly's half.
+      - name: Every published example is in the release manifest
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && github.event_name == 'pull_request' }}
+        run: bash .github/scripts/witness-gate.sh --manifest-only
+
+      - name: An end-to-end case accompanies the product change
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: bash .github/scripts/e2e-admission.sh

@@ -1,14 +1,29 @@
 # Minimal CI: the merge-blocking build gate.
 #   mvn verify — compile + unit tests + enforcer rules + ArchUnit ring rules + specifications
 # Docs frontmatter validation (gen-index --check) lives with the docs in the
-# separate private repo and is not run here. The zero-agent-footprint gate is a
-# separate workflow (no-agent-footprint.yml).
+# separate private repo and is not run here. The whole-tree hygiene scans — zero agent
+# footprint, zero CJK, zero NUL bytes, end-to-end admission — are a separate workflow
+# (repo-hygiene.yml).
 # Specifications (e2e/*IT) run here against real containers: this runner has a Docker daemon, and
 # the e2e module fails rather than skips when one is missing, so a green build here means they ran.
 # On a developer machine they skip instead — and note Docker 29 rejects the API version the client
 # negotiates by default, so running them locally needs -Dapi.version=1.44.
 # Deliberately excluded for now: native-image build (pinned to local darwin-arm64 until D5) and the
 # connector catalog.
+#
+# Every job here carries the same `if`, and it exists to stop this build running twice on one commit.
+# Both triggers below are load-bearing and neither can go:
+#   * push on ws/** is the only coverage a branch gets before its pull request opens, which under
+#     this project's open-late rule is most of a workstream's life;
+#   * pull_request is the only coverage a fork gets at all — a contributor cannot push a ws/ branch
+#     into this repository, so dropping it would leave outside contributions with no build.
+# With both, an internal branch that already has a pull request open builds twice per push: once for
+# the push, once for the synchronize, on the same commit. The `if` drops exactly that second run and
+# nothing else. It skips only when the duplicate is certain — a synchronize, from this repository,
+# on a ws/ branch the push trigger matches — so a fork, a branch named anything else, and the
+# opened / reopened events all still build here. Note the opened event deliberately still runs: it
+# builds the merge commit, and it is the one moment where the push run for that commit may have been
+# cancelled by a later push and never completed.
 name: CI
 
 on:
@@ -26,6 +41,11 @@ concurrency:
 
 jobs:
   build:
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.action != 'synchronize'
+      || github.event.pull_request.head.repo.fork
+      || !startsWith(github.head_ref, 'ws/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +64,11 @@ jobs:
     # shellcheck) and run their smokes. Both drive platform detection, the unsupported-platform refusals,
     # checksum verification, credential handling and idempotency against local file:// / loopback stubs —
     # no network, and no Docker (the quickstart smoke stops before the live run phase).
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.action != 'synchronize'
+      || github.event.pull_request.head.repo.fork
+      || !startsWith(github.head_ref, 'ws/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,6 +90,11 @@ jobs:
     # the unprivileged uid), `docker stop` yields an orderly exit 0 (not 137/143), and an unsupported
     # --role is rejected with a coded non-zero exit. The two legs are native runners for the two
     # published architectures, so neither image is emulated. The GitHub runners ship a Docker daemon.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.action != 'synchronize'
+      || github.event.pull_request.head.repo.fork
+      || !startsWith(github.head_ref, 'ws/')
     strategy:
       fail-fast: false
       matrix:

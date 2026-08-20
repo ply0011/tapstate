@@ -1,4 +1,4 @@
-# Binary allowlist for the no-binary-bytes CI gate.
+# Binary allowlist for the no-NUL-bytes scan in the repo-hygiene CI gate.
 #
 # Every tracked file in this repository is text. The gate rejects any tracked
 # file containing a NUL byte (0x00) — the byte that makes git and most text

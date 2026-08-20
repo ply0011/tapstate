@@ -1,4 +1,4 @@
-# CJK allowlist for the no-cjk CI gate.
+# CJK allowlist for the no-CJK scan in the repo-hygiene CI gate.
 #
 # tapstate is English-only: the gate rejects any CJK character (Chinese/Japanese/
 # Korean ideographs, CJK punctuation, full-width / half-width forms) in tracked
