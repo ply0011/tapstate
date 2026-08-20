@@ -69,7 +69,11 @@ class RestApiSecurityConfiguration {
                 .addFilterAfter(bearer, SecurityContextHolderFilter.class)
                 .authorizeHttpRequests(authorize -> authorize
                         // WebSocket upgrades retain their own handshake gate because they are not MVC verbs.
-                        .requestMatchers("/api/pipelines/*/status/watch", "/api/pipelines/*/logs/follow").permitAll()
+                        .requestMatchers(
+                                "/api/pipelines/*/status/watch",
+                                "/api/pipelines/*/logs/follow",
+                                "/api/data-browser/*/*/tail")
+                        .permitAll()
                         .anyRequest().access(authorization));
         return http.build();
     }

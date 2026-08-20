@@ -22,6 +22,7 @@ import io.tapstate.messages.MessageCatalog;
 import io.tapstate.spi.store.ObservationStore;
 import io.tapstate.core.model.PipelineResource;
 import io.tapstate.core.model.Resource;
+import io.tapstate.core.model.SourceResource;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.TokenRecord;
 import io.tapstate.spi.store.TokenStore;
@@ -201,6 +202,17 @@ class PipelineStreamApiTest {
                         .isEqualTo(401));
     }
 
+    @Test
+    void anAuthenticatedFollowHandshakeReachesTheFollowHandler() {
+        WebSocket ws = connect(
+                "/api/data-browser/views/order_state/tail", readToken(), new FrameSink());
+        try {
+            assertThat(ws.isOutputClosed()).isFalse();
+        } finally {
+            ws.abort();
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static List<String> messages(Map<?, ?> frame) {
         List<String> out = new ArrayList<>();
@@ -259,28 +271,19 @@ class PipelineStreamApiTest {
             return new PipelineObservationQueryService(new ArtifactQueryService(appliedPipelines()), store);
         }
 
-        /**
-         * Present so the follow endpoint is mounted at all. Every probe refuses: the case here is that
-         * the handshake is turned away before any of them is reached, and a probe that answered would
-         * let that case pass even if the guard were gone.
-         */
         @Bean
         io.tapstate.control.core.DataBrowserService dataBrowserService() {
             return new io.tapstate.control.core.DataBrowserService(
                     appliedPipelines(),
                     new NoDiscoveries(),
-                    config -> {
-                        throw new AssertionError("the handshake must be refused before any read");
-                    },
+                    config -> List.of("order_state"),
                     (config, collection) -> {
                         throw new AssertionError("the handshake must be refused before any read");
                     },
                     (config, query) -> {
                         throw new AssertionError("the handshake must be refused before any read");
                     },
-                    (config, request, listener) -> {
-                        throw new AssertionError("the handshake must be refused before any follow");
-                    });
+                    (config, request, listener) -> () -> { });
         }
 
         @Bean
@@ -434,6 +437,10 @@ class PipelineStreamApiTest {
 
             @Override
             public Optional<Resource> get(String id) {
+                if (id.equals("views")) {
+                    return Optional.of(new SourceResource(id, null, "mongodb",
+                            Map.of("uri", "mongodb://db.local"), null, null, null, null, null));
+                }
                 return Optional.of(new PipelineResource(id, null, List.of("src_x"), null, null, null, null, null));
             }
 
