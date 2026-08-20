@@ -1,0 +1,73 @@
+#!/bin/sh
+# Assert that what the install domain serves right now is exactly what this tree would deploy.
+#
+# Why byte equality and not "the version looks right": the installer e2e lane used to assert only that
+# the served script did not say SNAPSHOT, which a script pinned to any stale release passes. That let a
+# published one-liner install 0.2.0 for an entire release cycle while every checked-in pin said 0.2.1,
+# and nothing went red. A digest cannot be stale-but-plausible.
+#
+# Both entry points are checked, never just one. They are two different files -- / is the full-stack
+# quickstart and /cli is the CLI-only installer -- and each carries its own version pin, so a deploy
+# that refreshed one and missed the other is a real and observed shape.
+#
+# Cache is bypassed on purpose: the edge serves these with a 300s max-age, so a check that accepts a
+# cached body can report success about content the origin no longer has.
+#
+# Usage: verify-published.sh <base-url> <expected-dir>
+#   e.g. verify-published.sh https://install.tapstate.dev "$(mktemp -d)"   (after assemble.sh)
+set -eu
+
+base="${1:?usage: verify-published.sh <base-url> <expected-dir>}"
+expected="${2:?usage: verify-published.sh <base-url> <expected-dir>}"
+
+digest() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        echo "no sha256 tool (sha256sum or shasum) is available; cannot verify" >&2
+        exit 1
+    fi
+}
+
+# The pin each script carries, echoed on failure so the message names the skew instead of only
+# reporting that two digests differ.
+pin_of() {
+    sed -n 's/^PINNED_VERSION="\(.*\)"$/\1/p;s/^CLI_VERSION="\(.*\)"$/\1/p' "$1" | head -1
+}
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+failed=0
+check() {
+    path="$1"
+    file="$2"
+    url="$base$path"
+
+    curl -fsSL -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$url" -o "$tmp/served" || {
+        echo "FAIL $url could not be fetched" >&2
+        failed=1
+        return
+    }
+
+    want="$(digest "$expected/$file")"
+    got="$(digest "$tmp/served")"
+    if [ "$want" = "$got" ]; then
+        printf 'ok   %s == %s (pin %s, sha256 %.12s...)\n' "$url" "$file" "$(pin_of "$expected/$file")" "$got"
+        return
+    fi
+
+    echo "FAIL $url is not what this tree would deploy" >&2
+    echo "     served  pin $(pin_of "$tmp/served")  sha256 $got" >&2
+    echo "     tree    pin $(pin_of "$expected/$file")  sha256 $want  ($file)" >&2
+    echo "     the edge is serving an older deployment: re-run the publish-install-site workflow" >&2
+    failed=1
+}
+
+check "/"    quickstart.sh
+check "/cli" install.sh
+
+[ "$failed" -eq 0 ] || exit 1
+echo "both entry points match the tree"

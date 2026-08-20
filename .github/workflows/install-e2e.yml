@@ -18,7 +18,8 @@
 #     tampered-checksum, truncated-script and unsupported-platform cases without touching the
 #     network - those must hold on every platform, not only where they were written;
 #   - musl (Linux x64 only): the installer inside an Alpine container must refuse loudly - nonzero
-#     exit, an actionable message, nothing half-installed.
+#     exit, an actionable message, nothing half-installed;
+#   - what the domain serves is the newest published release, byte for byte, at both entry points.
 name: Installer e2e
 
 on:
@@ -94,14 +95,48 @@ jobs:
       - name: Negative paths against the checked-in fixtures
         run: bash install/install-smoke.sh
 
+  published-is-the-newest-release:
+    # What the domain serves is a deployment, not a branch, so nothing about it is proven by reading
+    # this checkout. This job resolves the newest published release, reconstructs what its tag would
+    # deploy, and holds the live edge to it byte for byte.
+    #
+    # It exists because the jobs above could not see the failure they look like they cover. Their only
+    # version assertion was "not a SNAPSHOT", which a script pinned to any older release passes: the
+    # published one-liner installed 0.2.0 for a whole release cycle while every pin in the tree read
+    # 0.2.1, and this lane was green every night of it.
+    #
+    # The comparison target is the release tag, not this branch. The edge's promise is "the newest
+    # published release", so an installer change sitting unreleased on main is not a failure -- and a
+    # lane that reddened on that would be red most weeks and read by nobody.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Both entry points serve the newest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="$(gh release list --limit 30 --json tagName,isDraft \
+                   --jq 'map(select(.isDraft | not)) | first | .tagName')"
+          test -n "$tag" || { echo "no published release to compare the edge against" >&2; exit 1; }
+          echo "newest published release: $tag"
+          git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+          site="$(mktemp -d)"
+          git show "$tag:deploy/quickstart/quickstart.sh" > "$site/quickstart.sh"
+          git show "$tag:install/install.sh"              > "$site/install.sh"
+          sh deploy/install-site/verify-published.sh https://install.tapstate.dev "$site"
+
   musl-refuses-loudly:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: The installer refuses Alpine with a usable message and no residue
-        # The script under test is the local file on purpose here: the case is the refusal logic,
-        # and the positive jobs above already hold the published copy to being this same file.
+        # The script under test is the local file on purpose here: the case is the refusal logic, and
+        # published-is-the-newest-release below is what holds the served copy to the release's file.
         run: |
           set -eu
           docker run --rm -v "$PWD/install:/install:ro" alpine:3 sh -c '
