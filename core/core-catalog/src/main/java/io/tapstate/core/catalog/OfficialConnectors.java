@@ -28,4 +28,13 @@ public final class OfficialConnectors {
     public static boolean isOfficial(String connectorId) {
         return IDS.contains(connectorId);
     }
+
+    /**
+     * The supported ids {@code catalog} actually carries, in the catalog's own order — what an
+     * authoring surface may offer. Intersected rather than returned outright so that everything
+     * offered also resolves: a supported id absent from the catalog has no fields to prompt for.
+     */
+    public static List<String> presentIn(TapstateCatalog catalog) {
+        return catalog.ids().stream().filter(OfficialConnectors::isOfficial).toList();
+    }
 }

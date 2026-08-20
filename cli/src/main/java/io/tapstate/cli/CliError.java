@@ -22,6 +22,15 @@ enum CliError implements TapstateErrorCode {
     /** A connector id supplied to the wizard that is not in the bundled catalog. */
     UNKNOWN_CONNECTOR("cli.unknown-connector", Set.of("connector")),
 
+    /**
+     * A connector id that is in the catalog but outside the set this release installs. Distinct from
+     * {@link #UNKNOWN_CONNECTOR} on purpose: that one means the id resolves to nothing, which is
+     * untrue here and points the user at a typo they do not have. {@code connector} is the id asked
+     * for; {@code official} lists what this release does install, so the refusal states the boundary
+     * instead of leaving it to be guessed.
+     */
+    CONNECTOR_NOT_OFFICIAL("cli.connector-not-official", Set.of("connector", "official")),
+
     /** A workspace artifact sits in a directory whose name does not match its declared kind. */
     KIND_DIR_MISMATCH("cli.kind-dir-mismatch", Set.of("path", "kind", "dir")),
 

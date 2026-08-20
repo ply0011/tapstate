@@ -1,6 +1,7 @@
 package io.tapstate.cli;
 
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
+import io.tapstate.core.catalog.OfficialConnectors;
 import io.tapstate.core.catalog.TapstateCatalog;
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.dsl.DslError;
@@ -361,6 +362,12 @@ final class NewCmd implements Callable<Integer> {
     private Resource buildFromFlags(TapstateCatalog catalog) {
         if (!catalog.ids().contains(connector)) {
             throw new TapstateException(CliError.UNKNOWN_CONNECTOR, Map.of("connector", connector), null);
+        }
+        if (!OfficialConnectors.isOfficial(connector)) {
+            // Names what this release would accept, which is also what the wizard and completion offer.
+            throw new TapstateException(CliError.CONNECTOR_NOT_OFFICIAL, Map.of(
+                    "connector", connector,
+                    "official", String.join(", ", OfficialConnectors.presentIn(catalog))), null);
         }
         ConnectorCatalogEntry entry = catalog.byId(connector);
         if (mode != null && !CapabilityHints.isModeAllowed(entry, mode)) {

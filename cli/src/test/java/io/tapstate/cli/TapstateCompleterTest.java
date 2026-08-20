@@ -62,7 +62,7 @@ class TapstateCompleterTest {
     @Test
     void completesConnectorIdsAfterTheConnectorOption() {
         assertThat(completer.candidates(List.of("new", "--connector", ""), 2))
-                .contains("mysql", "mongodb", "postgres");
+                .contains("mysql", "mongodb");
         assertThat(completer.candidates(List.of("new", "-c", "my"), 2))
                 .contains("mysql")
                 .allMatch(c -> c.startsWith("my"));
