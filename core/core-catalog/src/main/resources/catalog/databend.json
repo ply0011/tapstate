@@ -89,7 +89,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/databend-connector/src/main/resources/spec_databend.json",
     "specContentHash": "68c98e4f9d819d0e",
     "pdkApiVersion": null,

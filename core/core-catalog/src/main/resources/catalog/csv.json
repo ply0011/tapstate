@@ -468,7 +468,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/csv-connector/src/main/resources/spec_csv.json",
     "specContentHash": "2d54f4dff9d9a686",
     "pdkApiVersion": null,

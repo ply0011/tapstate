@@ -10,6 +10,10 @@
 # Editing this file is editing the release contract. Removing a line must say why in the commit.
 a-cdc-failure-is-observable on IN_PROCESS
 a-cdc-failure-is-observable on REAL_PROCESS
+a-child-collection-arrives-from-another-engine on IN_PROCESS
+a-child-collection-arrives-from-another-engine on REAL_PROCESS
+a-child-collection-from-another-engine-lands-in-the-managed-store on IN_PROCESS
+a-child-collection-from-another-engine-lands-in-the-managed-store on REAL_PROCESS
 a-child-row-is-added-and-the-assembled-document-grows on IN_PROCESS
 a-child-row-is-added-and-the-assembled-document-grows on REAL_PROCESS
 a-child-row-is-deleted-and-the-assembled-document-shrinks on IN_PROCESS
@@ -18,6 +22,8 @@ a-declared-view-materializes-with-no-serve-block on IN_PROCESS
 a-declared-view-materializes-with-no-serve-block on REAL_PROCESS
 a-parent-column-change-reaches-the-assembled-document on IN_PROCESS
 a-parent-column-change-reaches-the-assembled-document on REAL_PROCESS
+a-postgres-change-stream-carries-rows-written-after-start on IN_PROCESS
+a-postgres-change-stream-carries-rows-written-after-start on REAL_PROCESS
 a-real-change-stream-carries-rows-written-after-start on IN_PROCESS
 a-real-change-stream-carries-rows-written-after-start on REAL_PROCESS
 a-row-keeps-its-sequence-across-the-crossing on IN_PROCESS
@@ -36,5 +42,9 @@ rows-cross-from-a-source-file-to-a-target-file on IN_PROCESS
 rows-cross-from-a-source-file-to-a-target-file on REAL_PROCESS
 the-snapshot-half-reaches-the-target on IN_PROCESS
 the-snapshot-half-reaches-the-target on REAL_PROCESS
+two-engines-keep-carrying-changes on IN_PROCESS
+two-engines-keep-carrying-changes on REAL_PROCESS
+two-engines-reach-one-target on IN_PROCESS
+two-engines-reach-one-target on REAL_PROCESS
 two-tables-become-one-document-in-the-managed-store on IN_PROCESS
 two-tables-become-one-document-in-the-managed-store on REAL_PROCESS

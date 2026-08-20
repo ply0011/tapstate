@@ -1,0 +1,18 @@
+version: tapstate/v1
+kind: pipeline
+id: cross_engine_order_state
+source: [ src_orders, src_shipments ]
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: order_doc
+    type: nest
+    from: { o: orders, s: shipments }
+    root:
+      from: o
+      key: [ id ]
+      embed:
+        - { from: s, on: { order_id: id }, as: array, path: shipments, arrayKey: [ id ] }
+view:
+  id: order_state
+  from: order_doc
+  primary_key: id

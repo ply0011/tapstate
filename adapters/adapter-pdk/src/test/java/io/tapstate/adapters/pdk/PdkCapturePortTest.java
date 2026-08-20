@@ -199,6 +199,51 @@ class PdkCapturePortTest {
         assertThat(got).extracting(Envelope::op).containsExactly(Op.INSERT, Op.UPDATE, Op.DELETE);
     }
 
+    /**
+     * The table map the cdc drive hands the connector answers walking, not only lookup by name.
+     *
+     * <p>A connector that has to expand what it was asked to watch reads the schemas off the context by
+     * walking its table map, and it does so at the start of the stream, before any change is decoded.
+     * Handing it a map that answers only lookup is not a partial map: the frozen contract's default for
+     * walking throws, so the tail dies at startup having decoded nothing, while a snapshot over the very
+     * same source keeps working because it never walks the map. That asymmetry is what makes the defect
+     * read as "this connector cannot do change data capture at all" rather than as one missing method,
+     * and it is why a witness that admits only snapshot reads cannot see it.
+     */
+    @Test
+    void cdcHandsTheConnectorATableMapItCanWalk(@TempDir Path dir) throws Exception {
+        Path jar = Synthetic.tableMapIteratingStreamSource(dir);
+        PdkCapturePort port =
+                new PdkCapturePort(provisioner(jar, "synthetic.TableMapIteratingStream", null));
+        List<Envelope> got = new CopyOnWriteArrayList<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        CountDownLatch settled = new CountDownLatch(1);
+        // Both outcomes release the latch, and the failure is asserted before the delivery: a stream that
+        // dies on the first walk would otherwise be indistinguishable from one that is merely slow, and
+        // the reading would be a timeout rather than the reason for it.
+        CaptureListener listener = new CaptureListener() {
+            @Override
+            public void onEvent(Envelope event) {
+                got.add(event);
+                settled.countDown();
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                failure.set(error);
+                settled.countDown();
+            }
+        };
+        try (Subscription sub = port.cdc(config("t1"), listener)) {
+            assertThat(settled.await(5, TimeUnit.SECONDS)).as("the cdc drive settled").isTrue();
+        }
+        assertThat(failure.get()).as("walking the table map must not fail the stream").isNull();
+        assertThat(got).hasSize(1);
+        // The entry carries the discovered table rather than a bare name: its column count is the one
+        // discovery reported, so a map walked before the schemas were filled in would read zero here.
+        assertThat(got.get(0).after()).containsEntry("name", "t1").containsEntry("columns", 1L);
+    }
+
     @Test
     void cdcThatFailsWhileStreamingReportsItThroughOnError(@TempDir Path dir) throws Exception {
         // The cdc stream runs on a daemon thread, so a stream that dies cannot throw back to whoever

@@ -134,6 +134,22 @@
       <version>8.4.0</version>
       <scope>test</scope>
     </dependency>
+    <!-- The second engine a cross-source case reads from. Same arrangement as MySQL above, and here for
+         the same reason: the JDBC driver is the harness's own seed and read-back path, entirely separate
+         from the registered connector jar, which carries its own driver on an isolated loader. Two
+         engines is what makes a cross-source case a cross-source case - one database holding both halves
+         could be joined, and would prove nothing. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>42.7.4</version>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>junit-jupiter</artifactId>

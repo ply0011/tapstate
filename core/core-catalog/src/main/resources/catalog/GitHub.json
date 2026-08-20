@@ -28,9 +28,9 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/github-connector/src/main/resources/spec.json",
-    "specContentHash": "f5ea6d1facef915f",
+    "specContentHash": "d4abf757ddc7ad6f",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {

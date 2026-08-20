@@ -90,7 +90,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/coding-connector/src/main/resources/spec-oauth.json",
     "specContentHash": "b629e73ee4e7b8d0",
     "pdkApiVersion": null,
