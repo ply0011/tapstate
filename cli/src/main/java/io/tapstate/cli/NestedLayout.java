@@ -31,6 +31,15 @@ final class NestedLayout {
 
     private static final int INDENT = 2;
 
+    /**
+     * How many levels may be opened up. Two: the value itself, and its members. Without a limit a value
+     * opens as deep as it happens to be nested, and the lines multiply at every level -- one order with
+     * eight items rendered a frame of 63 lines, of which the reader wanted about four. Stopping here
+     * keeps what the opening-up was for (which member, and which of its own fields, is different) and
+     * gives up only the shape of what is inside that field, which stays on one line and complete.
+     */
+    private static final int MAX_OPEN_DEPTH = 2;
+
     private NestedLayout() {
     }
 
@@ -42,13 +51,22 @@ final class NestedLayout {
      *               the value arrives whole however long it is, which is the appended view's contract.
      */
     static List<String> lines(Object value, int width, boolean elides) {
+        return lines(value, width, elides, MAX_OPEN_DEPTH);
+    }
+
+    private static List<String> lines(Object value, int width, boolean elides, int depth) {
         String flat = JsonOut.compact(value);
         if (flat.length() <= width) {
             return List.of(flat);
         }
+        if (depth <= 0) {
+            // As deep as opening up goes. The value is still whole on this line; it is only wider than
+            // the line, which the caller with a frame to fit cuts and the caller without one does not.
+            return List.of(elides ? cut(flat, width) : flat);
+        }
         if (value instanceof List<?> list && !list.isEmpty()) {
             return expand(list.size(), i -> "", list::get, "[",
-                    list.size() == 1 ? " (1 item)" : " (" + list.size() + " items)", width, elides);
+                    list.size() == 1 ? " (1 item)" : " (" + list.size() + " items)", width, elides, depth);
         }
         if (value instanceof Map<?, ?> map && !map.isEmpty()) {
             List<? extends Map.Entry<?, ?>> entries = List.copyOf(map.entrySet());
@@ -56,7 +74,7 @@ final class NestedLayout {
                     i -> JsonOut.compact(String.valueOf(entries.get(i).getKey())) + ": ",
                     i -> entries.get(i).getValue(), "{",
                     entries.size() == 1 ? " (1 field)" : " (" + entries.size() + " fields)",
-                    width, elides);
+                    width, elides, depth);
         }
         // Nothing left to open up. A scalar wider than its line is cut out of the middle where the
         // caller has a frame to fit, and left alone where it does not.
@@ -83,18 +101,18 @@ final class NestedLayout {
     }
 
     private static List<String> expand(int size, IntFunction<String> prefix, IntFunction<Object> member,
-            String open, String count, int width, boolean elides) {
+            String open, String count, int width, boolean elides, int depth) {
         List<String> lines = new ArrayList<>();
         lines.add(open);
         boolean drops = elides && size > KEEP_HEAD + KEEP_TAIL;
         int head = drops ? KEEP_HEAD : size;
         for (int i = 0; i < head; i++) {
-            lines.addAll(memberLines(prefix.apply(i), member.apply(i), width, i < size - 1, elides));
+            lines.addAll(memberLines(prefix.apply(i), member.apply(i), width, i < size - 1, elides, depth));
         }
         if (drops) {
             lines.add(" ".repeat(INDENT) + "… " + (size - KEEP_HEAD - KEEP_TAIL) + " more …");
             for (int i = size - KEEP_TAIL; i < size; i++) {
-                lines.addAll(memberLines(prefix.apply(i), member.apply(i), width, i < size - 1, elides));
+                lines.addAll(memberLines(prefix.apply(i), member.apply(i), width, i < size - 1, elides, depth));
             }
         }
         // The total is written only where something was left out. On a level shown whole the reader can
@@ -105,9 +123,10 @@ final class NestedLayout {
     }
 
     private static List<String> memberLines(String prefix, Object value, int width, boolean more,
-            boolean elides) {
+            boolean elides, int depth) {
         int inner = Math.max(width - INDENT, 1);
-        List<String> laid = lines(value, Math.max(inner - prefix.length() - (more ? 1 : 0), 1), elides);
+        List<String> laid = lines(value, Math.max(inner - prefix.length() - (more ? 1 : 0), 1),
+                elides, depth - 1);
         List<String> out = new ArrayList<>();
         for (int i = 0; i < laid.size(); i++) {
             out.add(" ".repeat(INDENT) + (i == 0 ? prefix : "") + laid.get(i)

@@ -149,6 +149,12 @@ class LiveViewRenderersTest {
                     "warehouse", row("code", "WH-1", "shelf", "S3", "bin", "B11"));
         }
 
+        /** What a frame line holds in its first value column, with the padding taken off. */
+        private static String cellOf(String line) {
+            String[] cells = line.split("\u2502");
+            return cells.length > 2 ? cells[2].trim() : "";
+        }
+
         private static List<String> frameOf(Map<String, Object> now, Map<String, Object> was) {
             return WatchRenderer.frame("views.order_state", now, was,
                     DocumentDiff.between(was, now), 5L, WIDE);
@@ -212,6 +218,26 @@ class LiveViewRenderersTest {
                     .contains("\"qty\": 9");
             assertThat(text).as("and the old one, or there is nothing to compare it against")
                     .contains("\"qty\": 2");
+        }
+
+        @Test
+        @DisplayName("opening up stops two levels down, so a deep value cannot take the whole screen")
+        void openingUpStopsTwoLevelsDown() {
+            List<Object> many = new java.util.ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                many.add(item("SKU-" + i, i + 1));
+            }
+
+            List<String> frame = frameOf(row("items", many), null);
+
+            assertThat(String.join("\n", frame))
+                    .as("an element opens, which is what makes the changed one readable")
+                    .contains("\"sku\": \"SKU-0\"");
+            // Asserted as "no line of its own", not as "the text still holds it inline": the inline
+            // form is cut here, so a containment check would be asserting the cut rather than the depth.
+            assertThat(frame).as("and there it stops -- five elements each opened to their own depth is "
+                            + "how one field comes to own a frame the view still has to redraw over")
+                    .noneSatisfy(line -> assertThat(cellOf(line)).startsWith("\"code\""));
         }
 
         @Test
