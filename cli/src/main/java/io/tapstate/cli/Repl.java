@@ -9,6 +9,7 @@ import io.tapstate.core.model.canonical.CanonicalHash;
 import io.tapstate.core.schema.SchemaNavigator;
 import io.tapstate.messages.MessageCatalog;
 import org.jline.reader.EndOfFileException;
+import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
@@ -23,13 +24,17 @@ import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.BooleanSupplier;
+import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -74,6 +79,23 @@ final class Repl {
      * coded {@code cli.not-connected} and {@code ls} browses the local workspace. {@code validate} is not here — it
      * runs the full local stack in either state until a server validate endpoint exists.
      */
+    /** The screen width assumed when there is no terminal to ask, or it answers nothing useful. */
+    private static final int DEFAULT_SCREEN_WIDTH = 100;
+
+    /** How often the in-place view asks again. Stated in its own header, because it is a poll. */
+    private static final Duration WATCH_INTERVAL = Duration.ofSeconds(1);
+
+    /** How often a wait wakes to notice the user interrupted it. */
+    private static final Duration CANCEL_POLL = Duration.ofMillis(200);
+
+    /**
+     * The refusals a repeating background read rides out rather than dying on. Both mean the connector
+     * was busy serving somebody else this second, which is the arrangement working: the interactive
+     * reads that took its turn are the ones a person is waiting on.
+     */
+    private static final Set<String> BUSY_CODES =
+            Set.of("connector.instances-busy", "connector.instance-limit-reached");
+
     private static final List<String> ONLINE_VERBS = List.of(
             "apply", "get", "delete", "ls", "start", "stop", "pause", "resume", "status", "metrics",
             "snapshot", "logs", "test", "test-result", "discover-schema", "schema", "register",
@@ -86,6 +108,20 @@ final class Repl {
 
     /** Reads the login password masked; a scripted fake is injected in tests, a JLine one bound in {@link #run}. */
     private Prompter prompter;
+
+    /**
+     * Whether this process's output goes to a terminal, which is what the in-place view needs and the
+     * only thing it refuses for. A seam rather than a direct call so both answers can be exercised: a
+     * test process has no terminal, so the refusal would be the only branch ever reached.
+     */
+    private BooleanSupplier terminal = () -> System.console() != null;
+
+    /**
+     * How wide the screen is. Asked again on every frame rather than captured once, so a window
+     * resized while the in-place view is running is picked up by the next redraw. Falls back to a
+     * conventional width when there is no terminal to ask -- a dumb terminal answers zero.
+     */
+    private IntSupplier screenWidth = () -> DEFAULT_SCREEN_WIDTH;
 
     /** The connection state, carried across read-loop iterations (offline until {@code connect}). */
     private final Session session = new Session();
@@ -135,6 +171,26 @@ final class Repl {
         this.controlPlane = controlPlane;
         this.prompter = prompter;
         this.env = env;
+    }
+
+    /** The live-view verb this line opens with, or null when it opens with something else. */
+    private static String liveVerbOf(String line) {
+        for (String verb : Cli.LIVE_VIEW_VERBS) {
+            if (line.equals(verb) || line.startsWith(verb + " ")) {
+                return verb;
+            }
+        }
+        return null;
+    }
+
+    /** Answers how wide the screen is; overridden so the narrow layout can be exercised. */
+    void screenWidth(IntSupplier width) {
+        this.screenWidth = width;
+    }
+
+    /** Answers whether this process has a terminal; overridden so both branches can be exercised. */
+    void terminalCheck(BooleanSupplier check) {
+        this.terminal = check;
     }
 
     /** The current session workspace. */
@@ -261,6 +317,22 @@ final class Repl {
             lastExitCode = Cli.EXIT_OK;
             return true;
         }
+        // The read shell is matched on the whole line rather than on its first word, because what it names
+        // is a place in the data — `views.orders.find({...})` — and a filter written across several words
+        // does not survive being split into them.
+        DataBrowserCall call = DataBrowserCall.parse(trimmed);
+        if (call != null) {
+            lastExitCode = dataBrowser(call, trimmed.startsWith("show ") ? "show" : "find");
+            return true;
+        }
+        // A live view is matched on the whole line for the same reason the read shell is: its filter is
+        // written the way a read's is, and splitting it into words takes it apart.
+        String live = liveVerbOf(trimmed);
+        if (live != null) {
+            lastExitCode = dataBrowser(
+                    DataBrowserCall.parseLive(live, trimmed.substring(live.length())), live);
+            return true;
+        }
         return dispatchWords(tokenize(trimmed));
     }
 
@@ -299,6 +371,21 @@ final class Repl {
         }
         if (words.get(0).equals("logout")) {
             lastExitCode = logout();
+            return true;
+        }
+        // `data-browser <call>` is the same shell reached as a verb, which is how a one-shot invocation
+        // gets at it: the words arrive already split by the caller's own shell, so they are rejoined and
+        // read as the one line they were typed as.
+        if (words.get(0).equals(Cli.DATA_BROWSER_VERB)) {
+            lastExitCode = dataBrowserVerb(words);
+            return true;
+        }
+        // A live view reached as a one-shot: the words arrive already split by the caller's own shell,
+        // so they are rejoined into the line they were typed as, exactly as the read shell does it.
+        if (Cli.LIVE_VIEW_VERBS.contains(words.get(0))) {
+            String verb = words.get(0);
+            lastExitCode = dataBrowser(
+                    DataBrowserCall.parseLive(verb, String.join(" ", words.subList(1, words.size()))), verb);
             return true;
         }
         if (session.isConnected() && ONLINE_VERBS.contains(words.get(0))) {
@@ -566,6 +653,334 @@ final class Repl {
      * answer, {@link #withFailover} re-lands and retries once. There is no {@code rewind} verb: a re-dig is
      * the explicit two-step {@code stop} then {@code start}.
      */
+    // ---- the read shell ------------------------------------------------------------------------------
+
+    /**
+     * {@code data-browser <call>} — the read shell reached as a verb, for a one-shot invocation. The words
+     * arrive already split by the caller's own shell, so they are rejoined into the line they were typed
+     * as; inside a session the same calls are typed bare at the prompt.
+     */
+    private int dataBrowserVerb(List<String> words) {
+        String line = String.join(" ", words.subList(1, words.size())).trim();
+        if (line.isEmpty()) {
+            return dataBrowserUsage("missing call");
+        }
+        DataBrowserCall call = DataBrowserCall.parse(line);
+        if (call == null) {
+            return dataBrowserUsage("`" + line + "` is not a read");
+        }
+        return dataBrowser(call, Cli.DATA_BROWSER_VERB);
+    }
+
+    private int dataBrowserUsage(String problem) {
+        PrintWriter err = commandLine.getErr();
+        err.println(Cli.DATA_BROWSER_VERB + ": " + problem + " (usage: " + Cli.DATA_BROWSER_VERB
+                + " \"show collections [<source>]\" | \"<source>.<collection>.find(...)\""
+                + " | \"<source>.<collection>.stats()\")");
+        err.flush();
+        return Cli.EXIT_USAGE;
+    }
+
+    /**
+     * Runs one parsed read. The connection checks come first and in this order because they are different
+     * answers: offline, the shell has nothing to read from; connected but signed out, it has somewhere to
+     * ask and no right to.
+     */
+    private int dataBrowser(DataBrowserCall call, String verb) {
+        PrintWriter err = commandLine.getErr();
+        if (call instanceof DataBrowserCall.Malformed malformed) {
+            err.println(verb + ": " + malformed.reason());
+            err.flush();
+            return Cli.EXIT_USAGE;
+        }
+        if (!session.isConnected()) {
+            Diagnostics.printText(err, CliError.NOT_CONNECTED, Map.of("verb", verb));
+            return Cli.EXIT_VERB_UNAVAILABLE;
+        }
+        if (!session.isAuthenticated()) {
+            Diagnostics.printText(err, CliError.NOT_AUTHENTICATED, Map.of("verb", verb));
+            return Cli.EXIT_VERB_UNAVAILABLE;
+        }
+        return switch (call) {
+            case DataBrowserCall.Collections listing -> browseCollections(listing);
+            case DataBrowserCall.Stats stats -> browseStats(stats);
+            case DataBrowserCall.Find find -> browseFind(find);
+            case DataBrowserCall.Live live -> live.verb().equals("tail")
+                    ? tailLive(live) : watchLive(live);
+            case DataBrowserCall.Malformed ignored -> Cli.EXIT_USAGE;    // handled above
+        };
+    }
+
+    /**
+     * {@code watch <source>.<collection> [<filter>]} — one row, redrawn where it stands, until Ctrl-C.
+     *
+     * <p>It refuses outright when its output is not a terminal, rather than degrading. Redrawing in
+     * place is cursor movement, and cursor movement down a pipe is not a worse view — it is control
+     * bytes in the middle of what the reader piped it into. The refusal names both alternatives,
+     * because a reader who reached for this verb wants one of them: a stream that pipes, or a look that
+     * ends.
+     */
+    private int watchLive(DataBrowserCall.Live live) {
+        PrintWriter out = commandLine.getOut();
+        if (!terminal.getAsBoolean()) {
+            Diagnostics.printText(commandLine.getErr(), CliError.WATCH_NEEDS_A_TERMINAL, Map.of());
+            return Cli.EXIT_VERB_UNAVAILABLE;
+        }
+        String namespace = live.sourceId() + "." + live.collection();
+        WatchView view = new WatchView(namespace, screenWidth);
+        streamCancelled = false;
+        int drawn = 0;
+        while (!isStreamCancelled()) {
+            WatchPoll poll = pollOnce(live);
+            if (poll == null) {
+                return Cli.EXIT_VERB_UNAVAILABLE;   // a refusal that will not change; already reported
+            }
+            List<String> lines = view.onPoll(poll, Instant.now());
+            if (!lines.isEmpty()) {
+                out.print(WatchRenderer.redrawOver(drawn));
+                lines.forEach(out::println);
+                out.flush();
+                drawn = lines.size();
+            }
+            if (!sleepUnlessCancelled(WATCH_INTERVAL)) {
+                break;
+            }
+        }
+        return Cli.EXIT_OK;
+    }
+
+    /**
+     * {@code tail <source>.<collection> [<filter>]} — every change to the collection, appended, until
+     * Ctrl-C. Unlike the in-place view it needs no terminal: it only ever appends, so it pipes.
+     *
+     * <p>The note under the header is not politeness. Read as a list of everything that happened, an
+     * appended stream over-promises: what reaches the store is the settled version of a row, and rapid
+     * changes are folded together before they are ever written. That folding happens upstream of the
+     * store, so this is not the transport being lossy and a better transport would not change it — the
+     * only honest fix is to say so.
+     *
+     * <p>What each event shows is whatever the connector supplied for it and nothing more. Working out
+     * more — which field moved, what it held before — would mean keeping a history here and showing it
+     * as the store's, which the reader could not tell apart from the store's own.
+     */
+    private int tailLive(DataBrowserCall.Live live) {
+        PrintWriter out = commandLine.getOut();
+        String namespace = live.sourceId() + "." + live.collection();
+        out.println("following " + namespace + " · whole collection · streaming changes");
+        out.println("note: shows changes as written to the store — not every intermediate version");
+        out.flush();
+        streamCancelled = false;
+        String refusal = controlPlane.tail(session.landingNode(), session.credential(),
+                live.sourceId(), live.collection(), live.filter(),
+                change -> {
+                    TailRenderer.lines(change, screenWidth.getAsInt()).forEach(out::println);
+                    out.flush();
+                },
+                this::isStreamCancelled);
+        if (refusal != null) {
+            // A follow that ended by itself arrives as a code and nothing else - the close frame has
+            // room for one. Rendering it from the bundled catalog is what turns "the screen stopped
+            // updating" into a sentence; handed on as a bare code with no message, the reader is told
+            // that something has a name and not what happened.
+            return renderRejection(refusal, MessageCatalog.bundled().render(refusal, Map.of()).message());
+        }
+        // A stream ends because the user stopped it, which is the way it is meant to end.
+        return Cli.EXIT_OK;
+    }
+
+    /**
+     * One poll of the watched row: the first row a bounded read of one returns. Null when the read was
+     * refused in a way repeating cannot fix — that has already been rendered and the view stops.
+     *
+     * <p>A busy connector is not such a refusal. This is a background read that runs again in a second,
+     * and its turn was taken by an interactive one somebody is waiting on; skipping the frame costs
+     * nothing, while dying because a frame was missed costs the whole view.
+     */
+    private WatchPoll pollOnce(DataBrowserCall.Live live) {
+        DataBrowserOutcome.Find outcome = withFailover(() ->
+                controlPlane.find(session.landingNode(), session.credential(), live.sourceId(),
+                        live.collection(), live.filter(), null, 1),
+                o -> o instanceof DataBrowserOutcome.Find.Unreachable);
+        return switch (outcome) {
+            case DataBrowserOutcome.Find.Read read -> read.rows().isEmpty()
+                    ? new WatchPoll.NoRow()
+                    : new WatchPoll.Row(read.rows().get(0), read.approximateTotal());
+            case DataBrowserOutcome.Find.Rejected rejected -> {
+                if (BUSY_CODES.contains(rejected.code())) {
+                    yield new WatchPoll.Skipped("busy");
+                }
+                renderRejection(rejected.code(), rejected.message());
+                yield null;
+            }
+            case DataBrowserOutcome.Find.Unreachable ignored -> new WatchPoll.Skipped("unreachable");
+        };
+    }
+
+    /** Sleeps the poll interval in short steps; false the moment the user interrupts. */
+    private boolean sleepUnlessCancelled(Duration interval) {
+        long remaining = interval.toMillis();
+        try {
+            while (remaining > 0) {
+                if (isStreamCancelled()) {
+                    return false;
+                }
+                long step = Math.min(remaining, CANCEL_POLL.toMillis());
+                Thread.sleep(step);
+                remaining -= step;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return !isStreamCancelled();
+    }
+
+    /**
+     * {@code show collections [<source>]}. With no source it lists every declared one, because that is the
+     * question a reader actually opens with — not "what is in this source" but "what can I read at all",
+     * and the answer is only useful as the full {@code <source>.<collection>} names they will type next.
+     *
+     * <p>A source that cannot be listed is reported in place and the rest are still listed. One
+     * unreachable database is not a reason to answer nothing about the others.
+     */
+    private int browseCollections(DataBrowserCall.Collections listing) {
+        List<String> sources;
+        if (listing.sourceId() != null) {
+            sources = List.of(listing.sourceId());
+        } else {
+            ListOutcome declared = withFailover(() ->
+                    controlPlane.list(session.landingNode(), session.credential(), "source"),
+                    o -> o instanceof ListOutcome.Unreachable);
+            switch (declared) {
+                case ListOutcome.Listed listed ->
+                        sources = listed.artifacts().stream().map(RemoteArtifact::id).toList();
+                case ListOutcome.Rejected rejected -> {
+                    return renderRejection(rejected.code(), rejected.message());
+                }
+                case ListOutcome.Unreachable ignored -> {
+                    return reportRequestFailed();
+                }
+            }
+        }
+        PrintWriter out = commandLine.getOut();
+        if (sources.isEmpty()) {
+            out.println("no sources declared");
+            out.flush();
+            return Cli.EXIT_OK;
+        }
+        int listed = 0;
+        int failed = 0;
+        for (String sourceId : sources) {
+            DataBrowserOutcome.Collections outcome = withFailover(() ->
+                    controlPlane.collections(session.landingNode(), session.credential(), sourceId),
+                    o -> o instanceof DataBrowserOutcome.Collections.Unreachable);
+            switch (outcome) {
+                case DataBrowserOutcome.Collections.Listed found -> {
+                    for (String collection : found.collections()) {
+                        out.println(sourceId + "." + collection);
+                    }
+                    listed += found.collections().size();
+                }
+                case DataBrowserOutcome.Collections.Rejected rejected -> {
+                    failed++;
+                    renderRejection(rejected.code(), rejected.message());
+                }
+                case DataBrowserOutcome.Collections.Unreachable ignored -> {
+                    failed++;
+                    reportRequestFailed();
+                }
+            }
+        }
+        // What the list is, said once. It is the collections the connected database actually holds, not
+        // the ones the workspace declared — those are different sets, and a source referenced purely as a
+        // connection supplier declares none at all.
+        out.println();
+        out.println(listed + (listed == 1 ? " collection" : " collections")
+                + " — what each source's database holds, not what the workspace declares");
+        out.flush();
+        return failed > 0 ? Cli.EXIT_DIAGNOSTIC : Cli.EXIT_OK;
+    }
+
+    /**
+     * {@code <source>.<collection>.stats()} — the row count and average row size the connector reports.
+     * Both are read off the store's own metadata rather than counted, so the count is a point-in-time
+     * estimate that drifts; the rendering says so rather than presenting it as a total.
+     */
+    private int browseStats(DataBrowserCall.Stats stats) {
+        DataBrowserOutcome.Stats outcome = withFailover(() ->
+                controlPlane.stats(session.landingNode(), session.credential(),
+                        stats.sourceId(), stats.collection()),
+                o -> o instanceof DataBrowserOutcome.Stats.Unreachable);
+        PrintWriter out = commandLine.getOut();
+        return switch (outcome) {
+            case DataBrowserOutcome.Stats.Reported reported -> {
+                out.println(stats.sourceId() + "." + stats.collection());
+                out.println("  rows      " + (reported.numOfRows() == null
+                        ? "not reported"
+                        : "~" + reported.numOfRows() + "  (estimated from store metadata, not counted)"));
+                out.println("  avg row   " + (reported.avgObjSize() == null
+                        ? "not reported"
+                        : reported.avgObjSize() + " bytes"));
+                out.flush();
+                yield Cli.EXIT_OK;
+            }
+            case DataBrowserOutcome.Stats.Rejected rejected ->
+                    renderRejection(rejected.code(), rejected.message());
+            case DataBrowserOutcome.Stats.Unreachable ignored -> reportRequestFailed();
+        };
+    }
+
+    /** {@code <source>.<collection>.find(...)} — a preview of the rows, and a footer saying what it is. */
+    private int browseFind(DataBrowserCall.Find find) {
+        DataBrowserOutcome.Find outcome = withFailover(() ->
+                controlPlane.find(session.landingNode(), session.credential(), find.sourceId(),
+                        find.collection(), find.filter(), find.sort(), find.limit()),
+                o -> o instanceof DataBrowserOutcome.Find.Unreachable);
+        PrintWriter out = commandLine.getOut();
+        return switch (outcome) {
+            case DataBrowserOutcome.Find.Read read -> {
+                // Formatted rather than flattened: a row with anything embedded in it is complete on
+                // one line and unreadable on it, because every leaf the reader is looking for sits
+                // between two others with nothing but punctuation to separate them.
+                read.rows().forEach(row -> out.println(JsonOut.write(row)));
+                if (read.rows().isEmpty()) {
+                    out.println("no rows matched");
+                }
+                out.println(previewFooter(find, read));
+                out.flush();
+                yield Cli.EXIT_OK;
+            }
+            case DataBrowserOutcome.Find.Rejected rejected ->
+                    renderRejection(rejected.code(), rejected.message());
+            case DataBrowserOutcome.Find.Unreachable ignored -> reportRequestFailed();
+        };
+    }
+
+    /**
+     * The line under a preview, and the only thing that keeps it from being read as the whole collection.
+     * A read is one-shot, so the rows carry nothing else that separates a preview of ten from a
+     * collection of ten — no continuation token whose presence would hint at it.
+     *
+     * <p>It states three things the reader cannot see from the rows, each of which is false if left
+     * unsaid: how many the collection holds and that the number is approximate — offered only for an
+     * unfiltered read, since counting a filtered one is a full scan; that an unordered read is in the
+     * database's own order, which is <em>not</em> stable between two identical reads and is not the
+     * newest; and that more rows remain.
+     */
+    private static String previewFooter(DataBrowserCall.Find find, DataBrowserOutcome.Find.Read read) {
+        StringBuilder footer = new StringBuilder("showing ").append(read.rows().size());
+        if (read.approximateTotal() != null) {
+            footer.append(" of ~").append(read.approximateTotal());
+        }
+        footer.append(find.sort() == null
+                ? " · natural order — not stable, and not the newest"
+                : " · ordered by `" + find.sort().field() + "` " + find.sort().dir());
+        if (read.moreAvailable()) {
+            footer.append(" · more rows remain");
+        }
+        return footer.toString();
+    }
+
     private int lifecycleOnline(List<String> words) {
         String verb = words.get(0);
         PrintWriter err = commandLine.getErr();
@@ -2624,6 +3039,27 @@ final class Repl {
         return words;
     }
 
+    /**
+     * The interactive reader, as a seam the line-reading rules can be exercised against — the rest of
+     * the REPL is tested through {@link #dispatch}, which is downstream of everything this decides.
+     *
+     * <p>History expansion is off. It rewrites the line before anyone parses it: it consumes
+     * backslashes as escapes, and takes {@code !} as a reference to an earlier command. Both belong to
+     * an interactive shell's own language, and a line here is not in that language -- it carries field
+     * names and values that are the user's data. A field whose name holds a dot is addressed by
+     * escaping the dot, so the expansion silently turned the one spelling that reaches that column
+     * into the spelling that reaches a nested path instead.
+     */
+    static LineReader readerFor(Terminal terminal, Completer completer) {
+        LineReaderBuilder builder = LineReaderBuilder.builder()
+                .terminal(terminal)
+                .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true);
+        if (completer != null) {
+            builder.completer(completer);
+        }
+        return builder.build();
+    }
+
     /** Runs the interactive read loop until {@code exit} / {@code quit} or end-of-input. */
     void run() {
         PrintWriter out = commandLine.getOut();
@@ -2637,14 +3073,15 @@ final class Repl {
                 // bind the masked-input reader to the REPL's own terminal (which this try owns and closes)
                 prompter = new JLinePrompter(terminal, false);
             }
-            LineReader reader = LineReaderBuilder.builder()
-                    .terminal(terminal)
-                    .completer(TapstateCompleter.forRepl(commandLine, SchemaNavigator.bundled()))
-                    .build();
+            LineReader reader = readerFor(terminal,
+                    TapstateCompleter.forRepl(commandLine, SchemaNavigator.bundled()));
             // Ctrl-C stops an in-flight watch/follow stream. The line reader saves and restores the signal
             // handlers around readLine (where Ctrl-C stays "clear the line"), so this handler is active only
             // while a dispatched verb runs -- exactly when a stream is blocking the loop.
             terminal.handle(Terminal.Signal.INT, signal -> cancelStream());
+            // A dumb terminal answers zero rather than failing, which would render every frame at
+            // nothing wide; the conventional width stands in for it.
+            screenWidth = () -> terminal.getWidth() > 0 ? terminal.getWidth() : DEFAULT_SCREEN_WIDTH;
             while (true) {
                 String line;
                 try {

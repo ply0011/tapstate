@@ -140,6 +140,19 @@
       <artifactId>tapdata-pdk-runner</artifactId>
       <scope>runtime</scope>
     </dependency>
+    <!-- The PDK's shared utility library, carried on the same terms and for the same reason as the
+         runner above. Connectors declare it `provided` - they are built expecting whoever hosts them to
+         have it - and the connector loader delegates all of io.tapdata to the host, so a host without it
+         is a host where those connectors half-work: they load, they connect, and they fail on the first
+         call that reaches one of these classes. That is what it looked like: reads served normally and a
+         change stream that died on its first offset with a NoClassDefFoundError, on a connector whose
+         own tests pass. Compile-invisible and load-bearing, like the runner: no app source references
+         it, and it must not be removed as unused or downgraded to test scope. -->
+    <dependency>
+      <groupId>io.tapdata</groupId>
+      <artifactId>tapdata-common</artifactId>
+      <scope>runtime</scope>
+    </dependency>
     <dependency>
       <groupId>io.tapstate</groupId>
       <artifactId>adapter-mongo-store</artifactId>

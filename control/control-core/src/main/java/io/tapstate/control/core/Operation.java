@@ -3,7 +3,6 @@ package io.tapstate.control.core;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * One registered control operation: the single source of truth for a verb the process can perform.
@@ -34,13 +33,12 @@ public record Operation(
         String description,
         Map<Frontend, Maturity> exposure) {
 
-    private static final Pattern ID = Pattern.compile("[a-z0-9]+(\\.[a-z0-9-]+)+");
 
     public Operation {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("operation id must be non-blank");
         }
-        if (!ID.matcher(id).matches()) {
+        if (!isDotScopedKebab(id)) {
             throw new IllegalArgumentException("operation id must be dot-scoped <domain>.<verb>: " + id);
         }
         if (scope == null) {
@@ -60,6 +58,56 @@ public record Operation(
             }
         }
         exposure = Collections.unmodifiableMap(copy);
+    }
+
+    /**
+     * Whether {@code id} is {@code <domain>.<verb>}, every segment lower kebab. The same shape and the
+     * same spelling rule an error code uses, deliberately: they name the same domains, so a domain of two
+     * words must not be spelled one way here and another there.
+     *
+     * <p>Read in one pass rather than matched against a pattern. The pattern this replaces held one
+     * repetition inside another - dash-joined words inside dot-joined segments - and this engine recurses
+     * once per iteration of a repeated group, so a long enough id ended the check with a
+     * StackOverflowError: an Error, not the refusal the constructor promises, which a caller can neither
+     * catch as one nor read a reason from. Measured before the change: about 5,000 dash-joined words, or
+     * about 10,000 segments. A single pass has no such bound, and each rule below is one line.
+     *
+     * <p>The character tests are written out rather than taken from {@code Character}, whose notions of
+     * letter and digit reach beyond ASCII. An id is ASCII by construction, and a check that quietly
+     * admitted more would widen the contract without anybody choosing to.
+     */
+    private static boolean isDotScopedKebab(String id) {
+        boolean dotted = false;
+        // A segment opens where the previous character was a dot, so starting there reads the first
+        // character of the id under the same rule as the first character of any later segment.
+        char previous = '.';
+        for (int i = 0; i < id.length(); i++) {
+            char current = id.charAt(i);
+            boolean opensSegment = previous == '.';
+            if (current == '.') {
+                if (opensSegment || previous == '-') {
+                    return false;
+                }
+                dotted = true;
+            } else if (current == '-') {
+                if (opensSegment || previous == '-') {
+                    return false;
+                }
+            } else if (!(opensSegment ? isLower(current) : isLowerOrDigit(current))) {
+                return false;
+            }
+            previous = current;
+        }
+        // A dot is what makes it scoped; a trailing dot or dash leaves a segment or a word unfinished.
+        return dotted && previous != '.' && previous != '-';
+    }
+
+    private static boolean isLower(char c) {
+        return c >= 'a' && c <= 'z';
+    }
+
+    private static boolean isLowerOrDigit(char c) {
+        return isLower(c) || (c >= '0' && c <= '9');
     }
 
     /** Compatibility constructor for operations that do not yet need specialized caller guidance. */

@@ -6,7 +6,6 @@ import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.Frontend;
-import io.tapstate.control.core.Maturity;
 import io.tapstate.control.core.Operation;
 import io.tapstate.control.restapi.Verb;
 import org.junit.jupiter.api.BeforeAll;
@@ -54,9 +53,9 @@ class ControlFaceProjectionGatesTest {
                 .collect(toCollection(TreeSet::new));
     }
 
-    /** Every operation the registry opens on the CLI face at the POC stage — the online verb surface. */
+    /** Every operation the registry opens on the CLI face — the online verb surface. */
     private static Set<String> registeredVerbs() {
-        return ControlOperations.registry().exposedOn(Frontend.CLI, Maturity.POC).stream()
+        return ControlOperations.registry().exposedOn(Frontend.CLI).stream()
                 .map(Operation::id)
                 .collect(toCollection(TreeSet::new));
     }

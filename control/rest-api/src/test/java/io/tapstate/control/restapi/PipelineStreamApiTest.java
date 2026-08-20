@@ -182,6 +182,23 @@ class PipelineStreamApiTest {
                         .isEqualTo(401));
     }
 
+    @Test
+    void anUnauthenticatedFollowHandshakeIsRefusedUnauthorized() {
+        // The one gate this endpoint has, and the only thing that would report its absence. Without the
+        // interceptor the upgrade simply succeeds and an anonymous caller is handed every change to the
+        // collection -- there is no projection gate over websocket paths, and no arch rule that a path
+        // carries an interceptor, so nothing else in the build would say a word.
+        assertThatThrownBy(() -> HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create(
+                        "ws://localhost:" + port + "/api/data-browser/views/order_state/tail"), new FrameSink())
+                .join())
+                .hasCauseInstanceOf(WebSocketHandshakeException.class)
+                .cause()
+                .satisfies(cause -> assertThat(((WebSocketHandshakeException) cause).getResponse().statusCode())
+                        .as("a follow that upgrades without a credential is an open read of the data")
+                        .isEqualTo(401));
+    }
+
     @SuppressWarnings("unchecked")
     private static List<String> messages(Map<?, ?> frame) {
         List<String> out = new ArrayList<>();
@@ -217,7 +234,7 @@ class PipelineStreamApiTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({PipelineStreamConfiguration.class})
+    @Import({PipelineStreamConfiguration.class, DataBrowserStreamConfiguration.class})
     static class TestApp {
 
         @Bean
@@ -238,6 +255,30 @@ class PipelineStreamApiTest {
         @Bean
         PipelineObservationQueryService pipelineObservationQueryService(ObservationStore store) {
             return new PipelineObservationQueryService(new ArtifactQueryService(appliedPipelines()), store);
+        }
+
+        /**
+         * Present so the follow endpoint is mounted at all. Every probe refuses: the case here is that
+         * the handshake is turned away before any of them is reached, and a probe that answered would
+         * let that case pass even if the guard were gone.
+         */
+        @Bean
+        io.tapstate.control.core.DataBrowserService dataBrowserService() {
+            return new io.tapstate.control.core.DataBrowserService(
+                    appliedPipelines(),
+                    new NoDiscoveries(),
+                    config -> {
+                        throw new AssertionError("the handshake must be refused before any read");
+                    },
+                    (config, collection) -> {
+                        throw new AssertionError("the handshake must be refused before any read");
+                    },
+                    (config, query) -> {
+                        throw new AssertionError("the handshake must be refused before any read");
+                    },
+                    (config, request, listener) -> {
+                        throw new AssertionError("the handshake must be refused before any follow");
+                    });
         }
 
         @Bean

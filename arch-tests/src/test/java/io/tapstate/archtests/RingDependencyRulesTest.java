@@ -10,6 +10,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.name;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
@@ -229,9 +233,10 @@ class RingDependencyRulesTest {
                         // control-core decouples from the runtime through the storage port
                         "io.tapstate.spi.store..",
                         // the synchronous control-to-runtime seam: the probe whitelist (a closed set
-                        // of two — the connection probe and the schema-discovery probe). Every other
-                        // control<->runtime interaction stays store-decoupled; this narrow channel is
-                        // the one compile reference control-core holds into the runtime ring
+                        // of six — connection test, schema discovery, and the four query channels).
+                        // Every other control<->runtime interaction stays store-decoupled; this
+                        // narrow channel is the one compile reference control-core holds into the
+                        // runtime ring
                         "io.tapstate.runtime.probe..")
                 .allowEmptyShould(true)
                 .because("control-core is the resource-type-agnostic verb layer: pure logic that "
@@ -239,7 +244,7 @@ class RingDependencyRulesTest {
                         + "whitelist only. It stays framework-free — Spring lives in "
                         + "rest-api (the HTTP presentation face), never here — so the apply / registry "
                         + "logic is unit-testable without a container; it reaches the runtime only "
-                        + "through the store, save for the probe whitelist (a closed set of two)")
+                        + "through the store, save for the probe whitelist (a closed set of six)")
                 .check(tapstateClasses);
     }
 
@@ -271,48 +276,69 @@ class RingDependencyRulesTest {
     }
 
     @Test
-    @DisplayName("R5 (exactness): the control-to-runtime sync whitelist is exactly the connection probe "
-            + "and the schema-discovery probe — no further channel")
+    @DisplayName("R5 (exactness): the control-to-runtime sync whitelist is exactly the six named probes "
+            + "— no further channel")
     void r5_controlToRuntimeSyncWhitelistHasNoFurtherChannel() {
         // A control-to-runtime sync channel is a runtime interface control reaches for. The whitelist is
-        // a closed set of exactly two such interfaces (the connection probe and the schema-discovery
-        // probe); the probes' value types are storage-port types (the connection config they take, the
-        // test result / source model they return), carried as payload, not channels of their own. This
-        // gate bans a further channel — another probe interface control depends on. Widening the
-        // whitelist must change this gate and the sync-whitelist decision, not slip in beside it (a
-        // further probe interface control reaches for turns this red).
+        // a closed set of exactly six such interfaces: connection test, schema discovery, and the four
+        // channels the data browser needs (listing a source's collections, reading its documents,
+        // reading its table stats, and following its changes). The probes' value types are storage-port
+        // types (the connection config or query request they take, the result they return), carried as
+        // payload, not channels of their own. This gate bans a further channel — another probe interface
+        // control depends on. Widening the whitelist must change this gate and the sync-whitelist
+        // decision, not slip in beside it (a seventh probe interface control reaches for turns this red).
+        //
+        // The set is spelled out here because the decision is what the names encode; the four query
+        // channels are named ahead of the code that implements them, so until then this gate is green
+        // without proving anything. What it does from the first day is refuse a seventh.
         DescribedPredicate<JavaClass> aRuntimeSyncChannelOutsideTheWhitelist =
                 resideInAPackage("io.tapstate.runtime.probe..")
                         .and(DescribedPredicate.describe("interfaces", JavaClass::isInterface))
                         .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.ConnectionProbe")))
                         .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.SchemaDiscoveryProbe")))
+                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.DataBrowserCollectionsProbe")))
+                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.DataBrowserFindProbe")))
+                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.DataBrowserStatsProbe")))
+                        .and(DescribedPredicate.not(name("io.tapstate.runtime.probe.DataBrowserTailProbe")))
                         .as("a control-to-runtime sync channel outside the whitelist");
         noClasses().that().resideInAPackage("io.tapstate.control..")
                 .should().dependOnClassesThat(aRuntimeSyncChannelOutsideTheWhitelist)
                 .allowEmptyShould(true)
-                .because("the control-to-runtime sync whitelist is a closed set of exactly two members, "
-                        + "the connection probe and the schema-discovery probe; a further synchronous "
-                        + "channel must change this gate and the sync-whitelist decision, not slip in "
-                        + "beside it")
+                .because("the control-to-runtime sync whitelist is a closed set of exactly six members "
+                        + "— the connection probe, the schema-discovery probe and the four query probes; "
+                        + "a further synchronous channel must change this gate and the sync-whitelist "
+                        + "decision, not slip in beside it")
                 .check(tapstateClasses);
     }
 
     @Test
-    @DisplayName("R5 (exactness): each whitelisted probe exposes exactly one operation")
-    void r5_eachWhitelistedProbeExposesExactlyOneOperation() {
+    @DisplayName("R5 (exactness): every probe in the whitelist package exposes exactly one operation")
+    void r5_everyWhitelistedProbeExposesExactlyOneOperation() {
         // Each whitelist member is a single operation. Counting all abstract methods — including any
         // inherited from a super-interface, not only the probe's own — a second operation (added
         // directly or pulled in through a super-interface) is a further synchronous control-to-runtime
         // call and must change the sync-whitelist decision, not slip in.
-        for (String probeName : new String[] {
-            "io.tapstate.runtime.probe.ConnectionProbe", "io.tapstate.runtime.probe.SchemaDiscoveryProbe"
-        }) {
-            JavaClass probe = tapstateClasses.get(probeName);
+        //
+        // Derived from the package rather than a list of names, and that is the point. The cheap way
+        // around a closed set of channels is a union: one probe carrying several verbs, or one method
+        // taking a discriminator. After a union lands, the next verb costs a method or a case and
+        // touches nothing any gate watches — the closure is gone for that whole family. Derived, a
+        // union is red the moment it is written, rather than when someone remembers to extend a list.
+        // package-info compiles to an interface too, and it is not a channel — exclude it by name.
+        JavaClasses probes = tapstateClasses.that(resideInAPackage("io.tapstate.runtime.probe..")
+                .and(DescribedPredicate.describe("interfaces", JavaClass::isInterface))
+                .and(DescribedPredicate.describe(
+                        "not package-info", type -> !type.getName().endsWith(".package-info"))));
+        assertThat(probes)
+                .as("the whitelist package holds the probe interfaces themselves — an empty result "
+                        + "would make every assertion below vacuous")
+                .isNotEmpty();
+        for (JavaClass probe : probes) {
             long operations = probe.getAllMethods().stream()
                     .filter(method -> method.getModifiers().contains(JavaModifier.ABSTRACT))
                     .count();
             assertThat(operations)
-                    .as("each whitelisted probe is a closed set of exactly one operation: " + probeName)
+                    .as("each whitelisted probe is a closed set of exactly one operation: " + probe.getName())
                     .isEqualTo(1L);
         }
     }
@@ -322,21 +348,36 @@ class RingDependencyRulesTest {
             + "are the only path")
     void r5_controlCoreDoesNotBypassTheProbesIntoTheSpiExecutionPorts() {
         // The ring grant allows control-core to see all of io.tapstate.spi.store (it holds the storage
-        // ports), and the spi execution ports — the connection tester and the schema discoverer, the
-        // ports the probes delegate to — live in that same package. Compiling against them from
-        // control-core would silently bypass the runtime seam: legal to the package rule above, but a
-        // reversal of the sync-whitelist decision (discovery and testing run where the connectors run —
-        // the runtime side). This gate turns that bypass red instead of leaving it to prose.
-        DescribedPredicate<JavaClass> anSpiExecutionPort = name("io.tapstate.spi.store.ConnectionTester")
-                .or(name("io.tapstate.spi.store.SchemaDiscoverer"))
-                .<JavaClass>forSubtype()
-                .as("an spi execution port (the connection tester / the schema discoverer)");
+        // ports), and the spi execution ports — the ports the probes delegate to, the ones that drive a
+        // connector — live in that same package. Compiling against them from control-core would silently
+        // bypass the runtime seam: legal to the package rule above, but a reversal of the sync-whitelist
+        // decision (testing, discovery and data-browser reads run where the connectors run — the runtime
+        // side). This gate turns that bypass red instead of leaving it to prose.
+        //
+        // Identified by the marker interface, not by name. A name list fails in the worst direction:
+        // a port spelled differently than the list expects never matches, so the gate stays green while
+        // covering nothing, and nothing says so. With the marker, a new execution port joins this gate
+        // by implementing it — and the assertion below is what keeps the existing ones from quietly
+        // dropping out of coverage if someone removes the marker.
+        DescribedPredicate<JavaClass> anSpiExecutionPort =
+                assignableTo("io.tapstate.spi.store.ExecutionPort")
+                        .as("an spi execution port (a port that drives a connector)");
+        List<String> markedPorts = new ArrayList<>();
+        for (JavaClass marked : tapstateClasses.that(anSpiExecutionPort)) {
+            markedPorts.add(marked.getName());
+        }
+        assertThat(markedPorts)
+                .as("every connector-driving port carries the execution-port marker")
+                .contains(
+                        "io.tapstate.spi.store.ConnectionTester",
+                        "io.tapstate.spi.store.SchemaDiscoverer",
+                        "io.tapstate.spi.store.DataBrowser");
         noClasses().that().resideInAPackage("io.tapstate.control..")
                 .should().dependOnClassesThat(anSpiExecutionPort)
                 .allowEmptyShould(true)
-                .because("control drives connection testing and schema discovery only through the "
-                        + "whitelisted runtime probes; a direct compile reference to the spi execution "
-                        + "ports bypasses the seam and reverses the sync-whitelist decision")
+                .because("control drives the connectors only through the whitelisted runtime probes; a "
+                        + "direct compile reference to an spi execution port bypasses the seam and "
+                        + "reverses the sync-whitelist decision")
                 .check(tapstateClasses);
     }
 
@@ -345,8 +386,8 @@ class RingDependencyRulesTest {
     void r9_controlAndRuntimeDoNotReferenceEachOther() {
         // The control-to-runtime half carries the single R5 exception: control may reach the runtime
         // synchronously only through the probe whitelist (io.tapstate.runtime.probe), a closed set of
-        // two. Any other runtime package is still forbidden; the exactness gates above pin that
-        // whitelist to exactly two channels of one operation each.
+        // six. Any other runtime package is still forbidden; the exactness gates above pin that
+        // whitelist to exactly six channels of one operation each.
         noClasses().that().resideInAPackage("io.tapstate.control..")
                 .should().dependOnClassesThat(
                         JavaClass.Predicates.resideInAPackage("io.tapstate.runtime..")
@@ -355,7 +396,7 @@ class RingDependencyRulesTest {
                 .because("control writes desired state and the runtime watches and converges; they "
                         + "decouple through the store and hold no reference to each other — the sole "
                         + "exception is the synchronous probe whitelist "
-                        + "(io.tapstate.runtime.probe), a closed set of two")
+                        + "(io.tapstate.runtime.probe), a closed set of six")
                 .check(tapstateClasses);
         // The runtime-to-control half stays a blanket ban: the runtime never reaches up into control.
         noClasses().that().resideInAPackage("io.tapstate.runtime..")

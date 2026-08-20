@@ -7,6 +7,7 @@ import io.tapstate.core.lifecycle.PipelineState;
 import io.tapstate.core.lifecycle.StateJson;
 import io.tapstate.core.model.PipelineResource;
 import io.tapstate.core.model.Resource;
+import io.tapstate.core.model.SourceResource;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.DesiredStore;
 import io.tapstate.spi.store.ObservationStore;
@@ -68,19 +69,23 @@ public final class ArtifactMutationService {
     private final SrsMetaStore srsMeta;
     private final AuditGate auditGate;
 
+    private final DataBrowserFollows follows;
+
     public ArtifactMutationService(
             ArtifactStore store,
             DesiredStore desired,
             StateStore state,
             ObservationStore observations,
             SrsMetaStore srsMeta,
-            AuditGate auditGate) {
+            AuditGate auditGate,
+            DataBrowserFollows follows) {
         this.store = Objects.requireNonNull(store, "store");
         this.desired = Objects.requireNonNull(desired, "desired");
         this.state = Objects.requireNonNull(state, "state");
         this.observations = Objects.requireNonNull(observations, "observations");
         this.srsMeta = Objects.requireNonNull(srsMeta, "srsMeta");
         this.auditGate = Objects.requireNonNull(auditGate, "auditGate");
+        this.follows = Objects.requireNonNull(follows, "follows");
     }
 
     /**
@@ -136,6 +141,14 @@ public final class ArtifactMutationService {
 
             if (target instanceof PipelineResource) {
                 reclaim(id);
+            }
+            if (target instanceof SourceResource) {
+                // A follow is not in the reference graph, so neither refusal above ever sees one: a
+                // source read by nothing but a pair of eyes deletes cleanly while those eyes keep
+                // being handed rows from it. The kind-specific door does this already; a removal has
+                // to mean the same thing through both, or which endpoint the caller happened to use
+                // decides whether the readers are told.
+                follows.closeFollowsOf(id);
             }
             return null;
         });

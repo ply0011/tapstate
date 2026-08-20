@@ -101,7 +101,19 @@ jobs:
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
             args+=("-Dsonar.projectVersion=${GITHUB_REF_NAME#v}")
           fi
-          mvn -B verify sonar:sonar "${args[@]}"
+          mvn -B verify
+
+          # A second pass over the execution data before the analysis reads it. Each module's report
+          # otherwise describes that module's classes against that module's own runs, and a type
+          # declared in one ring and exercised from another therefore reads as untested while the
+          # runs it really got sit in another module's exec file. Merging every exec file and
+          # re-reporting rewrites each module's report against all of them - same classes per
+          # module, all executions. Measured on the read face: seven spi-store types went from 0.0%
+          # to 93.6% between the two passes, with no test added.
+          mvn -B -N jacoco:merge@jacoco-merge-reactor
+          mvn -B jacoco:report@jacoco-report-reactor
+
+          mvn -B sonar:sonar "${args[@]}"
 
       # Best-effort PR decoration for Community Edition. Runs even when the analyze step failed
       # (that is exactly the gate-red case worth commenting on); continue-on-error keeps a comment

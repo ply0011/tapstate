@@ -3,7 +3,6 @@ package io.tapstate.archtests;
 import io.tapstate.cli.Cli;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.Frontend;
-import io.tapstate.control.core.Maturity;
 import io.tapstate.control.core.Operation;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,9 +41,9 @@ class CliFaceProjectionGatesTest {
         return new TreeSet<>(Cli.VERB_BY_OPERATION.keySet());
     }
 
-    /** Every operation the registry opens on the CLI face at the POC stage. */
+    /** Every operation the registry opens on the CLI face. */
     private static Set<String> registeredOperations() {
-        return ControlOperations.registry().exposedOn(Frontend.CLI, Maturity.POC).stream()
+        return ControlOperations.registry().exposedOn(Frontend.CLI).stream()
                 .map(Operation::id)
                 .collect(toCollection(TreeSet::new));
     }

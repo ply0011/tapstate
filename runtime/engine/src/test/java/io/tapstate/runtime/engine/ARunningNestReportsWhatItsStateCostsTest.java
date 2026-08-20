@@ -278,27 +278,27 @@ class ARunningNestReportsWhatItsStateCostsTest {
 
         @Override
         public Optional<byte[]> load(String namespace, String key) {
-            return Optional.ofNullable(COLD.get(namespace + " " + key));
+            return Optional.ofNullable(COLD.get(namespace + "\0" + key));
         }
 
         @Override
         public void save(String namespace, String key, byte[] state) {
-            COLD.put(namespace + " " + key, state);
+            COLD.put(namespace + "\0" + key, state);
         }
 
         @Override
         public void delete(String namespace, String key) {
-            COLD.remove(namespace + " " + key);
+            COLD.remove(namespace + "\0" + key);
         }
 
         @Override
         public long count(String namespace) {
-            return COLD.keySet().stream().filter(entry -> entry.startsWith(namespace + " ")).count();
+            return COLD.keySet().stream().filter(entry -> entry.startsWith(namespace + "\0")).count();
         }
 
         @Override
         public void dropNamespace(String namespace) {
-            COLD.keySet().removeIf(entry -> entry.startsWith(namespace + " "));
+            COLD.keySet().removeIf(entry -> entry.startsWith(namespace + "\0"));
         }
     }
 }

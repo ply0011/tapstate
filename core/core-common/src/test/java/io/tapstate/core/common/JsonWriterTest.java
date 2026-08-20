@@ -44,8 +44,8 @@ class JsonWriterTest {
 
     @Test
     void escapesOtherControlCharactersAsFourDigitUnicode() {
-        // a control character with no named escape (U+0001) becomes , lower-case hex, zero-padded
-        assertThat(JsonWriter.write("xy")).isEqualTo("\"x\\u0001y\"");
+        // a control character with no named escape (U+0001) escapes as four hex digits, lower-case and zero-padded
+        assertThat(JsonWriter.write("x\u0001y")).isEqualTo("\"x\\u0001y\"");
     }
 
     @Test
@@ -82,7 +82,7 @@ class JsonWriterTest {
 
     @Test
     void roundTripsAnArbitraryMessageThroughTheReader() {
-        String message = "tab\there, quote\", backslash\\, newline\n, ctrl, unicode é end";
+        String message = "tab\there, quote\", backslash\\, newline\n, ctrl\u0002, unicode é end";
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("timestampMillis", 1_700_000_000_123L);
         line.put("level", "WARN");
