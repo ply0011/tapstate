@@ -30,11 +30,14 @@ public final class OfficialConnectors {
     }
 
     /**
-     * The supported ids {@code catalog} actually carries, in the catalog's own order — what an
-     * authoring surface may offer. Intersected rather than returned outright so that everything
-     * offered also resolves: a supported id absent from the catalog has no fields to prompt for.
+     * The supported ids {@code catalog} actually carries, in this list's order — what an authoring
+     * surface may offer, and what a refusal names. Intersected rather than returned outright so that
+     * everything offered also resolves: a supported id absent from the catalog has no fields to
+     * prompt for. Kept in this list's order rather than the catalog's so a menu and the message that
+     * follows a refusal read the same way round.
      */
     public static List<String> presentIn(TapstateCatalog catalog) {
-        return catalog.ids().stream().filter(OfficialConnectors::isOfficial).toList();
+        List<String> present = catalog.ids();
+        return IDS.stream().filter(present::contains).toList();
     }
 }

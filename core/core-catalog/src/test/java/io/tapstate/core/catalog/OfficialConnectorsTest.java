@@ -17,6 +17,14 @@ class OfficialConnectorsTest {
     }
 
     @Test
+    void whatACatalogCarriesKeepsThisListsOrder() {
+        // A menu and the refusal that names the same connectors should read the same way round, so
+        // the order comes from here rather than from however the catalog happens to be sorted.
+        assertThat(OfficialConnectors.presentIn(TapstateCatalog.load()))
+                .containsExactlyElementsOf(OfficialConnectors.IDS);
+    }
+
+    @Test
     void membershipIsAskedOfTheSameList() {
         assertThat(OfficialConnectors.isOfficial("mysql")).isTrue();
         assertThat(OfficialConnectors.isOfficial("kafka")).isFalse();

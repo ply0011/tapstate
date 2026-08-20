@@ -264,7 +264,7 @@ a source, wire it into a pipeline, and validate — all without a server:
 $ tapstate new -y --kind source --connector mysql --id orders_src -m cdc
 created source/orders_src.tap.yml
 
-$ tapstate new -y --kind source --connector postgres --id warehouse -m cdc
+$ tapstate new -y --kind source --connector mongodb --id warehouse -m cdc
 created source/warehouse.tap.yml
 
 $ tapstate new -y --kind pipeline --id orders_sync --source orders_src --sync-to warehouse
