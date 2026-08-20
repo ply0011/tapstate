@@ -54,13 +54,6 @@ fetch() {
     fi
 }
 
-# Generate the demo workspace: a source, a target, and the pipeline joining them, ready to apply. The
-# addresses are compose service names because the connector runs inside the server container, where
-# loopback is the server itself. The heredocs are quoted so $customer stays the literal DSL rename token
-# it is, not a shell variable. This mirrors the online walkthrough's sample on purpose -- one sample, not
-# two that drift. The pipeline carries every change through, deletes included: a map leaves a delete (which
-# has no after image) untouched, so the sink removes the row by key. The decimal `amount` column is only
-# ever passed through, never named in a CEL: numeric columns have no CEL overload in this preview.
 # One collection's row count in the target, as a plain integer. A read that fails, or answers anything
 # that is not a number, counts as zero: this is polled while the stack is still settling, and a
 # half-started mongosh has to read as "not there yet" rather than abort the run.
@@ -72,6 +65,13 @@ count_target() {   # $1 = collection name
     printf '%s' "$_c"
 }
 
+# Generate the demo workspace: a source, a target, and the pipeline joining them, ready to apply. The
+# addresses are compose service names because the connector runs inside the server container, where
+# loopback is the server itself. The heredocs are quoted so $customer stays the literal DSL rename token
+# it is, not a shell variable. This mirrors the online walkthrough's sample on purpose -- one sample, not
+# two that drift. The pipeline carries every change through, deletes included: a map leaves a delete (which
+# has no after image) untouched, so the sink removes the row by key. The decimal `amount` column is only
+# ever passed through, never named in a CEL: numeric columns have no CEL overload in this preview.
 generate_workspace() {
     mkdir -p work/source work/pipeline
     cat > work/source/db_src.tap.yml <<'YAML'

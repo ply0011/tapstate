@@ -73,7 +73,7 @@ if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
         exit 1
     fi
     protoc_base="https://repo1.maven.org/maven2/com/google/protobuf/protoc/$protoc_version"
-    if curl -fsI "$protoc_base/protoc-$protoc_version-osx-aarch_64.exe" >/dev/null 2>&1; then
+    if curl -fsIL "$protoc_base/protoc-$protoc_version-osx-aarch_64.exe" >/dev/null 2>&1; then
         echo "protoc $protoc_version has an arm64 build; leaving the plugin to fetch it"
     else
         echo "protoc $protoc_version publishes no arm64 build; staging the x86_64 one to run under Rosetta"

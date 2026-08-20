@@ -708,7 +708,6 @@ final class ControlPlane {
         return response.statusCode() + " " + response.body();
     }
 
-    /** The published metrics body verbatim, for the same diagnostic use and on the same terms as {@link #logs}. */
     /**
      * Runs the product's own connection test and answers the overall outcome with each check's status.
      *
@@ -739,12 +738,7 @@ final class ControlPlane {
     record ConnectionTest(String outcome, Map<String, String> statusByCheck) {
     }
 
-    /** The status answer verbatim, for a diagnosis that wants the failure's own parameters. */
-    String statusBody(String pipelineId) {
-        HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/status"));
-        return response.statusCode() + " " + response.body();
-    }
-
+    /** The published metrics body verbatim, for the same diagnostic use and on the same terms as {@link #logs}. */
     String metrics(String pipelineId) {
         HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
         return response.statusCode() + " " + response.body();

@@ -26,8 +26,10 @@ import java.util.Map;
  *
  * <p>Two settings differ from MySQL's arrangement and are worth naming, because both are the kind of
  * thing that reads as a connector defect when it is really a server that was never asked for it:
- * replication needs a sender slot per stream, and the defaults leave little headroom for a run that
- * opens a second one before the first is released.
+ * replication needs a sender slot per stream, and this is one server per JVM shared by every postgres
+ * case, whose slots are not dropped when a stream stops. Both settings boot at 10 on this image, which a
+ * full pass exhausts; the ceiling is raised rather than merely restated, and exhaustion surfaces as
+ * {@code all replication slots are in use} rather than as anything naming the server.
  *
  * <p>Unlike MySQL, no privilege grant is needed. The image's own superuser is the account the harness
  * connects as, and it already carries the replication attribute; the MySQL equivalent exists only
@@ -77,9 +79,13 @@ final class SharedPostgres {
             DockerGate.require();
             PostgreSQLContainer<?> starting = new PostgreSQLContainer<>(IMAGE)
                     .withCommand("postgres",
+                            // withCommand replaces the command wholesale, so the image default this
+                            // wrapper otherwise supplies has to be restated here or every write on this
+                            // server waits on a real disk flush.
+                            "-c", "fsync=off",
                             "-c", "wal_level=logical",
-                            "-c", "max_wal_senders=8",
-                            "-c", "max_replication_slots=8");
+                            "-c", "max_wal_senders=32",
+                            "-c", "max_replication_slots=32");
             starting.start();
             container = starting;
         }
