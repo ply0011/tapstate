@@ -16,7 +16,7 @@ class McpLauncherTest {
 
     @Test
     void stableSymlinkFindsTheSidecarInTheVersionedBundle(@TempDir Path install) throws Exception {
-        Path version = install.resolve("versions/0.2.0");
+        Path version = install.resolve("versions/0.2.1");
         Path cli = Files.createDirectories(version.resolve("bin")).resolve("tapstate");
         Files.createFile(cli);
         Path nativeSidecar = Files.createDirectories(version.resolve("libexec")).resolve("tapstate-mcp");
