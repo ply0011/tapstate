@@ -123,7 +123,10 @@ directory). A change reaches the target in about a second, so each read waits fo
   until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
   echo "row 6 is gone from MongoDB, too"
 
-Tear down (run in this directory):
+Stop, and pick it up later (run in this directory):
+  docker compose stop        stop the stack and keep its data (docker compose start resumes it)
+
+Tear down -- this one is not reversible (run in this directory):
   docker compose down -v     stop the stack and delete its data (a re-run re-registers the connectors)
   cd .. && rm -rf $demo_dir  remove this directory (CLI, jars, workspace, .env)
 The pulled images remain; remove them with:  docker image rm <image>

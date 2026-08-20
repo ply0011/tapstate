@@ -347,6 +347,22 @@ if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -
 else
   bad "no teardown printed: $RUN_OUT"
 fi
+# Stopping and destroying are different intentions and the demo has to offer both. Until it did, the
+# only documented way out deleted the data, so a user who just wanted their laptop back had to guess
+# -- and guessing wrong on this one is unrecoverable.
+if printf '%s' "$RUN_OUT" | grep -q 'docker compose stop' \
+   && printf '%s' "$RUN_OUT" | grep -qi 'keep its data'; then
+  ok "offers a non-destructive stop, and says the data survives it"
+else
+  bad "no non-destructive stop offered: $RUN_OUT"
+fi
+# The warning has to sit on the destructive line itself. Asserting that the word appears somewhere in
+# the output is satisfied by the CDC walkthrough's DELETE statement, several screens further up.
+if printf '%s' "$RUN_OUT" | grep 'down -v' | grep -qi 'delet'; then
+  ok "the destructive teardown says on its own line that it deletes data"
+else
+  bad "the down -v line does not say what it destroys: $(printf '%s' "$RUN_OUT" | grep 'down -v')"
+fi
 # The snapshot payoff is a real row count, printed with no user action (the fake docker returns 5).
 if printf '%s' "$RUN_OUT" | grep -q 'the view now holds 5 rows'; then
   ok "prints the snapshot row count automatically (no user action)"
