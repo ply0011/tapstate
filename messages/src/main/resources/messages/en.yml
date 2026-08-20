@@ -99,6 +99,9 @@ cli.repl-builtin-only:
 cli.mcp-unavailable:
   message: "The MCP sidecar is unavailable: {reason}."
   solution: "Install the complete Tapstate CLI bundle, including libexec/tapstate-mcp, and retry."
+cli.watch-needs-a-terminal:
+  message: "`watch` redraws one row in place, which needs a terminal; here its output is a pipe or a file."
+  solution: "Use `tail <source>.<collection>` for a stream you can pipe, or `<source>.<collection>.find(...)` for a one-shot look."
 cli.if-match-needs-one-resource:
   message: "`--if-match` names one version, but this apply covers {count} resources."
   solution: "Apply the single file you are editing, or drop `--if-match` and let the batch apply unconditionally."
@@ -249,6 +252,24 @@ connector.test-failed:
 connector.write-failed:
   message: "Connector '{connector}' failed while writing: {detail}."
   solution: "Check the target is reachable and the connection settings are correct."
+connector.read-abandoned:
+  message: "Reading '{connector}' stopped before it finished, so the rows it returned are incomplete."
+  solution: "The read was interrupted rather than refused; run it again."
+connector.read-failed:
+  message: "Connector '{connector}' failed while reading the store: {detail}."
+  solution: "Check the store is reachable and the connection settings are correct."
+connector.capability-missing:
+  message: "Connector '{connector}' does not provide '{capability}', which this read needs."
+  solution: "Read a source whose connector provides this capability, or use a verb that does not need it."
+connector.instances-busy:
+  message: "Every connection to '{connector}' was still busy after {timeout}."
+  solution: "Another read of this connection is still running; retry, or narrow the read so it finishes sooner."
+connector.instance-limit-reached:
+  message: "This host already holds its limit of {limit} live connector connections and all of them are busy."
+  solution: "Wait for a running read to finish, or reduce how many connections are being read at once."
+connector.read-timeout:
+  message: "Reading '{connector}' took longer than {timeout} and was stopped."
+  solution: "Narrow the read with a filter or a smaller limit, or check the store is not overloaded."
 control.audit-blocked:
   message: "Operation '{op}' was refused because its required audit record could not be written."
   solution: "An audited operation must leave an audit record before it runs; check the store is reachable and healthy, then retry."
@@ -273,6 +294,27 @@ control.unauthenticated:
 control.unreachable:
   message: "The Tapstate Server is unreachable."
   solution: "Check the Server URL and availability, then retry the tool call."
+data-browser.connector-not-browsable:
+  message: "Connector '{connector}' answers reads in its own shape, and this face asks in documents, so its rows cannot be browsed."
+  solution: "Browse a source on one of: {browsable}. This source can still be listed and sized, and it can still be read by a pipeline."
+data-browser.follow-idle:
+  message: "Following stopped after 10 minutes with no changes; the connector instance it held was given back."
+  solution: "Follow it again to keep watching."
+data-browser.follow-stopped:
+  message: "Following stopped: the stream from the source failed."
+  solution: "Check the server log for what the connector reported, then follow it again."
+data-browser.invalid-limit:
+  message: "A read of {limit} rows is not served; ask for between 1 and {max}."
+  solution: "Ask for at most {max} rows, or narrow the read with a filter."
+data-browser.source-deleted:
+  message: "Following stopped: the source being followed was deleted."
+  solution: "Declare the source again, or follow a collection of a source that still exists."
+data-browser.unknown-collection:
+  message: "Source '{source}' has no collection named '{collection}'."
+  solution: "List what the source holds and read one of those names."
+data-browser.unorderable-field:
+  message: "Field '{field}' is named with a dot in it, and results cannot be ordered by such a field."
+  solution: "Order by another field. This one can still be filtered on, by escaping the dot that belongs to its name: write it price\\.usd in the shell, and \"price\\\\.usd\" in JSON, where a lone backslash is not an escape the format allows. Filtering it reads every row, though: an index is written the same way a path is, so a field whose name holds a dot cannot have one."
 mcp.connector-spec-unavailable:
   message: "Connector {connector} does not provide a complete live spec."
   solution: "Register the connector runtime and retry connector_get before using the connector."

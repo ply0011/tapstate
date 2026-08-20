@@ -17,11 +17,12 @@ class ControlApiSchemaTest {
             "connection.test", "connection.test-result", "connection.discover-schema", "connection.schema",
             "artifact.validate", "artifact.apply", "artifact.delete", "artifact.get",
             "pipeline.start", "pipeline.stop", "pipeline.status", "pipeline.metrics",
-            "pipeline.snapshot", "pipeline.logs");
+            "pipeline.snapshot", "pipeline.logs",
+            "data-browser.collections", "data-browser.find", "data-browser.stats");
 
     @Test
-    void betaMcpSurfaceIsExactlyTheOnlineAuthoringClosure() {
-        Set<String> actual = ControlOperations.registry().exposedOn(Frontend.MCP, Maturity.BETA).stream()
+    void mcpSurfaceIsTheOnlineAuthoringClosureAndTheReadFace() {
+        Set<String> actual = ControlOperations.registry().exposedOn(Frontend.MCP).stream()
                 .map(Operation::id)
                 .collect(Collectors.toSet());
 
@@ -67,7 +68,7 @@ class ControlApiSchemaTest {
         assertThat(document.get("$defs")).isInstanceOf(Map.class);
         Map<?, ?> definitions = (Map<?, ?>) document.get("$defs");
 
-        for (Operation operation : ControlOperations.registry().exposedOn(Frontend.MCP, Maturity.BETA)) {
+        for (Operation operation : ControlOperations.registry().exposedOn(Frontend.MCP)) {
             assertThat(operation.description()).as(operation.id() + " description").isNotBlank();
             assertThat(operation.schema()).as(operation.id()).isNotNull();
             assertThat(operation.schema().params()).as(operation.id() + " params").startsWith("#/$defs/");
@@ -150,5 +151,28 @@ class ControlApiSchemaTest {
                 .isEqualTo("boolean");
         assertThat(((Map<?, ?>) properties.get("options")).get("additionalProperties"))
                 .isEqualTo(true);
+    }
+
+    /**
+     * The schema is where a caller picks the field it will match on, which makes it the one place the
+     * choice can be priced before it is made. A name holding a dot is already described here, because
+     * addressing it needs a spelling nobody guesses; what the description did not say is that reading on
+     * it is the expensive spelling too. An index is written the same way a path is, so such a name cannot
+     * have one, and every read matching on it walks the collection. That cost is invisible in the answer
+     * - the rows are correct - so a caller told how to address the field and not what it costs will reach
+     * for it exactly as readily as for an indexed one.
+     */
+    @Test
+    void theFilterFieldSaysWhatMatchingOnANameHoldingADotCosts() {
+        Map<?, ?> definitions = (Map<?, ?>) ControlApiSchema.document().get("$defs");
+        Map<?, ?> request = (Map<?, ?>) definitions.get("DataBrowserFindRequest");
+        Map<?, ?> filter = (Map<?, ?>) ((Map<?, ?>) request.get("properties")).get("filter");
+        Map<?, ?> field = (Map<?, ?>) ((Map<?, ?>) filter.get("properties")).get("field");
+
+        assertThat(String.valueOf(field.get("description")))
+                .as("that matching on such a field reads the whole collection")
+                .contains("every row")
+                .as("and why, so it reads as a property of the name rather than of this one read")
+                .contains("index");
     }
 }

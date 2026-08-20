@@ -13,6 +13,9 @@ import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -140,6 +143,125 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
         } catch (IOException | RuntimeException e) {
             return new LoginOutcome.Unreachable();
         }
+    }
+
+    @Override
+    public DataBrowserOutcome.Collections collections(URI baseUrl, String credential, String sourceId) {
+        ControlResponse response = sharedClient.get(
+                baseUrl, credential, "/api/sources/" + urlSegment(sourceId) + "/collections");
+        return switch (response) {
+            case ControlResponse.Success success -> {
+                List<String> names = names(success.body());
+                yield names == null
+                        ? new DataBrowserOutcome.Collections.Unreachable()
+                        : new DataBrowserOutcome.Collections.Listed(names);
+            }
+            case ControlResponse.Rejected rejected ->
+                    new DataBrowserOutcome.Collections.Rejected(rejected.code(), rejected.message());
+            case ControlResponse.Unreachable ignored -> new DataBrowserOutcome.Collections.Unreachable();
+        };
+    }
+
+    @Override
+    public DataBrowserOutcome.Stats stats(
+            URI baseUrl, String credential, String sourceId, String collection) {
+        ControlResponse response = sharedClient.get(baseUrl, credential,
+                "/api/sources/" + urlSegment(sourceId) + "/collections/" + urlSegment(collection) + "/stats");
+        return switch (response) {
+            case ControlResponse.Success success -> {
+                if (!(success.body() instanceof Map<?, ?> reported)) {
+                    yield new DataBrowserOutcome.Stats.Unreachable();
+                }
+                yield new DataBrowserOutcome.Stats.Reported(
+                        count(reported.get("numOfRows")),
+                        count(reported.get("storageSize")),
+                        count(reported.get("avgObjSize")));
+            }
+            case ControlResponse.Rejected rejected ->
+                    new DataBrowserOutcome.Stats.Rejected(rejected.code(), rejected.message());
+            case ControlResponse.Unreachable ignored -> new DataBrowserOutcome.Stats.Unreachable();
+        };
+    }
+
+    @Override
+    public DataBrowserOutcome.Find find(URI baseUrl, String credential, String sourceId, String collection,
+                                        Object filter, DataBrowserCall.Order sort, Integer limit) {
+        // Only what was asked for. An absent key is the request — no filter reads every row, no order
+        // leaves the order to the database — and sending a null under the key instead says something
+        // different to a face that reads present-and-null apart from absent.
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (filter != null) {
+            body.put("filter", filter);
+        }
+        if (sort != null) {
+            Map<String, Object> order = new LinkedHashMap<>();
+            order.put("field", sort.field());
+            order.put("dir", sort.dir());
+            body.put("sort", order);
+        }
+        if (limit != null) {
+            body.put("limit", limit);
+        }
+        ControlResponse response = sharedClient.post(baseUrl, credential,
+                "/api/sources/" + urlSegment(sourceId) + "/collections/" + urlSegment(collection) + ":find",
+                body, RequestBudget.HEAVY);
+        return switch (response) {
+            case ControlResponse.Success success -> {
+                DataBrowserOutcome.Find.Read read = read(success.body());
+                yield read == null ? new DataBrowserOutcome.Find.Unreachable() : read;
+            }
+            case ControlResponse.Rejected rejected ->
+                    new DataBrowserOutcome.Find.Rejected(rejected.code(), rejected.message());
+            case ControlResponse.Unreachable ignored -> new DataBrowserOutcome.Find.Unreachable();
+        };
+    }
+
+    /**
+     * The collection names from a 200 body, or null when the body is not shaped like that answer.
+     *
+     * <p>Each entry says more than its name — what class of collection it is, the fields discovery
+     * found, the text whoever declared it wrote — and this shell reads only the name back out, because
+     * that is all it prints. What the rest is for is a caller that has to decide what to read next
+     * without a person looking at the screen.
+     */
+    private static List<String> names(Object body) {
+        if (!(body instanceof Map<?, ?> m && m.get("collections") instanceof List<?> listed)) {
+            return null;
+        }
+        List<String> names = new ArrayList<>(listed.size());
+        for (Object entry : listed) {
+            if (entry instanceof Map<?, ?> described && described.get("name") instanceof String text) {
+                names.add(text);
+            }
+        }
+        return names;
+    }
+
+    /**
+     * The preview from a 200 body, or null when the body is not shaped like one. {@code moreAvailable}
+     * has no fallback on purpose: read as false when it is missing, a truncated preview would render as
+     * a whole collection, which is the one thing this face carries it to prevent.
+     */
+    private static DataBrowserOutcome.Find.Read read(Object body) {
+        if (!(body instanceof Map<?, ?> m
+                && m.get("rows") instanceof List<?> listed
+                && m.get("moreAvailable") instanceof Boolean more)) {
+            return null;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>(listed.size());
+        for (Object row : listed) {
+            if (row instanceof Map<?, ?> fields) {
+                Map<String, Object> copy = new LinkedHashMap<>();
+                fields.forEach((name, value) -> copy.put(String.valueOf(name), value));
+                rows.add(copy);
+            }
+        }
+        return new DataBrowserOutcome.Find.Read(rows, count(m.get("approximateTotal")), more);
+    }
+
+    /** One reported count, or null when the server reported none — never zero standing in for absent. */
+    private static Long count(Object reported) {
+        return reported instanceof Number number ? number.longValue() : null;
     }
 
     @Override
@@ -846,7 +968,49 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
         });
     }
 
+
+    @Override
+    public String tail(URI baseUrl, String credential, String sourceId, String collection, Object filter,
+            TailStream sink, BooleanSupplier stop) {
+        String path = "/api/data-browser/" + urlSegment(sourceId) + "/" + urlSegment(collection) + "/tail";
+        // The filter travels in the handshake query because a handshake has no body. It goes as the same
+        // JSON a read would have sent, so both faces meet the identical reading on the far side.
+        String query = filter == null ? "" : "?filter=" + encode(JsonOut.compact(filter));
+        return stream(wsUri(baseUrl, path + query), credential, stop, frame -> {
+            TailChange change = tailChange(frame);
+            if (change != null) {
+                sink.change(change);
+            }
+        });
+    }
+
+    /** One streamed change frame, or null when the frame is not one. */
+    private static TailChange tailChange(String frame) {
+        Object parsed = JsonReader.parse(frame);
+        if (!(parsed instanceof Map<?, ?> map) || !(map.get("kind") instanceof String kind)) {
+            return null;
+        }
+        String at = TIME.format(Instant.ofEpochMilli(
+                map.get("at") instanceof Number ms ? ms.longValue() : 0L).atZone(ZoneId.systemDefault()));
+        // A row the frame did not carry stays absent here. Decoding it into an empty map would turn
+        // "the connector did not say" into "the connector said there was nothing".
+        return new TailChange(TailChange.Kind.valueOf(kind), at, row(map, "before"), row(map, "after"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> row(Map<?, ?> frame, String side) {
+        return frame.get(side) instanceof Map<?, ?> written ? (Map<String, Object>) written : null;
+    }
+
+    /** How a streamed change's time is shown: the clock, because a follow is read as it happens. */
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
+
+    private static String encode(String segment) {
+        return URLEncoder.encode(segment, StandardCharsets.UTF_8);
+    }
+
     /** The websocket policy-violation close code, which the server sends carrying a coded refusal. */
+
     private static final int WS_POLICY_VIOLATION = 1008;
 
     /**

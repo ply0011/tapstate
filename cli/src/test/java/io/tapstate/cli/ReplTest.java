@@ -138,6 +138,29 @@ class ReplTest {
         final List<String> watchCalls = new ArrayList<>();
         final List<String> followCalls = new ArrayList<>();
 
+        /** The canned read-shell outcomes, the calls made, and the request the last read carried. */
+        DataBrowserOutcome.Collections collectionsOutcome = new DataBrowserOutcome.Collections.Unreachable();
+        DataBrowserOutcome.Stats statsOutcome = new DataBrowserOutcome.Stats.Unreachable();
+        DataBrowserOutcome.Find findOutcome = new DataBrowserOutcome.Find.Unreachable();
+        final List<String> dataBrowserCalls = new ArrayList<>();
+
+        /** Changes the fake streams to a follow, delivered in order before the stream ends. */
+        final List<TailChange> tailFrames = new ArrayList<>();
+
+        /** A refusal the follow ends with, or null when it ends because the caller stopped it. */
+        String tailRefusal;
+
+        @Override
+        public String tail(URI baseUrl, String credential, String sourceId, String collection,
+                           Object filter, TailStream sink, java.util.function.BooleanSupplier stop) {
+            dataBrowserCalls.add("tail " + sourceId + "." + collection + " filter=" + filter);
+            tailFrames.forEach(sink::change);
+            return tailRefusal;
+        }
+        Object lastFindFilter;
+        DataBrowserCall.Order lastFindSort;
+        Integer lastFindLimit;
+
         FakeControlPlane(URI... healthy) {
             this.healthy = new LinkedHashSet<>(List.of(healthy));
         }
@@ -158,6 +181,32 @@ class ReplTest {
         public LoginOutcome login(URI baseUrl, String username, String password) {
             loginCalls.add(username + ":" + password + "@" + baseUrl);
             return loginOutcome;
+        }
+
+        @Override
+        public DataBrowserOutcome.Collections collections(URI baseUrl, String credential, String sourceId) {
+            dataBrowserCalls.add("collections " + sourceId);
+            return healthy.contains(baseUrl)
+                    ? collectionsOutcome : new DataBrowserOutcome.Collections.Unreachable();
+        }
+
+        @Override
+        public DataBrowserOutcome.Stats stats(
+                URI baseUrl, String credential, String sourceId, String collection) {
+            dataBrowserCalls.add("stats " + sourceId + "." + collection);
+            return healthy.contains(baseUrl) ? statsOutcome : new DataBrowserOutcome.Stats.Unreachable();
+        }
+
+        @Override
+        public DataBrowserOutcome.Find find(URI baseUrl, String credential, String sourceId,
+                                            String collection, Object filter,
+                                            DataBrowserCall.Order sort, Integer limit) {
+            dataBrowserCalls.add("find " + sourceId + "." + collection
+                    + " filter=" + filter + " sort=" + sort + " limit=" + limit);
+            lastFindFilter = filter;
+            lastFindSort = sort;
+            lastFindLimit = limit;
+            return healthy.contains(baseUrl) ? findOutcome : new DataBrowserOutcome.Find.Unreachable();
         }
 
         @Override
@@ -890,6 +939,219 @@ class ReplTest {
         h.repl().dispatch("connect node1:7900");
         h.repl().dispatch("login alice");
         return h;
+    }
+
+    // ---- the read shell ----
+
+    @Test
+    void showCollectionsNamesEveryDeclaredSourcesCollectionsAsSomethingYouCanType() {
+        // The answer to "what can I read" is only useful as the full <source>.<collection> names, because
+        // those are exactly what the next line has to say.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.listOutcome = new ListOutcome.Listed(List.of(new RemoteArtifact("views", "source", "")));
+        client.collectionsOutcome =
+                new DataBrowserOutcome.Collections.Listed(List.of("order_state", "customers"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("show collections")).isTrue();
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("views.order_state").contains("views.customers");
+        assertThat(client.dataBrowserCalls).containsExactly("collections views");
+        assertThat(h.repl().lastExitCode()).isZero();
+    }
+
+    @Test
+    void showCollectionsSaysTheListIsWhatTheDatabaseHoldsRatherThanWhatWasDeclared() {
+        // The two are different sets and the declared one is the wrong answer, so the list says which it
+        // is. A source referenced purely as a connection supplier declares no tables at all.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.collectionsOutcome = new DataBrowserOutcome.Collections.Listed(List.of("order_state"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("show collections views");
+
+        assertThat(h.sink().toString().substring(mark))
+                .contains("what each source's database holds, not what the workspace declares");
+        assertThat(client.dataBrowserCalls).containsExactly("collections views");
+    }
+
+    @Test
+    void findSendsTheVocabularyRatherThanTheDocumentThatWasTyped() {
+        // The filter is written in the shell's syntax and leaves as Tapstate's vocabulary. Sending the
+        // typed document instead would be a passthrough with a friendly parser in front of it, which is
+        // the one thing this face is not.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(), null, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch(
+                "views.order_state.find({status: 'Paid'}).sort({field:'total', dir:'desc'}).limit(5)");
+
+        assertThat(client.lastFindFilter)
+                .isEqualTo(Map.of("field", "status", "op", "eq", "value", "Paid"));
+        assertThat(client.lastFindSort).isEqualTo(new DataBrowserCall.Order("total", "desc"));
+        assertThat(client.lastFindLimit).isEqualTo(5);
+    }
+
+    @Test
+    void findSaysHowManyThereAreAndThatMoreRemain() {
+        // The read is one-shot, so nothing in the rows separates a preview of ten from a collection of
+        // ten. This line is the whole of what does.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(
+                List.of(Map.of("order_id", "ord_123")), 512L, true);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("\"order_id\": \"ord_123\"");
+        assertThat(output).contains("showing 1 of ~512").contains("more rows remain");
+    }
+
+    @Test
+    void findWritesEachRowFormattedRatherThanFlattenedOntoOneLine() {
+        // A row with anything embedded in it is unreadable on one line: the reader is scanning for one
+        // leaf and the whole tree is punctuation between them. The rows are complete either way -- what
+        // changes is whether a person can find anything in them.
+        java.util.Map<String, Object> item = new java.util.LinkedHashMap<>();
+        item.put("sku", "A-1");
+        item.put("qty", 2);
+        java.util.Map<String, Object> order = new java.util.LinkedHashMap<>();
+        order.put("id", "ord_1");
+        order.put("items", List.of(item));
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(order), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).as("an embedded field starts its own indented block rather than continuing "
+                        + "the same line")
+                .contains("\n  \"items\": [");
+        assertThat(output).as("formatting is not allowed to cost content -- every leaf still arrives")
+                .contains("\"sku\": \"A-1\"").contains("\"qty\": 2").contains("\"id\": \"ord_1\"");
+    }
+
+    @Test
+    void findSaysAnUnorderedReadIsNotInAStableOrder() {
+        // Asking for no order leaves it to the database, which does not promise the same one twice. A
+        // reader who is not told reads the first row as "the first row".
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        assertThat(h.sink().toString().substring(mark))
+                .contains("natural order — not stable, and not the newest");
+    }
+
+    @Test
+    void findNamesTheOrderInsteadWhenOneWasAskedFor() {
+        // The other half, so a footer that printed the natural-order caveat unconditionally cannot pass:
+        // said over an ordered read it is simply false.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find().sort({field:'total', dir:'desc'})");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("ordered by `total` desc");
+        assertThat(output).doesNotContain("natural order");
+    }
+
+    @Test
+    void findGivesNoCountForAFilteredReadRatherThanOneItDidNotPayFor() {
+        // Counting a filtered collection is a full scan, so the server withholds it. A footer that
+        // rendered the absent count as 0 would state as fact the one thing the read declined to work out.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), null, true);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find({status: 'Paid'})");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("showing 1 ").doesNotContain(" of ~").doesNotContain("of ~0");
+        assertThat(output).contains("more rows remain");
+    }
+
+    @Test
+    void statsReportsTheRowCountAndAverageRowSizeAndSaysTheCountIsAnEstimate() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.statsOutcome = new DataBrowserOutcome.Stats.Reported(512L, 40960L, 80L);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.stats()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("~512").contains("80 bytes").contains("not counted");
+        assertThat(client.dataBrowserCalls).containsExactly("stats views.order_state");
+    }
+
+    @Test
+    void statsReportsASizeTheConnectorWithheldAsUnreportedRatherThanZero() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.statsOutcome = new DataBrowserOutcome.Stats.Reported(null, null, null);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.stats()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("not reported").doesNotContain("~0").doesNotContain("0 bytes");
+    }
+
+    @Test
+    void aReadShellLineOffLineReportsThereIsNoConnectionRatherThanAnUnknownVerb() {
+        // It falls to the verb table otherwise, which answers a correctly typed read with a spelling
+        // suggestion for a word that was spelt right.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = harness(Path.of("tap-work"), client, new ScriptedPrompter());
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("views.order_state.find()")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).contains("cli.not-connected");
+        assertThat(client.dataBrowserCalls).isEmpty();
+    }
+
+    @Test
+    void aReadShellLineItCannotParseSaysWhyAndAsksTheServerNothing() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("views.order_state.drop()")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).contains("is not a read");
+        assertThat(client.dataBrowserCalls).isEmpty();
+        assertThat(h.repl().lastExitCode()).isEqualTo(Cli.EXIT_USAGE);
+    }
+
+    @Test
+    void theSameReadIsReachableAsAVerbForAOneShotInvocation() {
+        // A session takes the bare line, but a script gets one command; without the verb the shell would
+        // be unreachable from anything that is not a person at a prompt.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(), null, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch(List.of("data-browser", "views.order_state.find()"));
+
+        assertThat(client.dataBrowserCalls).containsExactly(
+                "find views.order_state filter=null sort=null limit=null");
     }
 
     @Test
@@ -3673,5 +3935,136 @@ class ReplTest {
                 .withEnv(name -> "TAPSTATE_PASSWORD".equals(name) ? "from-env" : null);
         Cli.runSession(launch, client, () -> new ScriptedPrompter("asked"));
         assertThat(client.loginCalls).containsExactly("admin:from-env@http://node1:7900");
+    }
+
+    // ---- the in-place view ----
+
+    @Test
+    void watchRefusesWhereItsOutputIsNotATerminalAndNamesBothAlternatives() {
+        // The refusal is the whole point: down a pipe, an in-place redraw is not a worse view, it is
+        // cursor-control bytes in the middle of whatever the reader piped it into. And a reader who
+        // reached for this verb wants one of the two things it names, so a refusal that named neither
+        // would leave them with nothing to type next.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("cli.watch-needs-a-terminal");
+        assertThat(output).contains("tail").contains("find");
+        assertThat(client.dataBrowserCalls)
+                .as("it refuses before asking, so a piped watch never opens a read it cannot render")
+                .isEmpty();
+    }
+
+    @Test
+    void watchSaysWhatANamespaceLooksLikeRatherThanReportingAnUnknownVerb() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> true);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output)
+                .as("the verb was matched, so a line it cannot read is that verb written wrongly; "
+                        + "falling through would answer it by complaining about an unknown command")
+                .contains("<source>.<collection>")
+                .doesNotContain("Unknown");
+    }
+
+    @Test
+    void watchNeedsASessionBeforeItNeedsATerminal() {
+        // Offline the view has nothing to watch at all, and saying "this needs a terminal" to somebody
+        // who has not connected sends them to fix the wrong thing.
+        Harness h = harness();
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views.order_state");
+
+        assertThat(h.sink().toString().substring(mark)).contains("cli.not-connected");
+    }
+
+    // ---- the appended view ----
+
+    @Test
+    void tailStreamsEveryChangeAndSaysWhatItCannotPromise() {
+        // The note is load-bearing. An appended stream reads as "everything that happened", and what
+        // reaches the store is the settled version of a row -- rapid changes are folded before they are
+        // written, upstream of the store, so no better transport would recover them.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailFrames.add(new TailChange(TailChange.Kind.INSERT, "14:22:11", null,
+                Map.of("status", "Paid")));
+        client.tailFrames.add(new TailChange(TailChange.Kind.UPDATE, "14:22:15",
+                Map.of("status", "Paid"), Map.of("status", "Shipped")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("not every intermediate version");
+        assertThat(output).contains("insert").contains("update");
+        assertThat(output)
+                .as("both sides of the alteration are shown because this change carried both; nothing "
+                        + "is worked out from an earlier event")
+                .contains("Paid").contains("Shipped");
+    }
+
+    @Test
+    void tailSaysWhyItStoppedRatherThanNamingACodeAndNothingElse() {
+        // A follow that ends by itself - its stream failed, or it was reclaimed after showing nothing
+        // for long enough - arrives as a code and nothing else, because a close frame carries one
+        // field. The reader is somebody watching a screen that just stopped updating, so the code has
+        // to be turned back into a sentence here; there is nowhere else it could be done.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailRefusal = "data-browser.follow-idle";
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("data-browser.follow-idle");
+        assertThat(output)
+                .as("the catalog sentence, not the literal text of a missing one")
+                .contains("no changes")
+                .doesNotContain("null");
+    }
+
+    @Test
+    void tailNeedsNoTerminalBecauseItOnlyEverAppends() {
+        // The opposite of the in-place view, and the reason both exist: this one is the pipeable half.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailFrames.add(new TailChange(TailChange.Kind.INSERT, "14:22:11", null,
+                Map.of("status", "Paid")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).doesNotContain("cli.watch-needs-a-terminal");
+        assertThat(output).contains("insert");
+    }
+
+    @Test
+    void tailSendsItsFilterToTheServerRatherThanNarrowingLocally() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch("tail views.order_state {status: \"Paid\"}");
+
+        assertThat(client.dataBrowserCalls)
+                .as("narrowing on the client would still carry every change of the whole collection "
+                        + "over the wire, which is the cost the filter exists to cut")
+                .anySatisfy(call -> assertThat(call).contains("tail views.order_state")
+                        .contains("status").contains("Paid"));
     }
 }
