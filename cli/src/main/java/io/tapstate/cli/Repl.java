@@ -27,7 +27,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.regex.Pattern;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
@@ -1901,7 +1900,7 @@ final class Repl {
             return null;
         }
         String trimmed = value.trim();
-        if (!TRANSLATION_KEY.matcher(trimmed).matches()) {
+        if (!isDiagnosticKey(trimmed)) {
             return trimmed;
         }
         String key = PDK_TEST_ITEM_PREFIX + trimmed;
@@ -1913,15 +1912,40 @@ final class Repl {
     private static final String PDK_TEST_ITEM_PREFIX = "pdk.testitem.";
 
     /**
-     * A dotted lowercase identifier and nothing else: two or more segments, separated by dots.
+     * Whether {@code value} is a dotted lowercase identifier and nothing else: two or more segments of
+     * {@code [a-z0-9-]}, separated by single dots, with nothing before, between or after them.
      *
-     * <p>One repetition, and each pass through it must begin with a literal dot. That is what keeps it
-     * linear. An earlier form had two adjacent groups that could both match the same {@code .segment},
-     * so {@code a.b.c.d} could be split between them in exponentially many ways and a long input would
-     * be backtracked through all of them.
+     * <p>Read character by character rather than matched, because the string is a connector's own and
+     * its length is bounded by nothing here. Expressing this shape as a regular expression needs a
+     * repeated group - one segment, repeated - and this platform's engine matches a repeated group by
+     * recursing once per repetition, so a few thousand segments exhaust the stack. The failure is not
+     * a refusal but a StackOverflowError thrown out of printing a connection report: not coded, not
+     * actionable, and nowhere near the input that caused it. A single pass has no such ceiling, and
+     * decides the same shape.
      */
-    private static final Pattern TRANSLATION_KEY =
-            Pattern.compile("[a-z0-9-]+(?:\\.[a-z0-9-]+)+");
+    private static boolean isDiagnosticKey(String value) {
+        int segment = 0;
+        int separators = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '.') {
+                // A dot closes a segment, so one arriving with no segment open means an empty one:
+                // a leading dot, or two dots in a row.
+                if (segment == 0) {
+                    return false;
+                }
+                separators++;
+                segment = 0;
+            } else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+                segment++;
+            } else {
+                return false;
+            }
+        }
+        // A segment must be open at the end (no trailing dot), and at least one dot must have closed
+        // one before it - a single bare word is a word, not a key.
+        return segment > 0 && separators > 0;
+    }
 
     /** The report as an ordered tree for the machine surfaces, omitting the optional check fields left null. */
     private static Map<String, Object> reportMap(ConnectionReport report) {

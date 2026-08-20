@@ -1588,6 +1588,43 @@ class ReplTest {
     }
 
     /**
+     * A diagnostic long enough to be worth refusing is refused, not crashed on.
+     *
+     * <p>Deciding whether a string is a key was a regular expression, and matching a repeated group is
+     * recursive in this platform's engine - one frame per repetition, so a few thousand dotted segments
+     * exhausted the stack. What arrives here is a connector's own text: it crosses the wire from a
+     * database nobody here configured, its length is bounded by nothing this repository controls, and
+     * the failure would be a StackOverflowError thrown out of printing a report, which is neither a
+     * coded error nor anything the reader could act on. Reading the string once, character by
+     * character, has no such ceiling.
+     *
+     * <p>The size is chosen to overflow well past any stack a runner might be given, not to sit just
+     * over the edge of the default one - a test that only fails at 1 MB would pass on a JVM configured
+     * with more and quietly stop guarding anything.
+     */
+    @Test
+    void testSurvivesADiagnosticFarTooLongToMatchByRecursion() {
+        String enormous = "a" + ".a".repeat(100_000);
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Access denied",
+                        enormous, null, "CDC_PRIVILEGE")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out)
+                .as("it is a key by shape and the catalog has no wording for it, so it is dropped")
+                .doesNotContain(enormous);
+        assertThat(out).contains("Access denied").contains("CDC_PRIVILEGE");
+    }
+
+    /**
      * For the keys the connector API actually defines, the catalog supplies the wording the connector
      * never carried, so the checks that decide whether a stranger's own database can be read at all
      * say what to do about it rather than naming a key nobody can resolve.
