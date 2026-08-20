@@ -426,6 +426,21 @@ docker compose exec mongo mongosh --quiet \
   --eval "db.order_state.countDocuments()"    # should reach 5
 ```
 
+To point a GUI or a driver at the store from your own machine instead, publish the
+port first — the stack does not, so nothing on the host can see it by default. Add
+`ports: ["127.0.0.1:27017:27017"]` to the `mongo` service in `docker-compose.yml`,
+re-run `docker compose up -d`, and connect with:
+
+```
+mongodb://127.0.0.1:27017/views?directConnection=true
+```
+
+`directConnection=true` is not optional here. The stack runs a one-member replica set
+whose member is registered under a name that resolves only inside the container, so a
+URI carrying `replicaSet=rs0` makes the driver discover that name and dial an address
+on your own machine where nothing is listening — the connection is refused against
+your own loopback, which reads like a firewall problem and is not one.
+
 ## 8. Exercise change-data-capture
 
 Change the source in MySQL and watch the target in MongoDB follow. The pipeline

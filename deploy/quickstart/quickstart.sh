@@ -123,6 +123,15 @@ directory). A change reaches the target in about a second, so each read waits fo
   until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
   echo "row 6 is gone from MongoDB, too"
 
+Reach the store from your own machine (optional -- the reads above go through the container):
+  The store's port is not published, so nothing on your host can see it by default. To point a GUI or
+  a driver at it, add  ports: ["127.0.0.1:27017:27017"]  to the mongo service in docker-compose.yml,
+  re-run docker compose up -d, and connect with:
+    mongodb://127.0.0.1:27017/views?directConnection=true
+  Keep directConnection=true. This is a one-member replica set that registers its member under a name
+  meaning something only inside the container, so a URI carrying replicaSet=rs0 makes the driver
+  discover that name and dial an address on your own machine where nothing is listening.
+
 Stop, and pick it up later (run in this directory):
   docker compose stop        stop the stack and keep its data (docker compose start resumes it)
 

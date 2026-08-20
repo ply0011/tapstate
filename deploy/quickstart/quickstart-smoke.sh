@@ -347,6 +347,16 @@ if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -
 else
   bad "no teardown printed: $RUN_OUT"
 fi
+# Telling someone to publish the port is the half of the advice that does not work on its own: the
+# set registers its member under a container-internal name, so a driver that discovers the topology
+# dials the host's own loopback and is refused. The note has to carry directConnection with it.
+if printf '%s' "$RUN_OUT" | grep -q 'ports: \["127.0.0.1:27017:27017"\]' \
+   && printf '%s' "$RUN_OUT" | grep -q 'directConnection=true' \
+   && printf '%s' "$RUN_OUT" | grep -qi 'replicaSet=rs0'; then
+  ok "says how to reach the store from the host, and why directConnection is required"
+else
+  bad "host access to the store is undocumented or incomplete: $RUN_OUT"
+fi
 # Stopping and destroying are different intentions and the demo has to offer both. Until it did, the
 # only documented way out deleted the data, so a user who just wanted their laptop back had to guess
 # -- and guessing wrong on this one is unrecoverable.
