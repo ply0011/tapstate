@@ -939,7 +939,10 @@ final class Repl {
         PrintWriter out = commandLine.getOut();
         return switch (outcome) {
             case DataBrowserOutcome.Find.Read read -> {
-                read.rows().forEach(row -> out.println(JsonOut.compact(row)));
+                // Formatted rather than flattened: a row with anything embedded in it is complete on
+                // one line and unreadable on it, because every leaf the reader is looking for sits
+                // between two others with nothing but punctuation to separate them.
+                read.rows().forEach(row -> out.println(JsonOut.write(row)));
                 if (read.rows().isEmpty()) {
                     out.println("no rows matched");
                 }

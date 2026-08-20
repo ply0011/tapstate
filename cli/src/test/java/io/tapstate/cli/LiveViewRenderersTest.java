@@ -139,4 +139,99 @@ class LiveViewRenderersTest {
                     .contains("checked 14:22:19");
         }
     }
+
+    @Nested
+    @DisplayName("an embedded value in the in-place view")
+    class NestedValues {
+
+        private static Map<String, Object> item(String sku, int qty) {
+            return row("sku", sku, "name", "Gadget", "qty", qty, "price", 23.49,
+                    "warehouse", row("code", "WH-1", "shelf", "S3", "bin", "B11"));
+        }
+
+        private static List<String> frameOf(Map<String, Object> now, Map<String, Object> was) {
+            return WatchRenderer.frame("views.order_state", now, was,
+                    DocumentDiff.between(was, now), 5L, WIDE);
+        }
+
+        @Test
+        @DisplayName("one that fits stays on its own line, so the common case does not grow taller")
+        void aValueThatFitsIsNotExpanded() {
+            List<String> frame = frameOf(row("tags", List.of("normal")), null);
+
+            assertThat(frame).as("expanding what already fits spends screen height for nothing")
+                    .anySatisfy(line -> assertThat(line).contains("[\"normal\"]"));
+            assertThat(String.join("\n", frame)).doesNotContain("(1 items)");
+        }
+
+        @Test
+        @DisplayName("a long array keeps both ends and says how many it left out in between")
+        void aLongArrayKeepsBothEndsAndCountsTheMiddle() {
+            List<Object> many = new java.util.ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                many.add(item("SKU-" + i, i + 1));
+            }
+
+            String text = String.join("\n", frameOf(row("items", many), null));
+
+            assertThat(text).as("the first elements are what the reader orients on").contains("SKU-0");
+            assertThat(text).as("the last ones are where an append lands").contains("SKU-7");
+            assertThat(text).as("what was left out has to be counted, or the array reads as complete")
+                    .contains("3 more");
+            assertThat(text).as("the total is the one number a truncated array cannot imply")
+                    .contains("(8 items)");
+            assertThat(text).as("the middle is what gets dropped").doesNotContain("SKU-4");
+        }
+
+        @Test
+        @DisplayName("a level is opened up only when it does not fit — one that fits stays on its line")
+        void onlyWhatDoesNotFitIsOpenedUp() {
+            String text = String.join("\n", frameOf(row("shipping",
+                    row("method", "express", "carrier", "SF", "insured", true, "priority", 1,
+                            "meta", row("v", 1))), null));
+
+            assertThat(text).as("the field's own keys are what the reader came for")
+                    .contains("\"method\": \"express\"").contains("\"carrier\": \"SF\"");
+            assertThat(text).as("the inner value fits its own line, so opening it up too would spend "
+                            + "height on something already readable")
+                    .contains("\"meta\": {\"v\": 1}");
+        }
+
+        @Test
+        @DisplayName("the element that changed is readable, not cut out of the middle")
+        void theChangedElementIsReadableRatherThanCutAway() {
+            Map<String, Object> was = row("items", List.of(item("B-7", 2)));
+            Map<String, Object> now = row("items", List.of(item("B-7", 9)));
+
+            String text = String.join("\n", frameOf(now, was));
+
+            // The mark says something moved. Before this rule the two cells were cut at the same
+            // character offset, so both ends matched and the one number that differed was inside the
+            // part that had been removed -- a diff that announces itself and then hides what it is.
+            assertThat(text).as("the new value has to be on screen for the mark to mean anything")
+                    .contains("\"qty\": 9");
+            assertThat(text).as("and the old one, or there is nothing to compare it against")
+                    .contains("\"qty\": 2");
+        }
+
+        @Test
+        @DisplayName("the field name is written once, beside the first line of its own value")
+        void theFieldNameIsWrittenOncePerValue() {
+            List<Object> many = new java.util.ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                many.add(item("SKU-" + i, i + 1));
+            }
+
+            // The field column only -- the closing line of an array says "(8 items)" in the value
+            // column, which is the same word and not a second naming of the field.
+            long named = frameOf(row("items", many), null).stream()
+                    .filter(line -> line.startsWith("\u2502 "))
+                    .filter(line -> line.indexOf('\u2502', 1) > 0)
+                    .filter(line -> line.substring(0, line.indexOf('\u2502', 1)).contains("items"))
+                    .count();
+
+            assertThat(named).as("repeating it down the cell reads as several fields of the same name")
+                    .isEqualTo(1);
+        }
+    }
 }

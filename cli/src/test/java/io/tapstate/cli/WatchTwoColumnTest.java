@@ -165,20 +165,43 @@ class WatchTwoColumnTest {
     }
 
     @Test
-    @DisplayName("a value too long for its column keeps both ends, cutting the middle out")
-    void anOverlongValueIsCutInTheMiddle() {
+    @DisplayName("an embedded value too long for its column is opened up rather than cut")
+    void anOverlongEmbeddedValueIsOpenedUp() {
         WatchView view = new WatchView("shop.orders", () -> 100);
         // The shape a Mongo _id actually arrives in: an object, not a string.
         Map<String, Object> id = row("date", "2026-08-19T04:03:39.000Z", "timestamp", 1787112219);
 
         List<String> written = view.onPoll(new WatchPoll.Row(row("_id", id), 36L), START);
-        String cell = cells(written, "_id").get(1);
+
+        // This used to be cut in the middle, on the reasoning that both ends of a long value are what
+        // tell two of them apart. That holds for a value with no parts. It fails for one with parts:
+        // two versions of an embedded value share a long head and a long tail, so a cut at a fixed
+        // offset removes precisely what they differ in -- the view marks the field changed and then
+        // shows two cells that read identically.
+        assertThat(String.join("\n", written))
+                .as("every member of it is legible, which is the whole reason not to cut it")
+                .contains("\"date\": \"2026-08-19T04:03:39.000Z\"")
+                .contains("\"timestamp\": 1787112219");
+        assertThat(written)
+                .as("and it still fits the screen, or the table overflows it")
+                .allSatisfy(l -> assertThat(l.length()).isLessThanOrEqualTo(100));
+    }
+
+    @Test
+    @DisplayName("a long value with no parts still keeps both ends, cutting the middle out")
+    void anOverlongScalarIsStillCutInTheMiddle() {
+        WatchView view = new WatchView("shop.orders", () -> 100);
+
+        List<String> written = view.onPoll(new WatchPoll.Row(row("note",
+                "a very long single scalar value that certainly does not fit its column at all, no"),
+                36L), START);
+        String cell = cells(written, "note").get(1);
 
         assertThat(cell)
                 .as("the tail of a long value is what tells two of them apart; cutting it off leaves "
                         + "every long value looking like every other one with the same prefix")
-                .startsWith("{\"date\": \"2026")
-                .endsWith("1787112219}")
+                .startsWith("\"a very long")
+                .endsWith("at all, no\"")
                 .contains("…");
         assertThat(written)
                 .as("and it still fits the screen, or the table overflows it")

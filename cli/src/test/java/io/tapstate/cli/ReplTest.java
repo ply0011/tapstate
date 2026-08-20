@@ -1014,6 +1014,32 @@ class ReplTest {
     }
 
     @Test
+    void findWritesEachRowFormattedRatherThanFlattenedOntoOneLine() {
+        // A row with anything embedded in it is unreadable on one line: the reader is scanning for one
+        // leaf and the whole tree is punctuation between them. The rows are complete either way -- what
+        // changes is whether a person can find anything in them.
+        java.util.Map<String, Object> item = new java.util.LinkedHashMap<>();
+        item.put("sku", "A-1");
+        item.put("qty", 2);
+        java.util.Map<String, Object> order = new java.util.LinkedHashMap<>();
+        order.put("id", "ord_1");
+        order.put("items", List.of(item));
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(order), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).as("an embedded field starts its own indented block rather than continuing "
+                        + "the same line")
+                .contains("\n  \"items\": [");
+        assertThat(output).as("formatting is not allowed to cost content -- every leaf still arrives")
+                .contains("\"sku\": \"A-1\"").contains("\"qty\": 2").contains("\"id\": \"ord_1\"");
+    }
+
+    @Test
     void findSaysAnUnorderedReadIsNotInAStableOrder() {
         // Asking for no order leaves it to the database, which does not promise the same one twice. A
         // reader who is not told reads the first row as "the first row".
