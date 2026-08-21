@@ -208,6 +208,23 @@ else
   # the same answer. Without this the run below reports every connector as derived on the strength of
   # a file that was never written.
   [ -f "$skipped_list" ] || fail "step 2 (capability bitmap) wrote no skip list at $skipped_list"
+  # Every connector on the worklist has to come back either derived or skipped-with-a-reason. Derive
+  # is written that way, and says so, but nothing checked it: a connector that fell out between the
+  # manifest and the bitmap is a connector whose modes silently empty in the regenerated catalog, and
+  # it leaves no trace anywhere - not in the bitmap, which never mentions it, and not in the skip
+  # list, which is what "we know why this one is missing" looks like.
+  derived_count="$(grep -c . "$bitmap" | tr -d " ")"
+  skipped_count="$(grep -c . "$skipped_list" | tr -d " ")"
+  manifest_count="$(grep -c . "$manifest" | tr -d " ")"
+  accounted=$((derived_count + skipped_count))
+  if [ "$accounted" -ne "$manifest_count" ]; then
+    fail "step 2 (capability bitmap) accounted for $accounted of the $manifest_count connectors on the worklist - $((manifest_count - accounted)) came back neither derived nor skipped"
+  fi
+  # How much of the catalog this refresh has a capability face for. A dist holding a handful of jars
+  # regenerates a complete-looking catalog with the modes of everything else emptied out, and the only
+  # things that say so are this count and the list at the end - the diff shows what changed, which for
+  # a gutted entry looks like any other edit.
+  echo "  derived $derived_count of $manifest_count connectors; $skipped_count produced no capability bits"
 fi
 
 # --- step 3: regenerate ---------------------------------------------------------------------------

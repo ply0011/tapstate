@@ -65,7 +65,11 @@ if [ -n "$manifest" ]; then                       # step 1: emit the probe manif
     report "$ASSEMBLER_REPORT" 0
     exit 0
   fi
-  printf 'mysql\tmysql-connector\tio.tapdata.connector.mysql.MysqlConnector\n' > "$manifest"
+  {
+    printf 'mysql\tmysql-connector\tio.tapdata.connector.mysql.MysqlConnector\n'
+    [ "${SMOKE_MANIFEST_SHORT:-no}" = yes ] || printf 'hazelcast\thazelcast-connector\tio.tapdata.connector.hazelcast.HazelcastConnector\n'
+    [ "${SMOKE_MANIFEST_EXTRA:-no}" = yes ] && printf 'ghost\tghost-connector\tio.tapdata.connector.ghost.GhostConnector\n'
+  } > "$manifest"
   report "$ASSEMBLER_REPORT" 0
   exit 0
 fi
@@ -240,6 +244,19 @@ expect "a full refresh reports all three steps" 0 "step 3 (regenerate) ok" \
 fresh_tree
 expect "a full refresh names what it could not derive" 0 "hazelcast" \
   --connectors "$scratch/connectors"
+
+# A dist holding a handful of jars regenerates a complete-looking catalog with everything else's modes
+# emptied out. The count is pinned exactly, because a plausible wrong denominator - the manifest, say,
+# rather than what derive actually accounted for - reads as a fuller refresh than happened.
+fresh_tree
+expect "a full refresh counts what it derived against the worklist" 0 \
+  "derived 1 of 2 connectors; 1 produced no capability bits" --connectors "$scratch/connectors"
+
+# A connector that comes back neither derived nor skipped is one whose modes quietly empty in the
+# regenerated catalog, and it appears in neither file - the absence is the whole signal.
+fresh_tree
+expect "a connector that came back neither derived nor skipped" 1 "came back neither derived nor skipped" \
+  SMOKE_MANIFEST_EXTRA=yes --connectors "$scratch/connectors"
 
 fresh_tree
 expect "a full refresh reports the catalog diff" 0 "Catalog diff" \
