@@ -490,6 +490,17 @@ case "$DEFAULT_QBASE" in
     bad "default asset base '$DEFAULT_QBASE' is not derived from CLI_VERSION — a branch keeps moving after the release" ;;
 esac
 
+# The replica-set member address is the one thing in this file a client outside the container reads.
+# Registered as localhost it points every such client at its own loopback, and the connection refused
+# there reads like a local firewall problem rather than a name that means nothing here. Asserting the
+# service name also keeps replicaSet= URIs working for anything a user adds to the compose network.
+if grep -q "rs.initiate({" "$HERE/docker-compose.yml" \
+   && grep "rs.initiate({" "$HERE/docker-compose.yml" | grep -q "host: 'mongo:27017'"; then
+  ok "the replica set registers its member under the service name, not localhost"
+else
+  bad "replica-set member address: $(grep "rs.initiate({" "$HERE/docker-compose.yml" || echo '(no rs.initiate call found)')"
+fi
+
 # Second, the compose file must name a published image. A `build:` key is unusable from a demo directory:
 # its context points into a repository that is not there. The source path keeps its build through an
 # explicit override file instead, so the released stack and the development stack stop being the same

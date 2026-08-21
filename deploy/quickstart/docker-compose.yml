@@ -18,10 +18,13 @@ services:
       # set, because a shell that evaluates a falsy value still exits 0 -- the check has to assert
       # the value, not merely evaluate it. And rs.initiate() returns before the election completes,
       # so a check that stops at "initiated" lets a dependent start against a set that cannot yet
-      # accept writes.
+      # accept writes. The member is registered under the service name rather than localhost, because
+      # the address recorded here is the one every client that discovers the topology will dial: under
+      # localhost a client outside this container is sent to its own loopback, where the refusal reads
+      # like a firewall problem and is not one.
       test: >
         mongosh --quiet --eval
-        "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }) };
+        "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }) };
          if (!db.hello().isWritablePrimary) { quit(1) }"
       interval: 3s
       timeout: 10s
