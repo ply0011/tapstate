@@ -378,7 +378,16 @@ main() {
             bootstrap_said="$(docker compose logs --no-log-prefix --tail 1 bootstrap 2>/dev/null || true)"
             case "$bootstrap_said" in
                 *"already exists"*)
-                    die "the CLI could not log in: this stack already had an admin from an earlier run, and the password in .env is not the one it was created with. Start clean with: docker compose down -v && sh quickstart.sh" ;;
+                    # The rerun half of this advice has to match how the script was started. The piped
+                    # form saves no copy of itself, so naming quickstart.sh there sends the user to a
+                    # file that is not present -- after the volume wipe has already happened, which is
+                    # the worst possible moment to hand someone a command that cannot work.
+                    if [ -f ./quickstart.sh ]; then
+                        again="sh quickstart.sh"
+                    else
+                        again="curl -sSL https://install.tapstate.dev | sh"
+                    fi
+                    die "the CLI could not log in: this stack already had an admin from an earlier run, and the password in .env is not the one it was created with. Start clean with: docker compose down -v && $again" ;;
                 *)
                     die "the CLI could not log in, so no verb after it ran; inspect it with: docker compose logs bootstrap" ;;
             esac ;;

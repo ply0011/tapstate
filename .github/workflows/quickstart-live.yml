@@ -123,11 +123,15 @@ jobs:
           script="$GITHUB_WORKSPACE/deploy/quickstart/quickstart.sh"
           cd "$RUNNER_TEMP"
           cat "$script" | sh 2>&1 | tee run.log
-          # Read the count line off the script's own summary. The wording is taken from the script rather
-          # than restated here: it has drifted once already -- the line became "the view now holds" when the
-          # demo started declaring a view, and this grep went on looking for the old words, so the lane
-          # could only fail even on a run that delivered every row.
-          grep -qE 'the (view|target) now holds [0-9]+ rows' run.log
+          # Read the count line off the script's own summary. This grep has drifted from that summary
+          # twice now, and both times it could only fail on a run that delivered every row: first when
+          # the line became "the view now holds" as the demo started declaring a view, then again when a
+          # second engine arrived and the summary began naming both engines' counts instead of "rows".
+          # So match on the numbers rather than on whichever nouns the summary happens to use -- the
+          # counts are what this assertion is actually about, and they are what a half-arrived demo
+          # cannot produce. Both are required: a run that carried MySQL and dropped PostgreSQL is the
+          # failure the second engine exists to make visible.
+          grep -qE 'now holds [0-9]+ orders from MySQL and [0-9]+ shipments from PostgreSQL' run.log
           test -d tapstate-demo || { echo "the piped run did not make its own directory" >&2; exit 1; }
 
           # The managed store is the deployment's, not the workspace's: nothing here applied it, and the

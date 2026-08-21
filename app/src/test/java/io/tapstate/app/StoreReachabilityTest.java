@@ -105,12 +105,17 @@ class StoreReachabilityTest {
         // its own must not be able to reintroduce it. The latch keeps the fake hanging until the
         // assertion is done, which is what makes this test about the deadline rather than about luck.
         CountDownLatch release = new CountDownLatch(1);
+        // Waited on rather than read straight after cancel(true): that call returns as soon as the
+        // interrupt is delivered, which is before the probe thread has run its handler. Reading the flag
+        // at that moment fails on a cancellation that did work, which is a test that goes red at random.
+        CountDownLatch sawInterrupt = new CountDownLatch(1);
         AtomicBoolean interrupted = new AtomicBoolean();
         ConnectionTester hanging = config -> {
             try {
                 release.await();
             } catch (InterruptedException e) {
                 interrupted.set(true);
+                sawInterrupt.countDown();
                 Thread.currentThread().interrupt();
             }
             return result(ConnectionTestResult.Outcome.PASSED, List.of());
@@ -134,7 +139,8 @@ class StoreReachabilityTest {
         }
 
         // The probe is cancelled rather than left running: one that honours interruption stops.
-        assertThat(interrupted.get()).as("the abandoned probe was interrupted").isTrue();
+        assertThat(sawInterrupt.await(5, TimeUnit.SECONDS)).as("the abandoned probe was interrupted").isTrue();
+        assertThat(interrupted.get()).isTrue();
     }
 
     @Test

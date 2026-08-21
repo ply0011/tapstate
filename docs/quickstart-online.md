@@ -497,7 +497,7 @@ port first — the stack does not, so nothing on the host can see it by default.
 `ports: ["127.0.0.1:27017:27017"]` to the `mongo` service in `docker-compose.yml`,
 re-run `docker compose up -d`, and connect with:
 
-```
+```text
 mongodb://127.0.0.1:27017/views?directConnection=true
 ```
 
