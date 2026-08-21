@@ -33,9 +33,22 @@ else
     exit 1
 fi
 
+# The pipe to awk decides the status, so a checksum command that fails still leaves a successful,
+# empty result -- and two empty digests compare equal, which is the same way this script could once
+# report a match having compared nothing. The checksum runs on its own, its status is taken, and an
+# empty digest is refused rather than returned.
 digest() {
     # shellcheck disable=SC2086
-    $DIGEST_TOOL "$1" | awk '{print $1}'
+    _raw="$($DIGEST_TOOL "$1")" || {
+        echo "could not hash $1" >&2
+        return 1
+    }
+    _sum="$(printf '%s' "$_raw" | awk '{print $1}')"
+    [ -n "$_sum" ] || {
+        echo "hashing $1 produced nothing" >&2
+        return 1
+    }
+    printf '%s' "$_sum"
 }
 
 # The pin each script carries, echoed on failure so the message names the skew instead of only
@@ -59,8 +72,8 @@ check() {
         return
     }
 
-    want="$(digest "$expected/$file")"
-    got="$(digest "$tmp/served")"
+    want="$(digest "$expected/$file")" || { failed=1; return; }
+    got="$(digest "$tmp/served")" || { failed=1; return; }
     if [ "$want" = "$got" ]; then
         printf 'ok   %s == %s (pin %s, sha256 %.12s...)\n' "$url" "$file" "$(pin_of "$expected/$file")" "$got"
         return

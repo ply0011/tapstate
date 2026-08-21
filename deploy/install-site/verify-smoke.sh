@@ -133,5 +133,25 @@ else
 fi
 rm -rf "$nodigest"
 
+# --- 8. the checksum command exists but fails -----------------------------------------------------
+# Distinct from case 7, and it survived that fix: the tool is present, so the up-front check passes,
+# and it fails when actually run. The status of a pipeline is its last command's, so awk reported
+# success over empty output -- and BOTH sides come back empty, which compare equal. That is the same
+# match-on-nothing the up-front refusal removed, one layer down.
+#
+# Both sides have to fail for the bug to show. A case where only one input is unhashable proves
+# nothing: the other digest is real, the two differ, and the verifier fails for the wrong reason.
+serve_fresh_quickstart; serve_fresh_installer
+failing="$(mktemp -d)"
+printf '#!/bin/sh\nexit 1\n' > "$failing/sha256sum"; chmod +x "$failing/sha256sum"
+printf '#!/bin/sh\nexit 1\n' > "$failing/shasum";    chmod +x "$failing/shasum"
+out="$(PATH="$failing:$PATH" sh "$VERIFY" "$BASE" "$EXPECTED" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && ! grep -q '^ok ' <<<"$out"; then
+  ok "a checksum command that fails is a failure, not two empty digests that match"
+else
+  bad "a failed checksum was reported as a match (rc=$rc): $out"
+fi
+rm -rf "$failing"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

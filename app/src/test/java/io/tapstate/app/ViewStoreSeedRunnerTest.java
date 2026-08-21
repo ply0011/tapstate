@@ -65,6 +65,12 @@ class ViewStoreSeedRunnerTest {
         assertThat(ViewStoreSeedRunner.viewsUri("mongodb://user:pw@h:27017/tapstate?authSource=admin"))
                 .as("an authSource the deployment set is left exactly as it is")
                 .isEqualTo("mongodb://user:pw@h:27017/views?authSource=admin");
+        assertThat(ViewStoreSeedRunner.viewsUri("mongodb://user:pw@h:27017/tapstate?authsource=admin"))
+                .as("option names are case-insensitive in a connection string, so this one counts too")
+                .isEqualTo("mongodb://user:pw@h:27017/views?authsource=admin");
+        assertThat(ViewStoreSeedRunner.viewsUri("mongodb://user:pw@h:27017/tapstate?appName=authSource=x"))
+                .as("the characters inside another option's value are not an authSource anybody set")
+                .isEqualTo("mongodb://user:pw@h:27017/views?appName=authSource=x&authSource=tapstate");
         assertThat(ViewStoreSeedRunner.viewsUri("mongodb://mongo:27017"))
                 .as("a URI that names no database still gets one, and has no default to preserve")
                 .isEqualTo("mongodb://mongo:27017/views");

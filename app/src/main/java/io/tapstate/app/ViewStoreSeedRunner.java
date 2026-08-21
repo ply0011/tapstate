@@ -97,9 +97,29 @@ final class ViewStoreSeedRunner implements ApplicationRunner {
      * falls back to {@code admin} there, and that is as true of the derived URI as of the original.
      */
     private static String withAuthSource(String query, String originalDatabase) {
-        if (originalDatabase.isEmpty() || query.contains("authSource=")) {
+        if (originalDatabase.isEmpty() || namesAuthSource(query)) {
             return query;
         }
         return query.isEmpty() ? "?authSource=" + originalDatabase : query + "&authSource=" + originalDatabase;
+    }
+
+    /**
+     * Whether the query already carries an {@code authSource} option.
+     *
+     * <p>Compared as an option name, case-insensitively, because that is how the connection string is
+     * read: a substring test takes {@code authsource=admin} for something else and appends a second
+     * option beside it, and it takes the same characters appearing inside another option's value for a
+     * setting nobody made.
+     */
+    private static boolean namesAuthSource(String query) {
+        String options = query.startsWith("?") ? query.substring(1) : query;
+        for (String option : options.split("&")) {
+            int equals = option.indexOf('=');
+            String name = equals < 0 ? option : option.substring(0, equals);
+            if (name.equalsIgnoreCase("authSource")) {
+                return true;
+            }
+        }
+        return false;
     }
 }
