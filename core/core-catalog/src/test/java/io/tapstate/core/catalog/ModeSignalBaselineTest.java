@@ -74,26 +74,47 @@ class ModeSignalBaselineTest {
             entry("hazelcast", NoModeReason.NOT_BUILT));
 
     /**
+     * What the connector is, for the rows whose modes are only a guess. Named by the family the
+     * catalog put it in rather than by the mode it ought to declare: which mode is right takes the
+     * connector's real semantics and a review, and this list is the input to that work, not a
+     * substitute for it.
+     */
+    private enum Guessed {
+        /** A file connector. Its reads are a directory scan, which the probe reports as the same
+         *  batch and stream functions a database registers - hence the derived cdc. */
+        FILE(ConnectorGroup.FILE),
+        /** A SaaS connector. Its reads are HTTP calls against somebody's API, on their pagination
+         *  and their rate limits - nothing the probe can tell apart from reading a table. */
+        SAAS(ConnectorGroup.SAAS),
+        /** A queue connector. Its read is an unbounded subscription; its two nearest siblings,
+         *  kafka and kafka_enhanced, are declared stream in the overlay. */
+        MQ(ConnectorGroup.MQ);
+
+        private final ConnectorGroup group;
+
+        Guessed(ConnectorGroup group) {
+            this.group = group;
+        }
+    }
+
+    /**
      * Bucket two: modes are present, derived, and on a connector derivation cannot answer for - so
      * the catalog ships a claim nobody checked. Ten of seventy-eight when this baseline was taken.
      *
-     * <p>Each entry says what the connector actually is, taken from its own spec's tags, next to what
-     * the probe guessed. That pairing is the qualification: it is what a reviewer needs in order to
-     * write the declaration that takes the id off this list, and it is deliberately not itself a
-     * declaration - admitting a mode to the overlay takes the connector's real semantics plus a
-     * review, and "looks like" is not evidence.
+     * <p>Spelled out for the same reason as the other bucket, and qualified per id so that whoever
+     * writes the declaration that removes one has the starting point rather than a bare list.
      */
-    private static final Map<String, String> UNVERIFIED_MODES = Map.ofEntries(
-            entry("csv", "tagged File; a directory scan is not the cdc the probe derived"),
-            entry("excel", "tagged File; a directory scan is not the cdc the probe derived"),
-            entry("json", "tagged File; a directory scan is not the cdc the probe derived"),
-            entry("xml", "tagged File; a directory scan is not the cdc the probe derived"),
-            entry("file-stream", "tagged File; a directory scan is not the cdc the probe derived"),
-            entry("coding", "tagged SaaS; an HTTP pull is not the database read the probe derived"),
-            entry("http-receiver", "tagged SaaS; an HTTP endpoint is not the database read the probe derived"),
-            entry("quickapi", "tagged SaaS; an HTTP pull is not the database read the probe derived"),
-            entry("zoho-desk", "tagged SaaS; an HTTP pull is not the database read the probe derived"),
-            entry("kafka_avro", "routed MQ by name; kafka and kafka_enhanced are declared stream"));
+    private static final Map<String, Guessed> UNVERIFIED_MODES = Map.ofEntries(
+            entry("csv", Guessed.FILE),
+            entry("excel", Guessed.FILE),
+            entry("json", Guessed.FILE),
+            entry("xml", Guessed.FILE),
+            entry("file-stream", Guessed.FILE),
+            entry("coding", Guessed.SAAS),
+            entry("http-receiver", Guessed.SAAS),
+            entry("quickapi", Guessed.SAAS),
+            entry("zoho-desk", Guessed.SAAS),
+            entry("kafka_avro", Guessed.MQ));
 
     @Test
     void noConnectorJoinsTheEmptyModesBaseline() {
@@ -172,6 +193,18 @@ class ModeSignalBaselineTest {
                                 + "it - it was probed after all");
                     }
                 }
+            }
+        }
+
+        for (Map.Entry<String, Guessed> pinned : UNVERIFIED_MODES.entrySet()) {
+            if (!catalog.ids().contains(pinned.getKey())) {
+                continue;
+            }
+            ConnectorCatalogEntry entry = catalog.byId(pinned.getKey());
+            if (entry.group() != pinned.getValue().group) {
+                contradicted.add(entry.id() + ": pinned as " + pinned.getValue() + " but the catalog "
+                        + "now groups it " + entry.group() + " - what it is changed, so what the "
+                        + "right declaration would be changed with it");
             }
         }
 
