@@ -1,0 +1,93 @@
+package io.tapstate.tools.catalog.assembler;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeSet;
+
+import io.tapstate.core.catalog.CatalogJson;
+import io.tapstate.core.catalog.ConnectorCatalogEntry;
+
+/**
+ * Compares one fetch of the upstream specifications against what the catalog last recorded.
+ *
+ * <p>Three findings, kept apart because they are acted on differently: content that moved under a
+ * connector the catalog already carries, a connector whose file is no longer where its row says it
+ * is, and a connector upstream carries that no row mentions at all.
+ */
+final class SpecDrift {
+
+    /**
+     * @param changedIds      catalogued connectors whose specification content no longer matches the
+     *                        fingerprint their row recorded
+     * @param vanishedIds     catalogued connectors whose specification is not at the path their row
+     *                        records — deleted upstream, or moved. A path-driven scan is the only
+     *                        thing that sees this class at all: a scan that walks whatever upstream
+     *                        happens to hold finds nothing missing by construction
+     * @param newConnectorIds connectors upstream carries that the catalog has no row for
+     */
+    record Report(List<String> changedIds, List<String> vanishedIds, List<String> newConnectorIds) {
+
+        /** Every connector this scan has something to say about — what triage weighs. */
+        List<String> allIds() {
+            TreeSet<String> ids = new TreeSet<>(changedIds);
+            ids.addAll(vanishedIds);
+            ids.addAll(newConnectorIds);
+            return List.copyOf(ids);
+        }
+    }
+
+    private SpecDrift() {
+    }
+
+    static Report compare(List<ConnectorCatalogEntry> snapshot, Map<String, String> fetchedByPath) {
+        List<String> changed = new ArrayList<>();
+        List<String> vanished = new ArrayList<>();
+        TreeSet<String> catalogued = new TreeSet<>();
+        TreeSet<String> claimedPaths = new TreeSet<>();
+
+        for (ConnectorCatalogEntry row : snapshot) {
+            catalogued.add(row.id());
+            String path = row.provenance() == null ? null : row.provenance().specPath();
+            if (path == null || path.isBlank()) {
+                continue; // registered at runtime; no upstream file stands behind it
+            }
+            claimedPaths.add(path);
+            String content = fetchedByPath.get(path);
+            if (content == null) {
+                vanished.add(row.id());
+            } else if (!SpecHash.of(content).equals(row.provenance().specContentHash())) {
+                changed.add(row.id());
+            }
+        }
+
+        TreeSet<String> discovered = new TreeSet<>();
+        for (Map.Entry<String, String> fetched : fetchedByPath.entrySet()) {
+            if (claimedPaths.contains(fetched.getKey())) {
+                continue;
+            }
+            // What makes a file a connector specification is the id inside it. The scan fetches on
+            // shape and decides here, so a resource that merely sits where a specification would is
+            // passed over rather than announced as a connector nobody catalogued.
+            String id = connectorId(fetched.getValue());
+            if (id != null && !id.isBlank() && !catalogued.contains(id)) {
+                discovered.add(id);
+            }
+        }
+        return new Report(List.copyOf(changed), List.copyOf(vanished), List.copyOf(discovered));
+    }
+
+    private static String connectorId(String specContent) {
+        Object tree;
+        try {
+            tree = CatalogJson.parse(specContent);
+        } catch (RuntimeException malformed) {
+            return null; // not parseable, so not a specification this scan can speak for
+        }
+        if (tree instanceof Map<?, ?> root && root.get("properties") instanceof Map<?, ?> properties) {
+            Object id = properties.get("id");
+            return id instanceof String s ? s : null;
+        }
+        return null;
+    }
+}

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -68,6 +69,45 @@ class CatalogArtifactTest {
                 .toList();
         Files.writeString(Path.of(fetchList),
                 String.join("\n", SpecPathEnumerator.specPathsToFetch(TapstateCatalog.load().all(), upstream)));
+    }
+
+    @Test
+    void emitsTheDriftReportWhenAskedTo() throws IOException {
+        String reportPath = System.getProperty("tapstate.catalog.drift-report");
+        assumeTrue(reportPath != null, "no -Dtapstate.catalog.drift-report — not a drift-scan run, skipping");
+        Path fetched = Path.of(requireProperty("tapstate.catalog.fetched"));
+        int ageDays = Integer.parseInt(requireProperty("tapstate.catalog.catalog-age-days"));
+
+        Map<String, String> fetchedByPath = new LinkedHashMap<>();
+        for (String path : Files.readAllLines(Path.of(requireProperty("tapstate.catalog.fetch-list")))) {
+            String relative = path.strip();
+            if (relative.isEmpty()) {
+                continue;
+            }
+            Path file = fetched.resolve(relative);
+            // Absent is a finding, not an error: it is how a connector deleted or moved upstream
+            // shows up. Leaving it out of the map is what lets the comparison say so.
+            if (Files.isRegularFile(file)) {
+                fetchedByPath.put(relative, Files.readString(file));
+            }
+        }
+
+        SpecDrift.Report drift = SpecDrift.compare(TapstateCatalog.load().all(), fetchedByPath);
+        DriftTriage.Decision decision = DriftTriage.decide(drift.allIds(), ageDays);
+        Files.writeString(Path.of(reportPath), String.join("\n",
+                "decision=" + decision,
+                "changed=" + String.join(" ", drift.changedIds()),
+                "vanished=" + String.join(" ", drift.vanishedIds()),
+                "new_connectors=" + String.join(" ", drift.newConnectorIds())) + "\n");
+    }
+
+    /** A property this step cannot proceed without — absent means the caller is wired wrong. */
+    private static String requireProperty(String name) {
+        String value = System.getProperty(name);
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("missing -D" + name);
+        }
+        return value;
     }
 
     @Test

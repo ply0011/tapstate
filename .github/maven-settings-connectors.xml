@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Extra Maven repository for building the upstream connectors.
+
+  Their build resolves io.confluent artifacts, which Maven Central does not carry: Confluent publishes
+  them to its own repository. The connectors' own root pom names only a private Nexus, reachable from
+  the upstream project's network and from nowhere else, so a build anywhere but there fails to resolve
+  them - reported as a read timeout against a host that will never answer, several minutes in, with no
+  mention of which artifact is actually unavailable.
+
+  Additive on purpose: the connectors' own repositories are left alone, and this only supplies what
+  they name no public source for. Used by the catalog refresh lane, which builds every connector.
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <profiles>
+    <profile>
+      <id>confluent-public</id>
+      <repositories>
+        <repository>
+          <id>confluent-public</id>
+          <url>https://packages.confluent.io/maven/</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+      </repositories>
+    </profile>
+  </profiles>
+  <activeProfiles>
+    <activeProfile>confluent-public</activeProfile>
+  </activeProfiles>
+</settings>

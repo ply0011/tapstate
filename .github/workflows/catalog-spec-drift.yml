@@ -1,0 +1,182 @@
+# Upstream specification drift, daily, without building a single connector jar.
+#
+# The connector catalog is generated from an upstream repository nobody here controls. It drifts in
+# two ways that cost two orders of magnitude apart: a specification file changes - field names,
+# labels, defaults - or a connector's capabilities change, which can only be found by building the
+# connector and loading it. This lane covers the cheap half and nothing else. The expensive half is
+# catalog-refresh.yml, on its own schedule, with its own timeout and its own concurrency group,
+# because a lane that fails for both reasons at once tells you neither.
+#
+# Red here has exactly one meaning: upstream really moved.
+#
+# Cost. The upstream working tree is around 469MB and its history larger still, while the
+# specifications this reads are about a megabyte all told. So the clone is partial and stays that
+# way, in a fixed order that matters:
+#
+#   1. clone --filter=blob:none --no-checkout --depth 1  - metadata only, no file contents;
+#   2. ls-tree to list paths                             - a partial clone carries its trees, so
+#                                                          listing costs no fetch at all;
+#   3. one sparse-checkout set for every path at once    - a single batched fetch;
+#   4. never git show a path at a time                   - on a partial clone each one is its own
+#                                                          round trip, and the cost is invisible
+#                                                          until a slow runner turns it into a
+#                                                          timeout nobody can explain.
+#
+# Judgement lives in Java, not in the run: blocks steps below to what a shell is good at - moving
+# bytes and calling things. What to fetch, what actually drifted, and whether that opens a pull
+# request are decided by code the ordinary build tests, because a rule written here is reachable by
+# no test in this repository and degrades to whoever remembers to check it by hand.
+#
+# Required repository secrets - a GitHub App, not the default token and not a personal one:
+#   CATALOG_BOT_APP_ID, CATALOG_BOT_PRIVATE_KEY
+# Pushing or opening a pull request with the default GITHUB_TOKEN triggers no push or pull_request
+# workflow, by design, to stop workflows recursing. Every required check on main is one of those, so
+# such a pull request sits with its checks permanently absent - not unverified but unmergeable, and
+# it carries a regenerated catalog, which is the change those checks exist to review. A personal
+# token clears that but hits the review rule instead: its author is a person, and nobody may approve
+# their own pull request. The token is given to checkout as well as to the pull request step - with
+# only the latter, the credentials checkout persisted are what actually pushes the branch, the
+# checks stay absent, and the symptom is indistinguishable from the secret not being set at all.
+
+name: Catalog spec drift
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Off the hour: scheduled runs queue, and the top of an hour is where everyone else's are.
+    - cron: "20 2 * * *"
+
+concurrency:
+  # Not per-ref, and not cancelling: two of these must not both be regenerating the catalog, and a
+  # run that has got as far as opening a pull request is not one to cancel for being second.
+  group: catalog-spec-drift
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: https://github.com/tapdata/tapdata-connectors.git
+  CATALOG_DIR: core/core-catalog/src/main/resources/catalog
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Mint the app token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CATALOG_BOT_APP_ID }}
+          private-key: ${{ secrets.CATALOG_BOT_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.token.outputs.token }}
+          # Full history: how long the catalog has gone without carrying upstream in is read off this
+          # path's log, and a shallow checkout can only ever answer "since the tip commit".
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Partial clone of the upstream, no checkout
+        run: |
+          git clone --filter=blob:none --no-checkout --depth 1 "$UPSTREAM" upstream
+          git -C upstream rev-parse HEAD > upstream-sha.txt
+          echo "upstream is at $(cat upstream-sha.txt)"
+
+      - name: List the upstream paths
+        # ls-tree, not a checkout: the trees came with the partial clone, so this reads every path in
+        # the repository and fetches no file contents at all.
+        run: git -C upstream ls-tree -r --name-only HEAD > upstream-paths.txt
+
+      - name: Work out which files to fetch
+        run: |
+          mvn -B -pl tools/catalog-assembler -am test \
+            -Dtest=CatalogArtifactTest#emitsTheDriftScanFetchListWhenAskedTo \
+            -Dsurefire.failIfNoSpecifiedTests=false \
+            -Dapi.version=1.44 \
+            -Dtapstate.catalog.upstream-paths="$PWD/upstream-paths.txt" \
+            -Dtapstate.catalog.fetch-list="$PWD/fetch-list.txt"
+          # That test skips when its properties are absent, and a skipped test is not a failure -
+          # Maven would exit 0 having enumerated nothing, and the scan below would find no drift and
+          # report a clean upstream. So the output is checked rather than the exit code.
+          if [ ! -s fetch-list.txt ]; then
+            echo "the enumeration produced no paths - it did not run" >&2
+            exit 1
+          fi
+          echo "fetching $(wc -l < fetch-list.txt) specification files"
+
+      - name: Fetch them, in one request
+        run: |
+          git -C upstream sparse-checkout set --no-cone --stdin < fetch-list.txt
+          git -C upstream checkout
+
+      - name: What drifted, and does it open a pull request
+        id: drift
+        run: |
+          mvn -B -pl tools/catalog-assembler -am test \
+            -Dtest=CatalogArtifactTest#emitsTheDriftReportWhenAskedTo \
+            -Dsurefire.failIfNoSpecifiedTests=false \
+            -Dapi.version=1.44 \
+            -Dtapstate.catalog.fetched="$PWD/upstream" \
+            -Dtapstate.catalog.fetch-list="$PWD/fetch-list.txt" \
+            -Dtapstate.catalog.catalog-age-days="$(.github/scripts/catalog-age-days.sh)" \
+            -Dtapstate.catalog.drift-report="$PWD/drift-report.txt"
+          if [ ! -s drift-report.txt ]; then
+            echo "the drift report is empty - the comparison did not run" >&2
+            exit 1
+          fi
+          cat drift-report.txt
+          cat drift-report.txt >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$(cat upstream-sha.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild the catalog from the fetched specifications
+        if: steps.drift.outputs.decision == 'OPEN'
+        # A full clone, deliberately. Regenerating walks the connector sources to find each one's
+        # annotation, so a checkout holding only specification files resolves no Java connector and
+        # every one of them empties out of the catalog - silently, since an emptied entry and an
+        # ordinary edit are the same shape in a diff. That failure has been seen here once already,
+        # from a partial set of jars; a partial set of sources is the same trap one layer up. The
+        # cheap half of this lane is the daily scan, which has already happened by now; this step
+        # runs on the rare day something actually moved.
+        #
+        # --spec-only reuses the checked-in capability bitmap, so no connector jar is built here.
+        run: |
+          rm -rf upstream
+          git clone --depth 1 "$UPSTREAM" upstream
+          scripts/refresh-catalog.sh --connectors upstream --spec-only
+
+      - name: Open the pull request
+        if: steps.drift.outputs.decision == 'OPEN'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ steps.token.outputs.token }}
+          branch: ws/catalog-spec-drift
+          # main is protected with "require branches to be up to date", so a pull request left alone
+          # goes stale within a day. Rebasing onto main each run keeps one open pull request that can
+          # actually merge, rather than a growing pile of them that cannot.
+          base: main
+          title: "Carry upstream connector specification drift into the catalog"
+          commit-message: "Carry upstream connector specification drift into the catalog"
+          body: |
+            Regenerated from upstream `${{ github.repositoryUrl }}` at `${{ steps.drift.outputs.upstream_sha }}`.
+
+            - specifications that changed: ${{ steps.drift.outputs.changed }}
+            - rows whose specification is no longer at the path they record: ${{ steps.drift.outputs.vanished }}
+            - connectors upstream carries that this catalog has no row for: ${{ steps.drift.outputs.new_connectors }}
+
+            The capability face was **not** rebuilt here: this lane reuses the checked-in bitmap, so
+            the catalog header's `capabilitySha` still names the revision the capabilities were
+            derived at, which is older than the `specSha` this run stamps. That is the intended
+            reading of two separate fields, not a defect.
+
+            Generated by the daily specification-drift scan.
+          labels: |
+            catalog
+          delete-branch: false
