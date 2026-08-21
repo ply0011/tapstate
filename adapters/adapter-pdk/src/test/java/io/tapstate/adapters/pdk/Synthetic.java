@@ -142,6 +142,29 @@ final class Synthetic {
     }
 
     /**
+     * A source whose batchRead reads each field's PDK type and refuses to read when one is unset, the
+     * way a connector that decodes by type does. Discovery supplies the database's own type name and
+     * leaves the PDK type null; only the connector's own mapping can fill it in. So a descriptor that
+     * never went through that step reaches the connector with every type missing, and a connector that
+     * needs one throws from inside itself.
+     */
+    static Path typeAwareSource(Path dir) {
+        String register = ""
+                + "functions.supportBatchRead((context, table, offset, size, consumer) -> {"
+                + "  for (TapField f : table.getNameFieldMap().values()) {"
+                + "    if (f.getTapType() == null) {"
+                + "      throw new IllegalStateException(\"field \" + f.getName() + \" has no PDK type\");"
+                + "    }"
+                + "  }"
+                + "  List<TapEvent> evs = new ArrayList<>();"
+                + "  Map<String,Object> r = new LinkedHashMap<>(); r.put(\"id\", 1);"
+                + "  evs.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(r));"
+                + "  consumer.accept(evs, null);"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.TypeAware", source("TypeAware", "", register));
+    }
+
+    /**
      * A source whose streamRead reads what it was asked to watch by walking the context's table map
      * rather than asking for one name at a time, emitting one row per entry carrying that entry's name
      * and column count. A connector expands a partitioned table into its children this way, at the start

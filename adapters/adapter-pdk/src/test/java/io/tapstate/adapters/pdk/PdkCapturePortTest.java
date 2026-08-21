@@ -160,6 +160,30 @@ class PdkCapturePortTest {
         assertThat(report.sample()).hasSize(1);
     }
 
+    /**
+     * The probe fills the PDK field types before reading, as the snapshot read does.
+     *
+     * <p>Discovery reports each column's database type and leaves the PDK type unset; the connector's
+     * own mapping is the only thing that can supply it, and the snapshot read calls it for exactly
+     * that reason. Handing the probe a real discovered table without that step swaps one broken
+     * descriptor for another: the columns are there but every type is null, and a connector that
+     * decodes by type throws from inside itself - which surfaces as a connection that does not work,
+     * naming nothing that would lead anyone back to the descriptor.
+     */
+    @Test
+    void testConnectionFillsTheFieldTypesBeforeReadingItsSample(@TempDir Path dir) throws Exception {
+        Path jar = Synthetic.typeAwareSource(dir);
+        // A spec declaring a type mapping: the fill reads the connector's own dataTypes and does
+        // nothing at all without one, so a ref with no spec could not tell the fill from its absence.
+        ConnectorRef ref = new ConnectorRef(List.of(jar), "synthetic.TypeAware", "2.0.8", null,
+                "{\"dataTypes\": {\"int\": {\"to\": \"TapNumber\", \"bit\": 32}}}");
+        PdkCapturePort port = new PdkCapturePort(connectorId -> ref);
+
+        ConnectionReport report = port.testConnection(config("t1"));
+
+        assertThat(report.sample()).hasSize(1);
+    }
+
     @Test
     void snapshotWithoutExplicitStreamsInitsTheConnectorExactlyOnce(@TempDir Path dir) throws Exception {
         // Empty streams means "every stream": the drive discovers the stream names and reads them. It

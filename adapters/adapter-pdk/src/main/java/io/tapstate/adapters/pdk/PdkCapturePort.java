@@ -198,6 +198,11 @@ public final class PdkCapturePort implements CapturePort {
                 // where it reads as a broken connection rather than as a descriptor we failed to pass.
                 // Discovery ran above and the table is already in hand.
                 TapTable descriptor = discovered(tables, stream);
+                // And fill its field types, as the snapshot read does. Discovery reports the database's
+                // own type name and leaves the PDK type unset, so a descriptor that skips this step
+                // carries its columns with every type null - the same shape of failure one step later,
+                // and thrown from inside the connector just the same.
+                connector.fillFieldTypes(descriptor);
                 batch.batchRead(connector.context(), descriptor, null, SAMPLE_SIZE, (events, offset) -> {
                     for (TapEvent event : events) {
                         if (sample.size() < SAMPLE_SIZE) {
