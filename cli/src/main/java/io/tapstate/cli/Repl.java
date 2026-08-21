@@ -1313,7 +1313,7 @@ final class Repl {
             out.flush();
             return Cli.EXIT_DIAGNOSTIC;
         }
-        int status = renderRejection(rejected.code(), rejected.message());
+        int status = renderRejection(rejected.code(), rejected.message(), rejected.params());
         PrintWriter err = commandLine.getErr();
         switch (rejected.code()) {
             case "artifact.in-use" -> {
@@ -2640,8 +2640,9 @@ final class Repl {
      * one-shot twin would have been.
      */
     private int renderStreamRefusal(String code, String pipelineId) {
-        MessageCatalog.Rendered rendered = MessageCatalog.bundled().render(code, Map.of("pipeline", pipelineId));
-        renderRejection(code, rendered.message());
+        Map<String, Object> params = Map.of("pipeline", pipelineId);
+        MessageCatalog.Rendered rendered = MessageCatalog.bundled().render(code, params);
+        renderRejection(code, rendered.message(), params);
         return Cli.EXIT_DIAGNOSTIC;
     }
 
@@ -2825,8 +2826,14 @@ final class Repl {
      * <p>The message says what is wrong; the solution says what to do about it, and the second is the
      * half a reader is actually looking for. Both live in the same catalog entry, but only the message
      * arrives rendered, so the remedy is rendered here from the code and the parameters the refusal
-     * carried. A code with no solution, or a refusal that carried no parameters to fill one in, simply
-     * prints as it did before.
+     * carried.
+     *
+     * <p>A remedy that could not be filled in is left out. The catalog leaves an unbound name verbatim,
+     * so rendering with parameters a caller does not have prints the template itself - braces and all -
+     * where the most useful sentence should be. Most refusals carry no parameters, and every one of
+     * them reaches this method, so the check lives here rather than at the call sites: a caller that
+     * has parameters passes them, and one that does not costs the reader a sentence they could not
+     * have acted on anyway.
      */
     private int renderRejection(String code, String message, Map<String, Object> params) {
         PrintWriter err = commandLine.getErr();
@@ -2836,12 +2843,25 @@ final class Repl {
         err.println("  " + message);
         if (!code.isBlank()) {
             String solution = MessageCatalog.bundled().render(code, params).solution();
-            if (present(solution)) {
+            if (present(solution) && !hasUnboundName(solution)) {
                 err.println("  " + solution);
             }
         }
         err.flush();
         return Cli.EXIT_DIAGNOSTIC;
+    }
+
+    /**
+     * Whether a rendered template still carries a name nothing filled in - a brace pair the catalog
+     * left as it found it, which is how it reports that no argument was supplied for that name.
+     *
+     * <p>Read the same way the catalog reads a template, so the two agree on what a name is: an
+     * opening brace with a closing one after it. Anything left in that shape reached the end of
+     * substitution unbound.
+     */
+    private static boolean hasUnboundName(String rendered) {
+        int open = rendered.indexOf('{');
+        return open >= 0 && rendered.indexOf('}', open + 1) > open;
     }
 
     /**

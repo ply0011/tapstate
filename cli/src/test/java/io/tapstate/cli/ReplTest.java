@@ -1522,6 +1522,53 @@ class ReplTest {
         assertThat(out).contains("remove those first");
     }
 
+    /**
+     * The remedy is rendered with the refusal's own parameters, or it is not printed at all.
+     *
+     * <p>An unbound name is left verbatim by the catalog, so rendering a solution with no arguments
+     * does not suppress it - it prints the template, braces and all. This refusal has its parameters
+     * in hand and used them on the very next line, while the remedy above it was rendered from
+     * nothing: "then delete `{id}`" reached the reader as those eight characters.
+     */
+    @Test
+    void aReferencedRefusalRendersItsRemedyWithTheIdRatherThanAPlaceholder() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.deleteOutcome = new DeleteOutcome.Rejected(
+                "artifact.in-use", "Resource 'src_kfk' is still referenced.",
+                Map.of("id", "src_kfk", "referrers", List.of("kfk2my")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("delete src_kfk --if-match " + "d".repeat(64))).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).as("no template escapes to the reader").doesNotContain("{id}");
+        assertThat(out).contains("then delete `src_kfk`");
+    }
+
+    /**
+     * A remedy that cannot be filled in is left out rather than printed raw.
+     *
+     * <p>The call sites that hold parameters now pass them, but most refusals carry none at all, and
+     * every one of those reaches the same renderer. Suppressing a solution that still has an unbound
+     * name after substitution is what keeps the next caller from reintroducing the raw template - the
+     * reader loses a sentence they could not have used, not one they could.
+     */
+    @Test
+    void aRefusalWithNoParametersPrintsNoRemedyRatherThanTheRawTemplate() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.deleteOutcome = new DeleteOutcome.Rejected(
+                "artifact.in-use", "Resource 'src_kfk' is still referenced.", Map.of());
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("delete src_kfk --if-match " + "d".repeat(64))).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("artifact.in-use");
+        assertThat(out).doesNotContain("{id}").doesNotContain("Delete or rewrite those resources first");
+    }
+
     @Test
     void aRunningPipelineRefusalShowsBothHalvesOfTheStateAndPointsAtStop() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
