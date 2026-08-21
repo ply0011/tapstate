@@ -7,7 +7,8 @@ import io.tapstate.core.model.SourceMode;
 
 /**
  * Merges a connector's structural facts ({@link NormalizedSpec}) with its derived capability bitmap
- * into a {@link ConnectorCatalogEntry}: resolves modes (derived defaults or declared override),
+ * into a {@link ConnectorCatalogEntry}: resolves modes (overlay, then upstream declaration, then
+ * derived defaults),
  * sink capability and write semantics, the refined group, the discovery axis and the push-out flag,
  * then stamps provenance. This is the shared merge — the same rules the runtime server-register path
  * will reuse — so it lives in the core ring and depends on no build tooling.
@@ -17,13 +18,27 @@ public final class CatalogEntryAssembler {
     private CatalogEntryAssembler() {
     }
 
+    // Mode sources merge here, highest first. Both callers come through this one method, so a source
+    // wired into only one of them cannot happen:
+    //
+    //     upstream spec.json "modes"   ---.
+    //     our own overlay declaration  ---+--> [ overlay > upstream > derived ] --> entry.modes()
+    //     capability bitmap (derived)  ---'                                          + modeSource
+    //
+    //     build-time caller  -> checked-in snapshot row
+    //     runtime  caller    -> registered catalog row
+    //
+    // The overlay is a required argument rather than an optional one on purpose: a caller that has no
+    // overlay to give has to say so, instead of quietly assembling rows that skip it.
     public static ConnectorCatalogEntry assemble(NormalizedSpec spec,
                                                  Set<String> derivedCapabilityIds,
+                                                 ConnectorOverlay overlay,
                                                  String connectorRepoSha,
                                                  String specPath,
                                                  String specContentHash) {
         Set<DerivedCapability> capabilities = DerivedCapability.fromCapabilityIds(derivedCapabilityIds);
-        ModeResolution modeResolution = ModeResolver.resolve(capabilities, spec.declaredModes());
+        ModeResolution modeResolution = ModeResolver.resolve(
+                capabilities, spec.declaredModes(), overlay.modesFor(spec.id()));
         List<SourceMode> modes = List.copyOf(modeResolution.modes());
 
         SinkCapability sink = SinkRules.derive(

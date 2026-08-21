@@ -6,6 +6,7 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
+import io.tapstate.core.catalog.ConnectorOverlay;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
 import io.tapstate.core.catalog.ConnectorGroup;
 import io.tapstate.core.model.SourceMode;
@@ -52,6 +53,10 @@ class CatalogAssemblerTest {
             """;
 
     private Assembly assemble() {
+        return assemble(noOverlay());
+    }
+
+    private Assembly assemble(ConnectorOverlay overlay) {
         List<ConnectorSource> sources = List.of(
                 new ConnectorSource("mysql", "mysql-connector",
                         "connectors/mysql-connector/src/main/resources/mysql-spec.json",
@@ -72,7 +77,7 @@ class CatalogAssemblerTest {
                 "connectors/kafka-connector/src/main/resources/spec_kafka.json", KAFKA_SPEC,
                 "connectors-javascript/github-connector/src/main/resources/spec.json", GITHUB_SPEC);
 
-        return CatalogAssembler.assemble(walk, SHA, bitmap, specs::get);
+        return CatalogAssembler.assemble(walk, SHA, bitmap, overlay, specs::get);
     }
 
     @Test
@@ -96,6 +101,26 @@ class CatalogAssemblerTest {
         // wrong for a stream source. That must be surfaced, not silently shipped.
         assertThat(entry("kafka").group()).isEqualTo(ConnectorGroup.MQ);
         assertThat(assemble().report().mqSuspects()).contains("kafka");
+    }
+
+    @Test
+    void aConnectorOurOverlayDeclaresIsNoLongerASuspect() {
+        // The other half of the same rule: suspicion is about nobody having said what the connector
+        // reads, so a declaration of ours answers it exactly as an upstream one would. Without this
+        // the report would keep naming every connector we ourselves declared, and a list that always
+        // contains the same eighteen names is a list nobody reads.
+        assertThat(assemble(overlayDeclaring("kafka", "stream")).report().mqSuspects())
+                .doesNotContain("kafka");
+    }
+
+    private static ConnectorOverlay noOverlay() {
+        return ConnectorOverlay.read(Map.of("/catalog/overlay/pdk/index.json", "[]")::get);
+    }
+
+    private static ConnectorOverlay overlayDeclaring(String id, String mode) {
+        return ConnectorOverlay.read(Map.of(
+                "/catalog/overlay/pdk/index.json", "[\"" + id + "\"]",
+                "/catalog/overlay/pdk/" + id + ".json", "{\"modes\":[\"" + mode + "\"]}")::get);
     }
 
     @Test
@@ -134,7 +159,7 @@ class CatalogAssemblerTest {
                         "io.tapdata.connector.hazelcast.HazelcastConnector", false));
         WalkResult walk = new WalkResult(sources, List.of());
 
-        Assembly assembly = CatalogAssembler.assemble(walk, SHA, Map.of(),
+        Assembly assembly = CatalogAssembler.assemble(walk, SHA, Map.of(), noOverlay(),
                 Map.of("connectors/hazelcast-connector/src/main/resources/spec_hazelcast.json",
                         hazelcastSpec)::get);
 

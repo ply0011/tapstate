@@ -58,7 +58,7 @@
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "api": "declared"
+      "api": "overlay"
     }
   }
 }

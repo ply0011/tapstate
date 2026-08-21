@@ -85,7 +85,7 @@
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "snapshot": "declared"
+      "snapshot": "overlay"
     }
   }
 }

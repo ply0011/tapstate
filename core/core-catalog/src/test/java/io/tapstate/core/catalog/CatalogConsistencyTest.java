@@ -1,7 +1,6 @@
 package io.tapstate.core.catalog;
 
 import java.util.List;
-import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -49,51 +48,50 @@ class CatalogConsistencyTest {
     }
 
     /**
-     * The eighteen connectors whose modes come only from an upstream declaration, pinned by name and by
-     * value. Regenerating the catalog against an upstream that no longer carries those declarations
-     * silently empties every one of them, and nothing else in the build would say so: the byte-lock that
-     * would catch it runs only in the connector-present refresh job and skips in an ordinary build.
+     * The connectors this repository declares the modes of, pinned by name and by count — but no
+     * longer by value. The values live in the overlay now, as the single copy; what stays here is the
+     * set of ids, which is the anchor that keeps this test from going vacuous.
      *
-     * <p>The list is spelled out rather than discovered from the entries themselves, and that is the
-     * whole point. A test phrased as "every entry that declares its modes still has some" reads the
-     * declaration off the same artifact it is checking, so when the declarations vanish the test finds
-     * nothing to check and passes — vacuously green at exactly the moment it was supposed to fire.
-     * Naming the ids moves that knowledge out of the artifact and into the test.
+     * <p>Spelled out rather than read off the artifact, and that is the whole point. A test phrased as
+     * "every entry sourced from the overlay still has modes" reads the population off the same thing
+     * it is checking, so when the overlay empties there is nothing left to check and it passes —
+     * green at exactly the moment it should fire. Naming the ids moves that knowledge out of the
+     * artifact and into the test.
+     *
+     * <p>Named for what it is: a checked-in baseline that grows by explicit commit as connectors are
+     * declared, not "the official set" — that is the register path's set, a different thing.
      */
-    private static final Map<String, List<SourceMode>> DECLARED_ONLY_MODES = Map.ofEntries(
-            Map.entry("GitHub", List.of(SourceMode.API)),
-            Map.entry("activemq", List.of(SourceMode.STREAM)),
-            Map.entry("ali1688", List.of(SourceMode.API)),
-            Map.entry("feishu-bitable", List.of(SourceMode.API)),
-            Map.entry("hubspot", List.of(SourceMode.API)),
-            Map.entry("kafka", List.of(SourceMode.STREAM)),
-            Map.entry("kafka_enhanced", List.of(SourceMode.STREAM)),
-            Map.entry("lark-approval", List.of(SourceMode.API)),
-            Map.entry("lark-doc", List.of(SourceMode.API)),
-            Map.entry("metabase", List.of(SourceMode.API)),
-            Map.entry("rabbitmq", List.of(SourceMode.STREAM)),
-            Map.entry("rocketmq", List.of(SourceMode.STREAM)),
-            Map.entry("salesforce", List.of(SourceMode.API)),
-            Map.entry("selectdb", List.of(SourceMode.SNAPSHOT)),
-            Map.entry("shein", List.of(SourceMode.API)),
-            Map.entry("temu", List.of(SourceMode.API)),
-            Map.entry("yashandb", List.of(SourceMode.SNAPSHOT)),
-            Map.entry("zoho-crm", List.of(SourceMode.API)));
+    private static final List<String> EXPECTED_OVERLAY_IDS = List.of(
+            "GitHub", "activemq", "ali1688", "feishu-bitable", "hubspot", "kafka", "kafka_enhanced",
+            "lark-approval", "lark-doc", "metabase", "rabbitmq", "rocketmq", "salesforce", "selectdb",
+            "shein", "temu", "yashandb", "zoho-crm");
 
     @Test
-    void keepsTheModesThatOnlyAnUpstreamDeclarationCanSupply() {
-        // Pinning the count as well as the entries: shrinking the list is the cheapest way to make a
+    void keepsTheModesOnlyOurOwnDeclarationSupplies() {
+        // Pinning the count as well as the ids: shrinking the list is the cheapest way to make a
         // failing run go green, and it would leave a test that still looks like it guards eighteen.
-        assertThat(DECLARED_ONLY_MODES).as("the pinned set must stay whole").hasSize(18);
+        assertThat(EXPECTED_OVERLAY_IDS).as("the pinned set must stay whole").hasSize(18);
+        assertThat(catalog.ids()).containsAll(EXPECTED_OVERLAY_IDS);
 
-        assertThat(catalog.ids()).containsAll(DECLARED_ONLY_MODES.keySet());
-        for (Map.Entry<String, List<SourceMode>> expected : DECLARED_ONLY_MODES.entrySet()) {
-            assertThat(catalog.byId(expected.getKey()).modes())
-                    .as("connector '%s' lost the modes only an upstream declaration supplies — "
-                            + "a regeneration against an upstream missing those declarations empties them",
-                            expected.getKey())
-                    .containsExactlyElementsOf(expected.getValue());
+        for (String id : EXPECTED_OVERLAY_IDS) {
+            ConnectorCatalogEntry entry = catalog.byId(id);
+            assertThat(entry.modes())
+                    .as("connector '%s' lost the modes only our own declaration supplies - a "
+                            + "regeneration with the overlay missing empties them", id)
+                    .isNotEmpty();
+            assertThat(entry.provenance().modeSource().values())
+                    .as("connector '%s' is no longer sourced from the overlay - its modes came back "
+                            + "from somewhere else, which is the drift this pins", id)
+                    .containsOnly(ModeSource.OVERLAY);
         }
+    }
+
+    @Test
+    void theOverlayDeclaresExactlyTheBaselineSet() {
+        // Both directions. Missing one is a declaration dropped; an extra one is a declaration added
+        // without anybody saying so, and the second is the one a one-directional check waves through.
+        assertThat(ConnectorOverlay.load().ids())
+                .containsExactlyInAnyOrderElementsOf(EXPECTED_OVERLAY_IDS);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package io.tapstate.adapters.pdk;
 
 import io.tapstate.core.catalog.CatalogEntryAssembler;
+import io.tapstate.core.catalog.ConnectorOverlay;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
 import io.tapstate.core.catalog.NormalizedSpec;
 import io.tapstate.core.catalog.OfficialConnectors;
@@ -285,8 +286,11 @@ public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
             return;
         }
         NormalizedSpec normalized = SpecNormalizer.normalize(asSpecObject(specTree));
+        // The same overlay the checked-in snapshot was assembled against, so a connector registered at
+        // runtime lands on the same catalog row the offline path would have produced for it.
         ConnectorCatalogEntry row = CatalogEntryAssembler.assemble(
-                normalized, capabilities.capabilityIds(), null, introspected.specPath(), specHash);
+                normalized, capabilities.capabilityIds(), ConnectorOverlay.load(), null,
+                introspected.specPath(), specHash);
         catalogStore.upsert(row);
     }
 

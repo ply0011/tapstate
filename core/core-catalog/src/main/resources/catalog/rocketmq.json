@@ -97,7 +97,7 @@
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "stream": "declared"
+      "stream": "overlay"
     }
   }
 }

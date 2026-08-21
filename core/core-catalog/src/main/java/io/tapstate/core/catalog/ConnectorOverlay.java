@@ -55,8 +55,13 @@ public final class ConnectorOverlay {
     /**
      * Reads an overlay from {@code resource}, which answers a resource path with its content or
      * {@code null} when there is no such resource.
+     *
+     * <p>The only way to build one, {@link #load()} included, so every overlay in existence has been
+     * through the same refusals. A second factory taking already-parsed modes would be able to
+     * produce an overlay that {@code load()} would have rejected — most usefully in a test, which is
+     * precisely where that divergence would go unnoticed.
      */
-    static ConnectorOverlay read(Function<String, String> resource) {
+    public static ConnectorOverlay read(Function<String, String> resource) {
         Map<String, List<String>> modesById = new LinkedHashMap<>();
         for (String type : TYPES) {
             String dir = "/catalog/overlay/" + type + "/";

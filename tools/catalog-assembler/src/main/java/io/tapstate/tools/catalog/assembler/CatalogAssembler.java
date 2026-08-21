@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.function.Function;
 
 import io.tapstate.core.catalog.CatalogEntryAssembler;
+import io.tapstate.core.catalog.ConnectorOverlay;
 import io.tapstate.core.catalog.CatalogJson;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
 import io.tapstate.core.catalog.ConnectorGroup;
@@ -35,6 +36,7 @@ final class CatalogAssembler {
 
     static Assembly assemble(WalkResult walk, String connectorRepoSha,
                              Map<String, Set<String>> bitmap,
+                             ConnectorOverlay overlay,
                              Function<String, String> specContent) {
         List<ConnectorCatalogEntry> entries = new ArrayList<>();
         List<String> ingestedIds = new ArrayList<>();
@@ -55,7 +57,8 @@ final class CatalogAssembler {
             String hash = sha256(content);
 
             ConnectorCatalogEntry entry =
-                    CatalogEntryAssembler.assemble(spec, caps, connectorRepoSha, source.specPath(), hash);
+                    CatalogEntryAssembler.assemble(spec, caps, overlay, connectorRepoSha,
+                            source.specPath(), hash);
             entries.add(entry);
             ingestedIds.add(entry.id());
 

@@ -12,6 +12,7 @@ import java.util.Set;
 
 import io.tapstate.core.catalog.CatalogEntryWriter;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
+import io.tapstate.core.catalog.ConnectorOverlay;
 
 /**
  * Composes the whole PDK-free assembly path into the deterministic catalog artifacts: walk a
@@ -27,8 +28,10 @@ final class CatalogGenerator {
     static GeneratedCatalog generate(Path connectorsRoot, String connectorRepoSha,
                                      Map<String, Set<String>> bitmap) {
         WalkResult walk = ConnectorWalker.walk(connectorsRoot);
+        // Read once for the whole run: it is the same handful of files every time, and a run that
+        // cannot read them must fail before it writes a snapshot rather than midway through one.
         Assembly assembly = CatalogAssembler.assemble(walk, connectorRepoSha, bitmap,
-                relativePath -> read(connectorsRoot.resolve(relativePath)));
+                ConnectorOverlay.load(), relativePath -> read(connectorsRoot.resolve(relativePath)));
 
         JsonWriter writer = new JsonWriter();
         List<String> ids = new ArrayList<>();

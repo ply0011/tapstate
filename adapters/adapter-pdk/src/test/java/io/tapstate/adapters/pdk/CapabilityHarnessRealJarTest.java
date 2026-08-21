@@ -95,7 +95,7 @@ class CapabilityHarnessRealJarTest {
             Set<String> live = CapabilityHarness.deriveCapabilities(loader, connectorClass);
             Set<DerivedCapability> derived = DerivedCapability.fromCapabilityIds(live);
 
-            Set<SourceMode> liveModes = ModeResolver.resolve(derived, null).modes();
+            Set<SourceMode> liveModes = ModeResolver.resolve(derived, null, null).modes();
             assertThat(liveModes)
                     .as("live-derived source modes for %s", id)
                     .containsExactlyInAnyOrderElementsOf(snapshot.modes());
