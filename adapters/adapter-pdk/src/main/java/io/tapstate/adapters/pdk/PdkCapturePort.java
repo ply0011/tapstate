@@ -192,7 +192,18 @@ public final class PdkCapturePort implements CapturePort {
                 if (sample.size() >= SAMPLE_SIZE) {
                     break;
                 }
-                batch.batchRead(connector.context(), new TapTable(stream), null, SAMPLE_SIZE, (events, offset) -> {
+                // The discovered table, not a bare name. A connector builds its read from the table's
+                // own columns, so a descriptor carrying none reads nothing - and one whose column map
+                // was never created answers a connector asking for it by throwing, inside the connector,
+                // where it reads as a broken connection rather than as a descriptor we failed to pass.
+                // Discovery ran above and the table is already in hand.
+                TapTable descriptor = discovered(tables, stream);
+                // And fill its field types, as the snapshot read does. Discovery reports the database's
+                // own type name and leaves the PDK type unset, so a descriptor that skips this step
+                // carries its columns with every type null - the same shape of failure one step later,
+                // and thrown from inside the connector just the same.
+                connector.fillFieldTypes(descriptor);
+                batch.batchRead(connector.context(), descriptor, null, SAMPLE_SIZE, (events, offset) -> {
                     for (TapEvent event : events) {
                         if (sample.size() < SAMPLE_SIZE) {
                             sample.add(event);
@@ -380,6 +391,20 @@ public final class PdkCapturePort implements CapturePort {
     }
 
     /** The connection-test probe result: the discovered schema tables and a small raw sample. */
+    /**
+     * The discovered table for {@code stream}, or a descriptor declaring no columns when discovery did
+     * not report it. Declaring no columns is a statement a connector can read; being unable to answer
+     * what columns there are is not, which is why the fallback is never a raw descriptor.
+     */
+    private static TapTable discovered(List<TapTable> tables, String stream) {
+        for (TapTable table : tables) {
+            if (stream.equals(table.getId())) {
+                return table;
+            }
+        }
+        return TargetTapTable.bare(stream);
+    }
+
     private record Probe(List<TapTable> tables, List<TapEvent> sample) {
     }
 }

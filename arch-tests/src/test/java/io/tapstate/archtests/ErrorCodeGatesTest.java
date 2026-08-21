@@ -39,8 +39,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the enums, then {@code values()} via reflection) — no second scanning library (ADR-0024 D5-6).
  * Production scope only ({@code DO_NOT_INCLUDE_TESTS}), so throwaway test enums never leak in.
  *
- * <p>The connector-code namespace ({@code connector.* / pdk.*}) is deliberately out of scope: those
- * are runtime-loaded jars the build cannot see, guarded at runtime instead (ADR-0024 D6).
+ * <p>Codes belonging to connectors are deliberately out of scope: those arrive in runtime-loaded jars
+ * the build cannot see, and are guarded at runtime instead (ADR-0024 D6).
+ *
+ * <p>What is in scope, and is not a connector code, is the wording this repository ships for the
+ * connector API's own diagnostic keys. Those keys are a fixed part of that API, the connectors carry
+ * them untranslated, and the text is ours; it lives under a reserved prefix so it cannot collide with
+ * a first-party code, and it is gated here because nothing else can see it — a first-party code is
+ * held in place from both directions, while this text answers to an API outside the build.
  */
 class ErrorCodeGatesTest {
 
@@ -175,16 +181,79 @@ class ErrorCodeGatesTest {
         }
         for (Map.Entry<String, Map<String, String>> entry : catalog.entrySet()) {
             String code = entry.getKey();
-            assertThat(declared)
-                    .as("catalog entry '%s' has no matching first-party error code (orphan template)", code)
-                    .containsKey(code);
             Set<String> used = new TreeSet<>();
             used.addAll(placeholdersIn(entry.getValue().get("message")));
             used.addAll(placeholdersIn(entry.getValue().get("solution")));
+            // Wording for a connector-supplied diagnostic, which is not a first-party code and so has
+            // no placeholders() to match. The connector API defines these keys and constructs its test
+            // exceptions with them rather than with sentences, and nothing resolves them on the way in;
+            // the catalog supplies the wording instead. They live under a reserved prefix that no
+            // <domain>.<symbol> code can occupy, so they cannot shadow a first-party entry.
+            //
+            // The orphan check does not apply, but the reason behind it does: an entry nothing can fill
+            // is dead text. Nothing passes arguments for these, so the standing rule is stricter than
+            // matching a contract - they must carry no placeholders at all, or they would render with a
+            // {name} still in them.
+            if (code.startsWith(PDK_TEST_ITEM_PREFIX)) {
+                assertThat(used)
+                        .as("connector-diagnostic wording '%s' is rendered with no arguments, so its "
+                                + "template must carry no placeholders", code)
+                        .isEmpty();
+                continue;
+            }
+            assertThat(declared)
+                    .as("catalog entry '%s' has no matching first-party error code (orphan template)", code)
+                    .containsKey(code);
             assertThat(used)
                     .as("placeholders in the catalog templates for '%s' must equal its declared "
                             + "placeholders() (gate D5-4)", code)
                     .isEqualTo(declared.get(code));
+        }
+    }
+
+    /** The reserved namespace connector-supplied diagnostics are given wording under. */
+    private static final String PDK_TEST_ITEM_PREFIX = "pdk.testitem.";
+
+    /**
+     * The connector-diagnostic wordings are exactly the set we mean to carry.
+     *
+     * <p>The rest of the catalog is held in place from both directions: a code with no entry fails
+     * one gate, an entry with no code fails another. These entries answer to the connector API
+     * instead, which is outside this build, so neither direction reaches them - and without a list to
+     * check against, a wording deleted by accident, a key misspelled so nothing ever resolves it, or
+     * one quietly added for a diagnostic nobody emits would all pass unnoticed. Naming the set is what
+     * makes those visible; changing it is then a deliberate edit here rather than a silent drift.
+     *
+     * <p>The names come from the typed test exceptions the connector API defines, each of which
+     * carries a failure headline, a reason and a solution. It is a closed set because that API is frozen.
+     */
+    @Test
+    @DisplayName("the connector-diagnostic wordings are exactly the declared set")
+    void connectorDiagnosticWordingsAreExactlyTheDeclaredSet() {
+        Set<String> expected = new TreeSet<>();
+        for (String diagnostic : List.of(
+                "check.cdc.privilege", "read.privilege", "write.privilege", "create.table.privilege",
+                "pdk.version", "pdk.connection", "check.host.port", "time.consistent", "stream.read")) {
+            expected.add(PDK_TEST_ITEM_PREFIX + diagnostic + ".fail");
+            expected.add(PDK_TEST_ITEM_PREFIX + diagnostic + ".reason");
+            expected.add(PDK_TEST_ITEM_PREFIX + diagnostic + ".solution");
+        }
+
+        Set<String> present = new TreeSet<>();
+        for (String key : catalog.keySet()) {
+            if (key.startsWith(PDK_TEST_ITEM_PREFIX)) {
+                present.add(key);
+            }
+        }
+
+        assertThat(present)
+                .as("catalog wordings under %s; add or remove one here in the same change set",
+                        PDK_TEST_ITEM_PREFIX)
+                .isEqualTo(expected);
+        for (String key : present) {
+            assertThat(catalog.get(key).get("message"))
+                    .as("wording for '%s' must actually say something", key)
+                    .isNotBlank();
         }
     }
 

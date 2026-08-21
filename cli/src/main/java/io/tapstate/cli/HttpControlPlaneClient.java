@@ -322,7 +322,7 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
                 return applied(response.body());
             }
             Rejection r = rejection(response.body(), "The server refused the apply.");
-            return new ApplyOutcome.Rejected(r.code(), r.message());
+            return new ApplyOutcome.Rejected(r.code(), r.message(), r.params());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new ApplyOutcome.Unreachable();
@@ -1324,7 +1324,7 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
     }
 
     /** A parsed coded refusal: the server's code and message, or a fixed generic message if not coded. */
-    private record Rejection(String code, String message) {
+    private record Rejection(String code, String message, Map<String, Object> params) {
     }
 
     /**
@@ -1336,12 +1336,18 @@ final class HttpControlPlaneClient implements ControlPlaneClient {
         try {
             if (JsonReader.parse(body) instanceof Map<?, ?> map && map.get("code") instanceof String code) {
                 String message = map.get("message") instanceof String m ? m : code;
-                return new Rejection(code, message);
+                // The parameters come across too. The message arrives rendered, but the catalog holds a
+                // remedy for the same code, and rendering that on this side needs the values it names.
+                Map<String, Object> params = new LinkedHashMap<>();
+                if (map.get("params") instanceof Map<?, ?> raw) {
+                    raw.forEach((key, value) -> params.put(String.valueOf(key), value));
+                }
+                return new Rejection(code, message, Collections.unmodifiableMap(params));
             }
         } catch (RuntimeException malformed) {
             // fall through: a non-coded / unparseable error body is still a refusal, not a crash
         }
-        return new Rejection("", genericMessage);
+        return new Rejection("", genericMessage, Map.of());
     }
 
     private static RemoteCreatedToken createdToken(Object body) {
