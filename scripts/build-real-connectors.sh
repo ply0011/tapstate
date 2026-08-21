@@ -20,30 +20,76 @@
 #
 # The nightly lane runs this, and so can a developer who wants the real-connector witnesses locally:
 #
-#   e2e/build-real-connectors.sh /tmp/connectors
+#   scripts/build-real-connectors.sh /tmp/connectors
 #   mvn -pl e2e -am verify -Dapi.version=1.44 -Dtapstate.e2e.connectors-dir=/tmp/connectors \
 #     -Dit.test=PublishedExamplesIT
 #
 # A second argument names the directory to clone into, which has to be empty; it defaults to a fresh
 # temporary directory.
+#
+# Two callers, two module lists. The witness lane wants the handful of connectors its scenarios drive;
+# a catalog refresh wants every connector the catalog carries, and that list is not knowable here - it
+# comes from the probe manifest the assembler writes, which is derived from the checkout rather than
+# written down. So the list is an input, defaulting to the witness lane's connectors:
+#
+#   --modules <id>=<module-path>[,...]  what to build; the id is the file-name prefix the witnesses
+#                                       and the catalog resolve by, so it cannot be chosen freely
+#   --checkout <path>                   build from an existing checkout instead of cloning; a refresh
+#                                       already has one, and cloning a second copy of a 469MB
+#                                       repository to build the same commit is pure cost
 
 set -euo pipefail
 
 readonly SOURCE_REPOSITORY="https://github.com/tapdata/tapdata-connectors.git"
 
-# Connector ids as the specifications name them, paired with the module that builds each one. The id
-# is also the file-name prefix the witnesses resolve by, so it cannot be chosen freely here.
-readonly CONNECTOR_IDS=(mysql mongodb postgres)
-readonly CONNECTOR_MODULES=(connectors/mysql-connector connectors/mongodb-connector connectors/postgres-connector)
+# The witness lane's connectors, as the specifications name them, paired with the module that builds
+# each one. This is the default rather than the only option - see --modules above.
+readonly DEFAULT_MODULES="mysql=connectors/mysql-connector,mongodb=connectors/mongodb-connector,postgres=connectors/postgres-connector"
 
-destination="${1:?usage: build-real-connectors.sh <destination-directory>}"
-workspace="${2:-$(mktemp -d)}"
+modules_arg=""
+checkout=""
+positional=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --modules)  modules_arg="${2:?--modules needs a value}"; shift 2 ;;
+        --checkout) checkout="${2:?--checkout needs a value}"; shift 2 ;;
+        -h|--help)  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
+        --*)        echo "unrecognised option: $1" >&2; exit 2 ;;
+        *)          positional+=("$1"); shift ;;
+    esac
+done
+
+destination="${positional[0]:?usage: build-real-connectors.sh [--modules <id>=<path>,...] [--checkout <path>] <destination-directory> [workspace]}"
+workspace="${positional[1]:-$(mktemp -d)}"
+
+# Split the list into the two parallel arrays the rest of the script works with. A malformed entry is
+# refused here rather than becoming a module path Maven cannot resolve several minutes later.
+CONNECTOR_IDS=()
+CONNECTOR_MODULES=()
+IFS=',' read -r -a requested <<< "${modules_arg:-$DEFAULT_MODULES}"
+for entry in "${requested[@]}"; do
+    case "$entry" in
+        *=*) CONNECTOR_IDS+=("${entry%%=*}"); CONNECTOR_MODULES+=("${entry#*=}") ;;
+        *)   echo "--modules entries are <id>=<module-path>, got: $entry" >&2; exit 2 ;;
+    esac
+done
+if [ "${#CONNECTOR_IDS[@]}" -eq 0 ]; then
+    echo "--modules named nothing to build" >&2
+    exit 2
+fi
 
 mkdir -p "$destination"
 destination="$(cd "$destination" && pwd)"
 
-echo "Cloning the connector source into $workspace"
-git clone --depth 1 --quiet "$SOURCE_REPOSITORY" "$workspace/tapdata-connectors"
+if [ -n "$checkout" ]; then
+    [ -d "$checkout/connectors" ] || { echo "$checkout has no connectors/ directory" >&2; exit 2; }
+    checkout="$(cd "$checkout" && pwd)"
+    echo "Building from the existing checkout at $checkout"
+else
+    checkout="$workspace/tapdata-connectors"
+    echo "Cloning the connector source into $workspace"
+    git clone --depth 1 --quiet "$SOURCE_REPOSITORY" "$checkout"
+fi
 
 # The protoc this build compiles with, on a host the pinned protoc was never published for.
 #
@@ -65,7 +111,7 @@ git clone --depth 1 --quiet "$SOURCE_REPOSITORY" "$workspace/tapdata-connectors"
 # stops applying by itself once the connectors move past 3.17.
 protoc_flags=()
 if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
-    bom="$workspace/tapdata-connectors/connectors-common/debezium-bucket/debezium-bom/pom.xml"
+    bom="$checkout/connectors-common/debezium-bucket/debezium-bom/pom.xml"
     protoc_version="$(sed -n 's|.*<version\.com\.google\.protobuf>\(.*\)</version\.com\.google\.protobuf>.*|\1|p' \
         "$bom" | head -1)"
     if [ -z "$protoc_version" ]; then
@@ -98,7 +144,7 @@ echo "Building $modules"
 # A checkout old enough to still carry it fails here in a way that points somewhere else entirely:
 # the jar stages fine and the failure lands much later, at the first read of the artifact.
 # The odd expansion keeps an empty array from tripping set -u on the bash a Mac ships.
-mvn -B -f "$workspace/tapdata-connectors/pom.xml" -pl "$modules" -am -DskipTests \
+mvn -B -f "$checkout/pom.xml" -pl "$modules" -am -DskipTests \
     ${protoc_flags[@]+"${protoc_flags[@]}"} package
 
 # Stage one jar per connector, and insist on exactly one.
@@ -116,7 +162,7 @@ for index in "${!CONNECTOR_IDS[@]}"; do
     artifact="$(basename "$module")"
     built=()
     while IFS= read -r jar; do built+=("$jar"); done < <(
-        find "$workspace/tapdata-connectors/$module/target" -maxdepth 1 -name "$artifact-v*.jar" -type f | sort
+        find "$checkout/$module/target" -maxdepth 1 -name "$artifact-v*.jar" -type f | sort
     )
     if [ "${#built[@]}" -ne 1 ]; then
         echo "expected exactly one shaded $artifact jar in $module/target, found ${#built[@]}: ${built[*]-}" >&2

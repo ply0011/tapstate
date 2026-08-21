@@ -146,7 +146,7 @@ cp mysql-connector-*.jar mongodb-connector-*.jar ~/tapstate-run/connectors/
 
 An empty seed directory is a valid deployment: the server starts with nothing registered, which is
 enough to reach the end of this page. You need the jars for any tutorial that moves data.
-`e2e/build-real-connectors.sh /tmp/connectors` builds them from the connector sources. This release
+`scripts/build-real-connectors.sh /tmp/connectors` builds them from the connector sources. This release
 accepts `mysql` and `mongodb`; another id is refused with `connector.not-official`.
 
 ### If 8080 is already taken

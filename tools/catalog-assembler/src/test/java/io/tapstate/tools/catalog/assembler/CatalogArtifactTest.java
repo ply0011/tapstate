@@ -22,6 +22,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * only in the connector-present refresh job and skips otherwise. The refresh is three steps, each a
  * property-gated run of this class or catalog-derive:
  *
+ * <p>All three read the connectors checkout from {@code -Dtapstate.catalog.connectors=<path>}, falling
+ * back to a sibling directory named {@code tapdata-connectors} when the property is absent.
+ *
  * <ol>
  *   <li>{@code -Dtapstate.catalog.manifest=<path>} — walk the checkout and write the probe manifest;</li>
  *   <li>catalog-derive reads that manifest, probes, and writes the bitmap;</li>
@@ -168,12 +171,7 @@ class CatalogArtifactTest {
     }
 
     private static Optional<Path> connectorsRepo() {
-        for (Path dir = Path.of("").toAbsolutePath(); dir != null; dir = dir.getParent()) {
-            Path candidate = dir.resolve("tapdata-connectors");
-            if (Files.isDirectory(candidate.resolve("connectors"))) {
-                return Optional.of(candidate);
-            }
-        }
-        return Optional.empty();
+        return ConnectorsCheckout.locate(
+                System.getProperty(ConnectorsCheckout.PROPERTY), Path.of("").toAbsolutePath());
     }
 }

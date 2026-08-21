@@ -8,7 +8,9 @@
 # On a developer machine they skip instead — and note Docker 29 rejects the API version the client
 # negotiates by default, so running them locally needs -Dapi.version=1.44.
 # Deliberately excluded for now: native-image build (pinned to local darwin-arm64 until D5) and the
-# connector catalog.
+# connector catalog *refresh* - regenerating it needs a connectors checkout and built connector jars.
+# The catalog's own consistency gates are PDK-free and run in the build above; the shell that drives
+# the refresh has its cases in the catalog-scripts job below.
 name: CI
 
 on:
@@ -58,6 +60,24 @@ jobs:
         run: bash install/install-smoke.sh
       - name: quickstart smoke
         run: bash deploy/quickstart/quickstart-smoke.sh
+
+  catalog-scripts:
+    # The catalog refresh driver and the connector build it calls are shell, and the driver is a gate:
+    # its whole job is turning "this step did not run" into a non-zero exit, because every step of a
+    # refresh is a JUnit test that skips - rather than fails - when its inputs are absent. A gate that
+    # nothing checks is the shape that goes green having verified nothing, which is the shape it was
+    # written to prevent. Both smokes drive stubs placed on PATH: no Maven, no connectors, no network.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck the catalog scripts
+        run: |
+          shellcheck scripts/refresh-catalog.sh scripts/refresh-catalog-smoke.sh
+          shellcheck scripts/build-real-connectors.sh scripts/build-real-connectors-smoke.sh
+      - name: refresh driver cases
+        run: bash scripts/refresh-catalog-smoke.sh
+      - name: connector build cases
+        run: bash scripts/build-real-connectors-smoke.sh
 
   image-smoke:
     # Build the server image for the runner's native architecture and smoke it as a black box: it boots
