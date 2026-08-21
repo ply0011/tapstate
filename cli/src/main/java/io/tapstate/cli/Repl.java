@@ -1082,7 +1082,8 @@ final class Repl {
                 renderApplyWarnings(applied.warnings());
                 yield Cli.EXIT_OK;
             }
-            case ApplyOutcome.Rejected rejected -> renderRejection(rejected.code(), rejected.message());
+            case ApplyOutcome.Rejected rejected ->
+                    renderRejection(rejected.code(), rejected.message(), rejected.params());
             case ApplyOutcome.Unreachable ignored -> reportRequestFailed();
         };
     }
@@ -1312,7 +1313,7 @@ final class Repl {
             out.flush();
             return Cli.EXIT_DIAGNOSTIC;
         }
-        int status = renderRejection(rejected.code(), rejected.message());
+        int status = renderRejection(rejected.code(), rejected.message(), rejected.params());
         PrintWriter err = commandLine.getErr();
         switch (rejected.code()) {
             case "artifact.in-use" -> {
@@ -2218,17 +2219,115 @@ final class Repl {
         out.flush();
     }
 
-    /** The human summary: an outcome header naming the connection + connector, then one line per check. */
+    /**
+     * The human summary: an outcome header naming the connection + connector, then one line per check,
+     * and under a check that carried them, the connector's own reason and remedy.
+     *
+     * <p>Those two are printed here rather than left to the machine surfaces because they are the
+     * reason a check is worth running. A connector that can say "wal_level is replica" and "set it to
+     * logical" has answered the question the person is about to ask, and reaching that answer only by
+     * knowing to re-run with {@code -o json} asks them to already know what they are looking for. The
+     * connector's own code is printed alongside, since it is what an operator quotes when they go
+     * looking for the connector's documentation.
+     */
     private static void renderReportText(PrintWriter out, ConnectionReport report) {
         out.println(report.outcome() + "  " + report.connectionId() + " (" + report.connectorId() + ")");
         for (ConnectionReport.Check check : report.checks()) {
             StringBuilder line = new StringBuilder(String.format("  %-7s %s", check.status(), check.name()));
-            if (check.message() != null && !check.message().isBlank()) {
-                line.append("  ").append(check.message());
+            // The message is resolved the same way as the reason and the solution: the connector API
+            // puts its keys in this field too, and a key printed where the eye lands first is the worst
+            // place of the three to leave one.
+            String headline = readable(check.message());
+            if (headline != null) {
+                line.append("  ").append(headline);
+            }
+            if (present(check.connectorErrorCode())) {
+                line.append("  [").append(check.connectorErrorCode()).append(']');
             }
             out.println(line);
+            String reason = readable(check.reason());
+            if (reason != null) {
+                out.println("          " + reason);
+            }
+            String solution = readable(check.solution());
+            if (solution != null) {
+                out.println("          " + solution);
+            }
+        }
+        if (changeCaptureUnavailable(report)) {
+            out.println();
+            out.println("  Change capture will not work on this connection until the "
+                    + CHANGE_STREAM_CHECK + " check passes.");
+            out.println("  A snapshot will; a pipeline reading changes will start and never see any.");
         }
     }
+
+    /**
+     * Whether this connection cannot carry change capture, despite the test as a whole passing.
+     *
+     * <p>Connectors report the change-stream check as a warning rather than a failure, and a warning
+     * does not fail the overall outcome — so a database with change capture switched off answers
+     * PASSED. That is not wrong: the connection is genuinely usable, and a snapshot over it works. It
+     * is only wrong as the whole answer, because the person reads PASSED, builds a pipeline that
+     * reads changes, and is told nothing when its capture half never produces a row.
+     *
+     * <p>The outcome is left as the connector reported it — {@code test} asks about a connection, not
+     * about a pipeline, and failing it would refuse connections that snapshot-only work needs. What
+     * changes is that the consequence is stated instead of left to be discovered later.
+     */
+    private static boolean changeCaptureUnavailable(ConnectionReport report) {
+        for (ConnectionReport.Check check : report.checks()) {
+            if (CHANGE_STREAM_CHECK.equalsIgnoreCase(check.name())
+                    && !"PASSED".equalsIgnoreCase(check.status())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The connector API's own name for the change-stream check. It is a fixed constant of that API,
+     * which is what makes it usable as an identifier: every connector reporting this check reports it
+     * under this name, so recognising it does not depend on any one connector's wording.
+     */
+    private static final String CHANGE_STREAM_CHECK = "Read log";
+
+    private static boolean present(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    /**
+     * The diagnostic to show a person, or null when there is none at all.
+     *
+     * <p>The connector API's typed test exceptions are constructed with translation keys rather than
+     * sentences - a privilege check carries {@code check.cdc.privilege.reason} - and nothing resolves
+     * them on the way here: they are plain string fields, no connector sets them to text, and the
+     * bundle that would translate them belongs to the platform those connectors were written for. So
+     * this repository supplies the wording, under a reserved prefix that cannot collide with a
+     * first-party code.
+     *
+     * <p><b>The catalog decides, not the shape.</b> Judging by shape - dotted lowercase segments -
+     * cannot tell a key from the many ordinary values that look exactly like one: {@code 10.10.0.5},
+     * {@code db.internal}, {@code 8.0.13}. Those are precisely what a host or version check reports,
+     * and dropping them left the reader a check with no message, no reason and no solution, which is
+     * less than they had before any of this. The set of keys the connector API defines is closed and
+     * held closed by a gate, so membership of the catalog answers the question exactly. Anything the
+     * catalog does not know is shown as it arrived.
+     */
+    private static String readable(String value) {
+        if (!present(value)) {
+            return null;
+        }
+        String trimmed = value.trim();
+        String key = PDK_TEST_ITEM_PREFIX + trimmed;
+        String rendered = MessageCatalog.bundled().render(key, Map.of()).message();
+        // The catalog answers an unknown code with the code itself. The original is returned in that
+        // case rather than the lookup's answer, so a value carrying braces cannot come back mangled.
+        return rendered.equals(key) ? trimmed : rendered;
+    }
+
+    /** The reserved catalog namespace the connector API's test-item keys are given wording under. */
+    private static final String PDK_TEST_ITEM_PREFIX = "pdk.testitem.";
 
     /** The report as an ordered tree for the machine surfaces, omitting the optional check fields left null. */
     private static Map<String, Object> reportMap(ConnectionReport report) {
@@ -2542,8 +2641,9 @@ final class Repl {
      * one-shot twin would have been.
      */
     private int renderStreamRefusal(String code, String pipelineId) {
-        MessageCatalog.Rendered rendered = MessageCatalog.bundled().render(code, Map.of("pipeline", pipelineId));
-        renderRejection(code, rendered.message());
+        Map<String, Object> params = Map.of("pipeline", pipelineId);
+        MessageCatalog.Rendered rendered = MessageCatalog.bundled().render(code, params);
+        renderRejection(code, rendered.message(), params);
         return Cli.EXIT_DIAGNOSTIC;
     }
 
@@ -2717,13 +2817,52 @@ final class Repl {
 
     /** Renders a coded server refusal: the {@code code} (when present) then the rendered message, to err. */
     private int renderRejection(String code, String message) {
+        return renderRejection(code, message, Map.of());
+    }
+
+    /**
+     * Reports a refused command: the code, the message the server rendered, and — where the catalog has
+     * one for that code — the remedy.
+     *
+     * <p>The message says what is wrong; the solution says what to do about it, and the second is the
+     * half a reader is actually looking for. Both live in the same catalog entry, but only the message
+     * arrives rendered, so the remedy is rendered here from the code and the parameters the refusal
+     * carried.
+     *
+     * <p>A remedy that could not be filled in is left out. The catalog leaves an unbound name verbatim,
+     * so rendering with parameters a caller does not have prints the template itself - braces and all -
+     * where the most useful sentence should be. Most refusals carry no parameters, and every one of
+     * them reaches this method, so the check lives here rather than at the call sites: a caller that
+     * has parameters passes them, and one that does not costs the reader a sentence they could not
+     * have acted on anyway.
+     */
+    private int renderRejection(String code, String message, Map<String, Object> params) {
         PrintWriter err = commandLine.getErr();
         if (!code.isBlank()) {
             err.println(Ansi.AUTO.string("@|bold,red error:|@") + " " + code);
         }
         err.println("  " + message);
+        if (!code.isBlank()) {
+            String solution = MessageCatalog.bundled().render(code, params).solution();
+            if (present(solution) && !hasUnboundName(solution)) {
+                err.println("  " + solution);
+            }
+        }
         err.flush();
         return Cli.EXIT_DIAGNOSTIC;
+    }
+
+    /**
+     * Whether a rendered template still carries a name nothing filled in - a brace pair the catalog
+     * left as it found it, which is how it reports that no argument was supplied for that name.
+     *
+     * <p>Read the same way the catalog reads a template, so the two agree on what a name is: an
+     * opening brace with a closing one after it. Anything left in that shape reached the end of
+     * substitution unbound.
+     */
+    private static boolean hasUnboundName(String rendered) {
+        int open = rendered.indexOf('{');
+        return open >= 0 && rendered.indexOf('}', open + 1) > open;
     }
 
     /**
