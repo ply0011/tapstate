@@ -89,7 +89,9 @@ public final class PdkConnectionTester implements ConnectionTester {
      */
     private static ConnectionTestItem translate(TestItem item) {
         TapTestItemException ex = item.getTapTestItemException();
-        String message = firstNonBlank(ex != null ? ex.getMessage() : null, item.getInformation());
+        String message = firstNonBlank(
+                firstNonBlank(ex != null ? ex.getMessage() : null, item.getInformation()),
+                attempted(ex));
         String reason = ex != null ? ex.getReason() : null;
         String solution = ex != null ? ex.getSolution() : null;
         String connectorErrorCode = ex != null ? ex.getErrorCode() : null;
@@ -118,6 +120,29 @@ public final class PdkConnectionTester implements ConnectionTester {
             }
         }
         return false;
+    }
+
+    /**
+     * What the connector reports having tried, as a last resort for a check that carried no message.
+     *
+     * <p>A connector may report a check with nothing but a numeric code and the statements behind it —
+     * the postgres connector reports a failed replication-slot probe that way, and that probe is what
+     * decides whether change capture can work at all. Read literally such an item has nothing to show
+     * but a number, and a number alone tells a reader neither what happened nor what to do. The
+     * statements are the only thing present that carries meaning, so they become the message rather
+     * than being dropped.
+     */
+    private static String attempted(TapTestItemException ex) {
+        if (ex == null || ex.getDynamicDescriptionParameters() == null) {
+            return null;
+        }
+        List<String> parts = new ArrayList<>();
+        for (String parameter : ex.getDynamicDescriptionParameters()) {
+            if (parameter != null && !parameter.isBlank()) {
+                parts.add(parameter.trim());
+            }
+        }
+        return parts.isEmpty() ? null : String.join("; ", parts);
     }
 
     private static String firstNonBlank(String a, String b) {

@@ -67,9 +67,15 @@ class TargetTapTableTest {
     @Test
     void hasNoPrimaryKeyWhenNoFieldIsFlagged() {
         TapTable table = TargetTapTable.build(new TargetTable("events",
-                List.of(new TargetField("payload", "text", false))));
+                List.of(new TargetField("payload", "text", false), new TargetField("seq", "int", false))));
 
         assertThat(table.primaryKeys()).isEmpty();
+        // Asserted on the positions too, not only on the key they derive: a position is what marks a
+        // column as part of the key, so this is where a model carrying no key physically ends up. It
+        // holds whatever any rule above decides, and stays true if one is bypassed or replaced - which
+        // is the point of pinning it here rather than only where the refusal is decided.
+        assertThat(table.getNameFieldMap().values())
+                .allSatisfy(field -> assertThat(field.getPrimaryKeyPos()).isNull());
     }
 
     @Test

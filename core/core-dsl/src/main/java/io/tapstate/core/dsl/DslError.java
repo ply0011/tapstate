@@ -91,7 +91,14 @@ public enum DslError implements TapstateErrorCode {
      *  read from. Post-semantic and without a corpus witness, for the same reason as
      *  {@link #ROW_EXPRESSION_TYPE_UNSUPPORTED}. */
     ROW_EXPRESSION_TYPE_UNKNOWN(
-            "dsl.row-expression-type-unknown", Set.of("expr", "column", "table", "path"));
+            "dsl.row-expression-type-unknown", Set.of("expr", "column", "table", "path")),
+    /** An upsert writing a table whose source declares no key, so no write can be matched to a row.
+     *  {@code table} names the discovered table and {@code source} the connection it was discovered
+     *  through. Post-semantic and without a corpus witness, for the same reason as
+     *  {@link #ROW_EXPRESSION_TYPE_UNSUPPORTED}: whether a table has a key is knowledge no artifact
+     *  carries, only a discovered model does. */
+    UPSERT_NEEDS_KEY(
+            "dsl.upsert-needs-key", Set.of("table", "source", "path"));
 
     private final String code;
     private final Set<String> placeholders;

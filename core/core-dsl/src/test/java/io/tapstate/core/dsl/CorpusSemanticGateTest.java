@@ -87,11 +87,14 @@ class CorpusSemanticGateTest {
         //   ROW_EXPRESSION_TYPE_UNKNOWN: the verdict depends on whether a source has been discovered
         //   and on the column types that discovery resolved, neither of which a document declares nor
         //   an offline check can reach (RowExpressionDiscoveryRulesTest / RowExpressionTypeRulesTest).
+        //   UPSERT_NEEDS_KEY: whether a table has a key is a property of the table, which only a
+        //   discovered model carries - a document names the table but cannot say what it declares
+        //   (WriteKeyRulesTest).
         Set<DslError> requiresCorpusWitness = EnumSet.complementOf(EnumSet.of(
                 DslError.MALFORMED_YAML, DslError.UNDEFINED_VARIABLE, DslError.MALFORMED_INTERPOLATION,
                 DslError.CONFIG_REQUIRED,
                 DslError.ROW_EXPRESSION_NEEDS_DISCOVERY, DslError.ROW_EXPRESSION_TYPE_UNSUPPORTED,
-                DslError.ROW_EXPRESSION_TYPE_UNKNOWN));
+                DslError.ROW_EXPRESSION_TYPE_UNKNOWN, DslError.UPSERT_NEEDS_KEY));
         assertThat(witnessed).containsExactlyInAnyOrderElementsOf(requiresCorpusWitness);
     }
 
