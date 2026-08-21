@@ -13,6 +13,8 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
+import io.tapstate.core.catalog.TapstateCatalog;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -51,6 +53,21 @@ class CatalogArtifactTest {
 
         WalkResult walk = ConnectorWalker.walk(checkout.get());
         Files.writeString(Path.of(manifestPath), ManifestWriter.write(walk.sources()));
+    }
+
+    @Test
+    void emitsTheDriftScanFetchListWhenAskedTo() throws IOException {
+        String fetchList = System.getProperty("tapstate.catalog.fetch-list");
+        assumeTrue(fetchList != null, "no -Dtapstate.catalog.fetch-list — not a drift-scan run, skipping");
+        String upstreamPaths = System.getProperty("tapstate.catalog.upstream-paths");
+        assumeTrue(upstreamPaths != null, "no -Dtapstate.catalog.upstream-paths — nothing to enumerate against, skipping");
+
+        List<String> upstream = Files.readAllLines(Path.of(upstreamPaths)).stream()
+                .map(String::strip)
+                .filter(line -> !line.isEmpty())
+                .toList();
+        Files.writeString(Path.of(fetchList),
+                String.join("\n", SpecPathEnumerator.specPathsToFetch(TapstateCatalog.load().all(), upstream)));
     }
 
     @Test
