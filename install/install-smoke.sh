@@ -401,6 +401,42 @@ else
 fi
 rm -rf "$occupied"
 
+# A foreign `tap` sitting in the install directory itself. PATH cannot see it whenever that directory
+# is not on PATH -- which is the default this installer prints instructions about -- so a check that
+# asks PATH alone finds nothing and the mv overwrites someone else's file.
+idir="$(mktemp -d)/bin"
+mkdir -p "$idir"
+printf '#!/bin/sh\necho "not tapstate"\n' > "$idir/tap"; chmod +x "$idir/tap"
+before="$(cat "$idir/tap")"
+OUT="$(TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$STUB" TAPSTATE_INSTALL_DIR="$idir" \
+       sh "$INSTALL_SH" 2>&1)"; RC=$?
+if [ "$RC" -eq 0 ] && [ ! -L "$idir/tap" ] && [ "$(cat "$idir/tap")" = "$before" ] \
+   && printf '%s' "$OUT" | grep -q 'is not ours'; then
+  ok "a foreign tap inside the install directory is left untouched, and the skip says so"
+else
+  bad "local foreign tap was overwritten or the skip not explained rc=$RC: $OUT (is-link: $([ -L "$idir/tap" ] && echo yes || echo no))"
+fi
+
+# And the mirror image: our own alias must still be upgraded when some other tap precedes it on PATH.
+# Deciding on PATH alone skipped the upgrade there, leaving the shortcut pointing into a version
+# directory this script deletes on the way out -- a dangling command, produced by an installer that
+# reported success.
+idir="$(mktemp -d)/bin"
+TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$STUB" TAPSTATE_INSTALL_DIR="$idir" \
+  sh "$INSTALL_SH" >/dev/null 2>&1
+occupied="$(mktemp -d)"
+printf '#!/bin/sh\necho "not tapstate"\n' > "$occupied/tap"; chmod +x "$occupied/tap"
+OUT="$(PATH="$occupied:$PATH" TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$STUB" \
+       TAPSTATE_INSTALL_DIR="$idir" sh "$INSTALL_SH" 2>&1)"; RC=$?
+if [ "$RC" -eq 0 ] && [ -L "$idir/tap" ] \
+   && [ "$(cd "$idir" && readlink tap)" = "$(cd "$idir" && readlink tapstate)" ] \
+   && ! printf '%s' "$OUT" | grep -q 'already on PATH'; then
+  ok "our own alias is still upgraded when another tap precedes it on PATH"
+else
+  bad "own alias skipped over a PATH conflict rc=$RC: tap=$(readlink "$idir/tap" 2>/dev/null) said=$(printf '%s' "$OUT" | grep -c 'already on PATH')"
+fi
+rm -rf "$occupied"
+
 # --- summary ----------------------------------------------------------------------------------------
 echo
 printf '\033[1minstall smoke: %d passed, %d failed\033[0m\n' "$PASS" "$FAIL"

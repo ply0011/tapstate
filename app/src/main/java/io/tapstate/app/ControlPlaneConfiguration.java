@@ -308,8 +308,13 @@ class ControlPlaneConfiguration {
     }
 
     @Bean
-    ViewStoreSeedRunner viewStoreSeedRunner(StorePort storePort, MongoProperties mongoProperties) {
-        return new ViewStoreSeedRunner(storePort.artifacts(), mongoProperties.getUri());
+    ViewStoreSeedRunner viewStoreSeedRunner(ArtifactStore artifactStore, MongoProperties mongoProperties) {
+        // The managed ArtifactStore, not the raw one behind it. Reaching past the decorator would make
+        // this the one write in the process that skips secret tracking -- and the resource it writes is
+        // built from the deployment's own store URI, which is the last one that should be the exception.
+        // It changes nothing observable while the mongodb catalog marks `uri` non-secret; what it
+        // removes is a seam where a later change to that marking would silently not apply here.
+        return new ViewStoreSeedRunner(artifactStore, mongoProperties.getUri());
     }
 
     @Bean

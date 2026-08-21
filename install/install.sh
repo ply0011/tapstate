@@ -238,14 +238,40 @@ install_bundle() {
 install_alias() {
     alias_dir="$1"
     alias_version="$2"
-    existing="$(command -v tap 2>/dev/null || true)"
-    if [ -n "$existing" ] && [ "$existing" != "$alias_dir/tap" ]; then
-        # The backticks quote command names for the reader; they are literal text, not substitutions.
-        # shellcheck disable=SC2016
-        printf 'note: skipping the optional `tap` shortcut -- a different tap is already on PATH at %s.\n' "$existing"
-        # shellcheck disable=SC2016
-        printf '      tapstate is installed and unaffected; run `tapstate alias install` later to reconsider.\n'
-        return 0
+
+    # The local name is decided first, and on what it is rather than on what is on PATH. Two failures
+    # come from asking PATH alone. A `tap` sitting in the install directory that belongs to someone
+    # else is invisible to `command -v` whenever that directory is not on PATH -- and it was then
+    # overwritten by the mv below. And an upgrade of our own alias was skipped whenever any other tap
+    # happened to precede it on PATH, leaving the shortcut pointing into a version directory this
+    # script is about to delete.
+    ours=no
+    if [ -L "$alias_dir/tap" ]; then
+        # Ours by where it points, not by what the target is called: the link is written relative to
+        # the install directory, so a target that stays inside it is one this script wrote.
+        case "$(readlink "$alias_dir/tap")" in
+            versions/*/bin/tapstate | tapstate) ours=yes ;;
+        esac
+    fi
+    if [ -e "$alias_dir/tap" ] || [ -L "$alias_dir/tap" ]; then
+        if [ "$ours" = no ]; then
+            # shellcheck disable=SC2016
+            printf 'note: skipping the optional `tap` shortcut -- %s already exists and is not ours.\n' "$alias_dir/tap"
+            # shellcheck disable=SC2016
+            printf '      tapstate is installed and unaffected; remove that file and run `tapstate alias install` to reconsider.\n'
+            return 0
+        fi
+    else
+        # The name is free here, so PATH decides: a tap somewhere else on PATH would shadow the one
+        # this would create, and a shortcut that resolves to someone else's command is worse than none.
+        existing="$(command -v tap 2>/dev/null || true)"
+        if [ -n "$existing" ]; then
+            # shellcheck disable=SC2016
+            printf 'note: skipping the optional `tap` shortcut -- a different tap is already on PATH at %s.\n' "$existing"
+            # shellcheck disable=SC2016
+            printf '      tapstate is installed and unaffected; run `tapstate alias install` later to reconsider.\n'
+            return 0
+        fi
     fi
     staged_alias="$alias_dir/.tap.$$"
     ln -s "versions/$alias_version/bin/tapstate" "$staged_alias"

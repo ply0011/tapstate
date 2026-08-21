@@ -99,4 +99,41 @@ class AliasLinksTest {
 
         assertThat(Files.exists(binDir.resolve("tap"), java.nio.file.LinkOption.NOFOLLOW_LINKS)).isFalse();
     }
+    @Test
+    void aLinkPointingOutsideTheInstallDirectoryIsNotOurs(@TempDir Path binDir, @TempDir Path elsewhere)
+            throws IOException {
+        // Ownership was decided by the target's file name alone, so any link ending in "tapstate"
+        // counted -- including one into a directory this installation does not own. install would then
+        // replace it and uninstall would delete it, both silently, on a link somebody else put there
+        // for their own reasons.
+        Files.createFile(binDir.resolve("tapstate"));
+        Files.createFile(elsewhere.resolve("tapstate"));
+        Path foreign = binDir.resolve("tap");
+        Files.createSymbolicLink(foreign, elsewhere.resolve("tapstate"));
+
+        assertThatThrownBy(() -> AliasLinks.install(binDir))
+                .isInstanceOfSatisfying(TapstateException.class, e ->
+                        assertThat(e.code().code()).isEqualTo("cli.alias-name-taken"));
+        assertThatThrownBy(() -> AliasLinks.uninstall(binDir))
+                .isInstanceOf(TapstateException.class);
+        // Untouched, which is the point: refusing has to leave the other thing exactly as it was.
+        assertThat(Files.readSymbolicLink(foreign)).isEqualTo(elsewhere.resolve("tapstate"));
+    }
+
+    @Test
+    void theVersionedLinkTheInstallerWritesIsOurs(@TempDir Path binDir) throws IOException {
+        // install.sh points the shortcut at versions/<v>/bin/tapstate rather than at the stable entry.
+        // That is this installation's own link, one directory deeper, and treating it as foreign would
+        // make `tapstate alias install` refuse on every machine the installer had already set up.
+        Files.createFile(binDir.resolve("tapstate"));
+        Path versioned = binDir.resolve("versions").resolve("0.2.1").resolve("bin");
+        Files.createDirectories(versioned);
+        Files.createFile(versioned.resolve("tapstate"));
+        Files.createSymbolicLink(binDir.resolve("tap"), Path.of("versions/0.2.1/bin/tapstate"));
+
+        AliasLinks.install(binDir);
+
+        assertThat(Files.readSymbolicLink(binDir.resolve("tap"))).isEqualTo(Path.of("tapstate"));
+    }
+
 }

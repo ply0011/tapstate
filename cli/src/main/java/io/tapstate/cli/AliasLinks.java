@@ -75,13 +75,28 @@ final class AliasLinks {
      * Refuses a name that exists and is not a link this command could have made. A regular file, a
      * directory, or a link pointing somewhere else all belong to someone else.
      */
+    /**
+     * Refuses unless the name is free or already holds this installation's own link.
+     *
+     * <p>Ownership is decided by where the link points, not by what the target is called. Matching the
+     * file name alone accepted any link ending in {@code tapstate}, including one into a directory this
+     * installation does not own -- which {@code install} would then replace and {@code uninstall} would
+     * delete, silently, on something somebody else put there.
+     *
+     * <p>Two link shapes are ours and both must stay accepted: {@code tapstate}, written here, and
+     * {@code versions/<v>/bin/tapstate}, written by the installer. Both resolve inside the install
+     * directory, which is what the test below actually is.
+     */
     private static void requireOursOrAbsent(Path alias) {
         if (!Files.exists(alias, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
         if (Files.isSymbolicLink(alias)) {
             try {
-                if (Files.readSymbolicLink(alias).getFileName().toString().equals(COMMAND)) {
+                Path binDir = alias.toAbsolutePath().normalize().getParent();
+                Path target = Files.readSymbolicLink(alias);
+                Path resolved = binDir.resolve(target).normalize();
+                if (resolved.getFileName().toString().equals(COMMAND) && resolved.startsWith(binDir)) {
                     return;
                 }
             } catch (IOException e) {
