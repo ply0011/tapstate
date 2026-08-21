@@ -142,6 +142,29 @@ final class Synthetic {
     }
 
     /**
+     * A source whose batchRead reads each field's PDK type and refuses to read when one is unset, the
+     * way a connector that decodes by type does. Discovery supplies the database's own type name and
+     * leaves the PDK type null; only the connector's own mapping can fill it in. So a descriptor that
+     * never went through that step reaches the connector with every type missing, and a connector that
+     * needs one throws from inside itself.
+     */
+    static Path typeAwareSource(Path dir) {
+        String register = ""
+                + "functions.supportBatchRead((context, table, offset, size, consumer) -> {"
+                + "  for (TapField f : table.getNameFieldMap().values()) {"
+                + "    if (f.getTapType() == null) {"
+                + "      throw new IllegalStateException(\"field \" + f.getName() + \" has no PDK type\");"
+                + "    }"
+                + "  }"
+                + "  List<TapEvent> evs = new ArrayList<>();"
+                + "  Map<String,Object> r = new LinkedHashMap<>(); r.put(\"id\", 1);"
+                + "  evs.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(r));"
+                + "  consumer.accept(evs, null);"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.TypeAware", source("TypeAware", "", register));
+    }
+
+    /**
      * A source whose streamRead reads what it was asked to watch by walking the context's table map
      * rather than asking for one name at a time, emitting one row per entry carrying that entry's name
      * and column count. A connector expands a partitioned table into its children this way, at the start
@@ -283,6 +306,20 @@ final class Synthetic {
                 + "  throw new RuntimeException(\"write boom\");"
                 + "});";
         return SyntheticJar.compileToJar(dir, "synthetic.ThrowingWrite", source("ThrowingWrite", "", register));
+    }
+
+    /**
+     * A sink connector that refuses the write and says which identifier it refused, the way a real
+     * store does when a name breaks its rules (MongoDB answers an illegal collection name with
+     * "Invalid collection name: &lt;name&gt;"). What matters for the test is that the name is only in
+     * the connector's own message: nothing else in the chain knows it.
+     */
+    static Path identifierRejectingSink(Path dir) {
+        String register = "functions.supportWriteRecord((context, events, table, consumer) -> {"
+                + "  throw new RuntimeException(\"Invalid collection name: ord$ers\");"
+                + "});";
+        return SyntheticJar.compileToJar(
+                dir, "synthetic.IdentifierRejecting", source("IdentifierRejecting", "", register));
     }
 
     /** A sink connector whose writeRecord reports each batch in two flushes — proves count accumulation. */
@@ -452,6 +489,22 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.FailingTest", connectionTestSource("FailingTest", body));
     }
 
+    /**
+     * A connector reporting a check the way the postgres connector reports a failed replication-slot
+     * probe: a coded exception carrying a bare numeric code and the statements it tried, and no
+     * message, reason or solution at all. Everything a reader could use is in those statements.
+     */
+    static Path codeOnlyTest(Path dir) {
+        String body = ""
+                + "TapTestItemException ex = new TapTestItemException();"
+                + "ex.setErrorCode(\"410003\");"
+                + "ex.setDynamicDescriptionParameters(new String[]{"
+                + "  \"SELECT pg_create_logical_replication_slot('test_tapdata_x','pgoutput')\"});"
+                + "s.accept(new TestItem(\"read log\", ex, TestItem.RESULT_SUCCESSFULLY_WITH_WARN));"
+                + "return ConnectionOptions.create();";
+        return SyntheticJar.compileToJar(dir, "synthetic.CodeOnlyTest", connectionTestSource("CodeOnlyTest", body));
+    }
+
     /** A connector whose connectionTest throws — the test could not be completed, a coded drive failure. */
     static Path throwingTest(Path dir) {
         String body = "throw new RuntimeException(\"test boom\");";
@@ -494,6 +547,27 @@ final class Synthetic {
                 + "  public int tableCount(TapConnectionContext c) { return 1; }"
                 + "  public void discoverSchema(TapConnectionContext c, List<String> t, int n, Consumer<List<TapTable>> s) {" + discoverBody + "}"
                 + "}";
+    }
+
+    /**
+     * A connector reporting an index one of whose parts names no column, the way a real database
+     * describes a functional index: the part is an expression over the row rather than a column, so
+     * there is no column name to give and the driver reports none. A composite index mixing the two is
+     * the ordinary shape - {@code UNIQUE KEY (user_id, scene, (ifnull(circle_type,'')))}.
+     */
+    static Path functionalIndexSource(Path dir) {
+        String body = ""
+                + "TapTable table = new TapTable(\"orders\");"
+                + "table.add(new TapField(\"id\", \"int\").isPrimaryKey(true).primaryKeyPos(1));"
+                + "table.add(new TapField(\"amount\", \"decimal\"));"
+                + "table.add(new TapIndex().name(\"uq_mixed\").unique(true)"
+                + "    .indexField(new TapIndexField().name(\"amount\").fieldAsc(true))"
+                + "    .indexField(new TapIndexField().fieldAsc(true)));"
+                + "List<TapTable> tables = new ArrayList<>();"
+                + "tables.add(table);"
+                + "s.accept(tables);";
+        return SyntheticJar.compileToJar(dir, "synthetic.FunctionalIndex",
+                discoverSource("FunctionalIndex", body));
     }
 
     /** The one-table discoverSchema body the discovery fixtures share. */

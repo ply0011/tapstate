@@ -87,6 +87,25 @@ class PdkConnectionTesterTest {
         assertThat(login.connectorErrorCode()).isEqualTo("28000");
     }
 
+    /**
+     * Some connectors report a check with a bare numeric code and the statements they tried, and no
+     * message at all - the postgres connector reports a failed replication-slot probe exactly this
+     * way, which is the check that decides whether change capture can work on a stranger's database.
+     * Read literally there is nothing to show but a number. What the connector tried is the one thing
+     * present, and dropping it leaves the reader a code and no way to act on it.
+     */
+    @Test
+    void anItemWithOnlyACodeCarriesWhatTheConnectorTriedAsItsMessage(@TempDir Path dir) {
+        ConnectionTester tester = tester(Synthetic.codeOnlyTest(dir), "synthetic.CodeOnlyTest");
+
+        ConnectionTestResult result = tester.test(config());
+
+        ConnectionTestItem item = result.items().get(0);
+        assertThat(item.status()).isEqualTo(Status.WARNING);
+        assertThat(item.connectorErrorCode()).isEqualTo("410003");
+        assertThat(item.message()).contains("pg_create_logical_replication_slot");
+    }
+
     @Test
     void aConnectorWhoseConnectionTestThrowsIsACodedTestFailure(@TempDir Path dir) {
         ConnectionTester tester = tester(Synthetic.throwingTest(dir), "synthetic.ThrowingTest");

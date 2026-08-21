@@ -1522,6 +1522,53 @@ class ReplTest {
         assertThat(out).contains("remove those first");
     }
 
+    /**
+     * The remedy is rendered with the refusal's own parameters, or it is not printed at all.
+     *
+     * <p>An unbound name is left verbatim by the catalog, so rendering a solution with no arguments
+     * does not suppress it - it prints the template, braces and all. This refusal has its parameters
+     * in hand and used them on the very next line, while the remedy above it was rendered from
+     * nothing: "then delete `{id}`" reached the reader as those eight characters.
+     */
+    @Test
+    void aReferencedRefusalRendersItsRemedyWithTheIdRatherThanAPlaceholder() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.deleteOutcome = new DeleteOutcome.Rejected(
+                "artifact.in-use", "Resource 'src_kfk' is still referenced.",
+                Map.of("id", "src_kfk", "referrers", List.of("kfk2my")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("delete src_kfk --if-match " + "d".repeat(64))).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).as("no template escapes to the reader").doesNotContain("{id}");
+        assertThat(out).contains("then delete `src_kfk`");
+    }
+
+    /**
+     * A remedy that cannot be filled in is left out rather than printed raw.
+     *
+     * <p>The call sites that hold parameters now pass them, but most refusals carry none at all, and
+     * every one of those reaches the same renderer. Suppressing a solution that still has an unbound
+     * name after substitution is what keeps the next caller from reintroducing the raw template - the
+     * reader loses a sentence they could not have used, not one they could.
+     */
+    @Test
+    void aRefusalWithNoParametersPrintsNoRemedyRatherThanTheRawTemplate() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.deleteOutcome = new DeleteOutcome.Rejected(
+                "artifact.in-use", "Resource 'src_kfk' is still referenced.", Map.of());
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("delete src_kfk --if-match " + "d".repeat(64))).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("artifact.in-use");
+        assertThat(out).doesNotContain("{id}").doesNotContain("Delete or rewrite those resources first");
+    }
+
     @Test
     void aRunningPipelineRefusalShowsBothHalvesOfTheStateAndPointsAtStop() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
@@ -1789,6 +1836,245 @@ class ReplTest {
         assertThat(client.getCalls).containsExactly("jwt-tok@http://node1:7900/my-mongo");
         assertThat(client.testCalls).containsExactly(
                 "jwt-tok@http://node1:7900/my-mongo[mongodb {host=db.internal, username=cdc}]");
+    }
+
+    /**
+     * A connector that can say why a check failed and what to do about it says so through reason and
+     * solution, and until now the plain-text surface printed neither - they were reachable only by
+     * knowing to pass -o json, which is knowledge the person who needs them least likely has. The
+     * remedy the connector already wrote is the whole value of the check having run.
+     */
+    @Test
+    void testRendersTheReasonAndSolutionOnThePlainTextSurface() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Cdc cannot start",
+                        "wal_level is replica, logical decoding needs logical",
+                        "Set wal_level=logical and restart the server", "CREATE_SLOT_FAILED")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Cdc cannot start");
+        assertThat(out).contains("wal_level is replica");
+        assertThat(out).contains("Set wal_level=logical");
+        assertThat(out).contains("CREATE_SLOT_FAILED");
+    }
+
+    /**
+     * A diagnostic the catalog does not know is shown as it arrived, not dropped.
+     *
+     * <p>This used to be decided by shape - dotted lowercase segments were taken for an unresolvable
+     * key and suppressed. The shape does not separate the two: {@code 10.10.0.5}, {@code db.internal}
+     * and {@code 8.0.13} all match it, and all three are exactly what a host or version check reports.
+     * Suppressing them left a failed check with nothing on it at all, which is less than the reader
+     * had before the wording feature existed. The keys the connector API defines are a closed set the
+     * catalog holds in full, so anything absent from it is treated as a value and printed.
+     */
+    @Test
+    void testPrintsADiagnosticTheCatalogDoesNotKnowRatherThanDroppingIt() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "FAILED",
+                List.of(new ConnectionReport.Check("Check host port is valid", "FAILED",
+                        "10.10.0.5", "db.internal", "8.0.13", "CONN_REFUSED")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out)
+                .as("a host, a hostname and a version all look like keys and are none of them")
+                .contains("10.10.0.5").contains("db.internal").contains("8.0.13");
+        assertThat(out).contains("CONN_REFUSED");
+    }
+
+    /**
+     * A diagnostic far longer than anything a pattern should be run over is carried, not crashed on.
+     *
+     * <p>Deciding whether a string was a key by matching a repeated group is recursive in this
+     * platform's engine - one frame per repetition, so a few thousand dotted segments exhausted the
+     * stack, and the failure was a StackOverflowError thrown out of printing a connection report. The
+     * string is a connector's own, arriving from a database nobody here configured, and nothing in
+     * this repository bounds its length. Nothing matches it now - the catalog is asked instead - and
+     * this case is what keeps a matcher from coming back.
+     */
+    @Test
+    void testCarriesADiagnosticFarTooLongToMatchAgainst() {
+        String enormous = "a" + ".a".repeat(100_000);
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Access denied",
+                        enormous, null, "CDC_PRIVILEGE")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Access denied").contains("CDC_PRIVILEGE");
+        assertThat(out).as("the catalog does not know it, so it is shown as it arrived").contains(enormous);
+    }
+
+    /**
+     * For the keys the connector API actually defines, the catalog supplies the wording the connector
+     * never carried, so the checks that decide whether a stranger's own database can be read at all
+     * say what to do about it rather than naming a key nobody can resolve.
+     */
+    @Test
+    void testRendersOurOwnWordingForAConnectorApiDiagnosticKey() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Access denied",
+                        "check.cdc.privilege.reason", "check.cdc.privilege.solution", "CDC_PRIVILEGE")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("privileges a change stream needs");
+        assertThat(out).contains("Grant the replication privileges");
+        assertThat(out).doesNotContain("check.cdc.privilege");
+    }
+
+    /**
+     * The change-stream check is the one whose failure is invisible: connectors report it as a warning,
+     * a warning does not fail the overall outcome, and so a database with change capture switched off
+     * answers "PASSED". The person then builds a pipeline whose capture half never runs and is told
+     * nothing, anywhere. The outcome is left alone - it is a connection verb, and the connection is
+     * genuinely usable for a snapshot - but the consequence is spelled out where it cannot be missed.
+     */
+    @Test
+    void testSaysPlainlyWhenChangeCaptureWillNotWorkEvenThoughTheTestPassed() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("ping", "PASSED", null, null, null, null),
+                        new ConnectionReport.Check("Read log", "WARNING",
+                                "SELECT pg_create_logical_replication_slot('t','pgoutput')",
+                                null, null, "410003")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("PASSED");
+        assertThat(out).containsIgnoringCase("change capture");
+        assertThat(out).contains("snapshot");
+    }
+
+    /**
+     * The advisory names the check it is about, because "the check above" need not be the one that
+     * failed. Checks are printed in the order the connector reports them, and nothing puts the
+     * change-stream check last - so a passing check after it made the advisory point at a result that
+     * is fine, and blame the wrong thing to go and fix.
+     */
+    @Test
+    void testNamesTheChangeStreamCheckWhenAPassingCheckIsPrintedAfterIt() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("Read log", "WARNING", "no replication slot",
+                                null, null, "410003"),
+                        new ConnectionReport.Check("ping", "PASSED", null, null, null, null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Read log check passes");
+        assertThat(out).as("the last check printed is a passing one, so 'above' would misname it")
+                .doesNotContain("the check above");
+    }
+
+    /** A connection whose change-stream check passed says nothing of the sort. */
+    @Test
+    void testDoesNotWarnAboutChangeCaptureWhenTheLogCheckPassed() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("Read log", "PASSED", null, null, null, null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).doesNotContainIgnoringCase("change capture");
+    }
+
+    /**
+     * A refusal that names what is wrong but not what to do leaves the reader stuck. The catalog carries
+     * a solution for the code, and the server sends the named parameters that fill it in, so the remedy
+     * can be rendered here from the same catalog the message came from - and until it is, the most
+     * carefully written half of an error is the half nobody sees.
+     */
+    @Test
+    void aRefusedApplyShowsTheRemedyAndNotOnlyWhatWentWrong(@TempDir Path base) throws Exception {
+        copyWorkspace("/ws-valid", base);
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.applyOutcome = new ApplyOutcome.Rejected("dsl.upsert-needs-key",
+                "The sync at serve.sync upserts table `events` of source `mydb`, but that table declares "
+                        + "no key, so no write can be matched to the row it belongs to.",
+                Map.of("table", "events", "source", "mydb", "path", "serve.sync"));
+        Harness h = onlineSession(base, client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("apply");
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("dsl.upsert-needs-key").contains("declares no key");
+        assertThat(out)
+                .as("the catalog's solution for the code, with its parameters filled in")
+                .contains("Give `events` a primary key")
+                .contains("write_mode: append");
+    }
+
+    /**
+     * The connector API's keys reach the message field too, not only reason and solution - a host/port
+     * check that fails carries {@code check.host.port.fail} as its message. Suppressing keys in two
+     * fields and printing them in the third would put the unreadable one where the eye lands first.
+     */
+    @Test
+    void testRendersOurOwnWordingWhenTheMessageItselfIsADiagnosticKey() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "FAILED",
+                List.of(new ConnectionReport.Check("Check host port is valid", "FAILED",
+                        "check.host.port.fail", "check.host.port.reason", "check.host.port.solution",
+                        null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("did not accept a connection");
+        assertThat(out).doesNotContain("check.host.port.fail");
     }
 
     @Test
