@@ -30,6 +30,7 @@ boot.hazelcast-unavailable
 capture.event-table-not-selected
 capture.start-from-unparsable
 cli.alias-install-dir-unknown
+cli.alias-link-failed
 cli.alias-name-taken
 cli.artifact-exists
 cli.connect-failed

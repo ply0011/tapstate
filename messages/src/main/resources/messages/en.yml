@@ -72,6 +72,9 @@ capture.event-table-not-selected:
 cli.alias-install-dir-unknown:
   message: "No installed `tapstate` was found in `{path}`."
   solution: "Run this where tapstate is installed, or set TAPSTATE_INSTALL_DIR to that directory - the same variable the installer honours."
+cli.alias-link-failed:
+  message: "The `tap` shortcut at `{path}` could not be created or removed: {reason}"
+  solution: "Check that the directory exists and you can write to it, then run `tapstate alias install` again. tapstate itself works without the shortcut."
 cli.alias-name-taken:
   message: "`{path}` already exists and is not the tapstate shortcut."
   solution: "Leave it in place - tapstate works without the shortcut. Remove that file yourself if you want the `tap` name, then run `tapstate alias install` again."

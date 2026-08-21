@@ -136,4 +136,39 @@ class AliasLinksTest {
         assertThat(Files.readSymbolicLink(binDir.resolve("tap"))).isEqualTo(Path.of("tapstate"));
     }
 
+    @Test
+    void aShortcutThatCannotBeWrittenIsRefusedWithACode(@TempDir Path binDir) {
+        // An install directory that is not there is an ordinary thing a user's environment produces --
+        // TAPSTATE_INSTALL_DIR naming a path nobody created. It is diagnosable and it is the user's to
+        // act on, so it leaves through the error-code system like every other refusal this class makes.
+        // An UncheckedIOException reaches the top as a stack trace with no code and no solution line,
+        // on the same class that already codes the name-taken case one branch away.
+        Path absent = binDir.resolve("no-such-dir");
+
+        assertThatThrownBy(() -> AliasLinks.install(absent))
+                .isInstanceOfSatisfying(TapstateException.class, e -> {
+                    assertThat(e.code().code()).isEqualTo("cli.alias-link-failed");
+                    assertThat(e.args()).containsEntry("path", absent.resolve("tap").toString());
+                    assertThat((String) e.args().get("reason")).isNotBlank();
+                });
+    }
+
+    @Test
+    void aShortcutThatCannotBeRemovedIsRefusedWithACode(@TempDir Path binDir) throws IOException {
+        // The mirror side. Removing is the half a user reaches for when the shortcut is in the way, so
+        // it must not be the half that answers with a stack trace.
+        Files.createFile(binDir.resolve("tapstate"));
+        AliasLinks.install(binDir);
+        Path alias = binDir.resolve("tap");
+        assertThat(binDir.toFile().setWritable(false)).as("the directory could be made read-only").isTrue();
+        try {
+            assertThatThrownBy(() -> AliasLinks.uninstall(binDir))
+                    .isInstanceOfSatisfying(TapstateException.class, e -> {
+                        assertThat(e.code().code()).isEqualTo("cli.alias-link-failed");
+                        assertThat(e.args()).containsEntry("path", alias.toString());
+                    });
+        } finally {
+            binDir.toFile().setWritable(true);
+        }
+    }
 }

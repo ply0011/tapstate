@@ -18,10 +18,16 @@
 #   * Change-data-capture is exercised the way the script's closing instructions tell a user to, with all
 #     three operations, because a pipeline that only ever inserts is not the claim being made.
 #
-# The script under test is the checkout's, standing in for the pipe from install.tapstate.dev a user runs. That is
-# deliberate: a fix on a branch has to be exercised before it merges, and on main the two are the same
-# file. Everything the script then fetches -- the compose file, install.sh, the CLI, the jars -- still
-# comes from the pinned release, exactly as a user's run does.
+# Each leg is one world, and mixing them is what this lane kept doing. A user never runs a script from
+# one point in history against another point's assets: they pipe what install.tapstate.dev serves, which
+# is a release tag's script, and that script pins the release whose compose file, seed SQL, CLI and jars
+# it then fetches. So the published leg takes all of it from the newest published release, and the
+# from-source leg takes all of it from this checkout. The checkout's script is therefore still exercised
+# before it merges -- on the leg that also brings the server it was written for.
+#
+# The alternative, running the checkout's script against the released assets, is not a stricter test but
+# an incoherent one: it went red on a seed file the pinned tag does not contain, and no release could
+# have made it green, because the script it was running had not shipped.
 #
 # Nightly rather than per-PR: it depends on published release assets, so a red here can mean the release
 # is stale rather than the pull request is wrong, and blocking unrelated work on that would be a lie
@@ -63,17 +69,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: The image reference the compose file pins
-        # Read it off the compose file rather than restating it, so the tag this job builds and the tag
-        # the stack starts can never drift apart.
-        id: img
+      - name: Resolve what this leg runs
+        # One point in history per leg, script and assets together (see the header).
+        #
+        #   published   the newest published release. Resolved from the release list rather than from
+        #               this checkout's pin: the pin moves ahead of the release the moment a version is
+        #               bumped, and this leg's question is about what shipped, not about what is next.
+        #   from-source this checkout, image included.
+        #
+        # Both the image reference and the store's database are read off the artifacts this leg will
+        # actually run, never restated here -- the two legs genuinely differ on both, and a literal
+        # would be right for one of them and silently wrong for the other.
+        id: leg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEG: ${{ matrix.server }}
+          REPO: ${{ github.repository }}
         run: |
           set -eu
-          ref="$(sed -n 's|.*image: \(ghcr.io/tapstate/tapstate:[^ ]*\).*|\1|p' \
-            deploy/quickstart/docker-compose.yml | head -1)"
-          [ -n "$ref" ] || { echo "no server image reference found in the compose file" >&2; exit 1; }
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "compose pins: $ref"
+          # Not in $RUNNER_TEMP itself, which is where the script is run from: a quickstart.sh sitting
+          # beside it means "a saved copy, work here", and the script would then never make the
+          # tapstate-demo directory this lane asserts it makes.
+          mkdir -p "$RUNNER_TEMP/script"
+          script="$RUNNER_TEMP/script/quickstart.sh"
+          if [ "$LEG" = published ]; then
+            # Version tags only. The release list also carries the connector-jar prerelease, which is
+            # re-published on its own schedule and would otherwise become "the newest release".
+            tag="$(gh release list --limit 30 --exclude-drafts --json tagName \
+                     --jq 'map(select(.tagName | startswith("v"))) | first | .tagName')"
+            [ -n "$tag" ] && [ "$tag" != null ] \
+              || { echo "no published version tag to run the published leg against" >&2; exit 1; }
+            raw="https://raw.githubusercontent.com/$REPO/$tag"
+            curl -fsSL "$raw/deploy/quickstart/quickstart.sh" -o "$script"
+            curl -fsSL "$raw/deploy/quickstart/docker-compose.yml" -o "$RUNNER_TEMP/script/compose.yml"
+            compose="$RUNNER_TEMP/script/compose.yml"
+            echo "leg: the published release $tag -- script, assets and image all from that tag"
+          else
+            cp "$GITHUB_WORKSPACE/deploy/quickstart/quickstart.sh" "$script"
+            compose="$GITHUB_WORKSPACE/deploy/quickstart/docker-compose.yml"
+            echo "leg: this checkout -- script, assets and image all from it"
+          fi
+          ref="$(sed -n 's|.*image: \(ghcr.io/tapstate/tapstate:[^ ]*\).*|\1|p' "$compose" | head -1)"
+          [ -n "$ref" ] || { echo "no server image reference found in $compose" >&2; exit 1; }
+          db="$(sed -n 's|.*mongodb://mongo:27017/\([A-Za-z0-9_]*\)?directConnection.*|\1|p' \
+            "$script" | head -1)"
+          [ -n "$db" ] || { echo "no store database found in the script under test" >&2; exit 1; }
+          { echo "ref=$ref"; echo "script=$script"; echo "db=$db"; } >> "$GITHUB_OUTPUT"
+          echo "image: $ref   store database: $db"
 
       - name: The runner is a clean machine
         # Assert it rather than assume it. If any of this is already here, the run would still pass while
@@ -82,7 +124,7 @@ jobs:
         run: |
           set -eu
           if [ "${{ matrix.server }}" = published ] \
-             && docker image inspect "${{ steps.img.outputs.ref }}" >/dev/null 2>&1; then
+             && docker image inspect "${{ steps.leg.outputs.ref }}" >/dev/null 2>&1; then
             echo "the server image is already present; this run would not prove it can be pulled" >&2
             exit 1
           fi
@@ -108,66 +150,76 @@ jobs:
         run: |
           set -eu
           mvn -q -pl app -am -DskipTests clean package
-          docker build -f deploy/docker/Dockerfile -t "${{ steps.img.outputs.ref }}" .
+          docker build -f deploy/docker/Dockerfile -t "${{ steps.leg.outputs.ref }}" .
 
       - name: Run the quickstart, piped, and let it make its own directory
-        # The one command a user runs, with the checkout's copy standing in for the published one (see
-        # the header). Piped rather than saved on purpose: the pipe is the form on the README, and the
-        # tapstate-demo directory the script then makes for itself is part of what is being proved.
-        # Nothing else is done first: any manual step here would be a step the user has to take too,
-        # and the whole claim is that there are none.
+        # The one command a user runs. Piped rather than saved on purpose: the pipe is the form on the
+        # README, and the tapstate-demo directory the script then makes for itself is part of what is
+        # being proved. Nothing else is done first: any manual step here would be a step the user has
+        # to take too, and the whole claim is that there are none.
+        env:
+          SCRIPT: ${{ steps.leg.outputs.script }}
+          PREPARED: ${{ steps.leg.outputs.ref }}
+          STORE_DB: ${{ steps.leg.outputs.db }}
+          LEG: ${{ matrix.server }}
         run: |
           # pipefail is not in the default shell's flags, and without it `tee` decides the step's fate --
           # which is the very failure this lane exists to catch, reintroduced one level up.
           set -euo pipefail
-          script="$GITHUB_WORKSPACE/deploy/quickstart/quickstart.sh"
-          # Which compose file the script fetches is the difference between the two legs, and it was
-          # the same for both until now: the script is the checkout's in either case, but the assets it
-          # downloads came from the release in both, so the source-built leg started the checkout's
-          # image against the release's compose. It then proved a combination that exists nowhere -- and
-          # a compose change in the checkout would be validated against the previous release's file.
-          #
-          # published   leave it unset: the release's assets are the point of that leg.
-          # from-source point it at the checkout, so the whole stack is the code under test.
-          if [ "${{ matrix.server }}" = from-source ]; then
+          # Where the script fetches the rest of the stack from is the other half of "one leg, one
+          # world": the released script pins its own release and needs nothing said to it, and the
+          # checkout's is pointed at the checkout so the whole stack is the code under test.
+          if [ "$LEG" = from-source ]; then
             export TAPSTATE_QUICKSTART_BASE_URL="file://$GITHUB_WORKSPACE"
           fi
           cd "$RUNNER_TEMP"
-          cat "$script" | sh 2>&1 | tee run.log
+          cat "$SCRIPT" | sh 2>&1 | tee run.log
           # The image the stack actually started, held to the one this job prepared. Without this the
           # leg can silently run a different server than the one it built or pulled -- which is the
           # failure the line above exists to remove, and it would look identical in the log.
           started="$(sed -n 's|.*image: \(ghcr.io/tapstate/tapstate:[^ ]*\).*|\1|p' \
             tapstate-demo/docker-compose.yml | head -1)"
-          [ "$started" = '${{ steps.img.outputs.ref }}' ] || {
-            echo "the stack started $started, but this job prepared ${{ steps.img.outputs.ref }}" >&2
+          [ "$started" = "$PREPARED" ] || {
+            echo "the stack started $started, but this job prepared $PREPARED" >&2
             exit 1
           }
           echo "stack ran: $started"
           # Read the count line off the script's own summary. This grep has drifted from that summary
           # twice now, and both times it could only fail on a run that delivered every row: first when
-          # the line became "the view now holds" as the demo started declaring a view, then again when a
-          # second engine arrived and the summary began naming both engines' counts instead of "rows".
-          # So match on the numbers rather than on whichever nouns the summary happens to use -- the
-          # counts are what this assertion is actually about, and they are what a half-arrived demo
-          # cannot produce. Both are required: a run that carried MySQL and dropped PostgreSQL is the
-          # failure the second engine exists to make visible.
-          grep -qE 'now holds [0-9]+ orders from MySQL and [0-9]+ shipments from PostgreSQL' run.log
+          # the line became "the view now holds" as the demo started declaring a view, then again when
+          # a second engine arrived and the summary began naming both engines' counts instead of "rows".
+          if [ "$LEG" = from-source ]; then
+            # Match on the numbers rather than on whichever nouns the summary happens to use -- the
+            # counts are what this assertion is actually about, and they are what a half-arrived demo
+            # cannot produce. Both are required: a run that carried MySQL and dropped PostgreSQL is the
+            # failure the second engine exists to make visible.
+            grep -qE 'now holds [0-9]+ orders from MySQL and [0-9]+ shipments from PostgreSQL' run.log
+          else
+            # The released summary is whatever that release wrote, and it changes between releases. This
+            # leg cannot be held to the current demo's wording without going red every time the wording
+            # moves ahead of the newest release -- which says nothing about the release. What survives
+            # every rewording is the property the wording carries: a count, and not zero.
+            grep -qE 'holds [1-9][0-9]* ' run.log
+          fi
           test -d tapstate-demo || { echo "the piped run did not make its own directory" >&2; exit 1; }
 
-          # The managed store is the deployment's, not the workspace's: nothing here applied it, and the
-          # generated workspace does not even contain it. Asserted on the compose stack rather than an
-          # in-process server because "installed and it was already there" is a claim about the thing a
-          # user actually starts.
-          test ! -e tapstate-demo/work/source/views.tap.yml \
-            || { echo "the demo workspace declares the store; this assertion would prove nothing" >&2; exit 1; }
+          # The store this release registers by itself is this release's claim, so it is asserted where
+          # the release under test makes it. Asserted on the compose stack rather than an in-process
+          # server because "installed and it was already there" is a claim about the thing a user starts.
+          if [ "$LEG" = from-source ]; then
+            test ! -e "tapstate-demo/work/source/$STORE_DB.tap.yml" \
+              || { echo "the demo workspace declares the store; this assertion would prove nothing" >&2; exit 1; }
+          fi
           cd tapstate-demo
           admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
           printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nls\nexit\n' "$admin_pw" \
             | ./tapstate -w work > ls.log 2>&1
-          grep -q 'source  views' ls.log \
-            || { echo "the store was not registered by the deployment; ls said:" >&2; cat ls.log >&2; exit 1; }
-          echo "the deployment registered the store: nothing applied it and it is listed"
+          # Listed either way: registered by the deployment on one leg, applied from the workspace on
+          # the other. Which route it took is the assertion above; that it is there at all is this one,
+          # and a demo whose target is not registered delivers nothing on either leg.
+          grep -q "source  $STORE_DB" ls.log \
+            || { echo "the store '$STORE_DB' is not registered; ls said:" >&2; cat ls.log >&2; exit 1; }
+          echo "the store is registered and listed: $STORE_DB"
 
       - name: The server came from where this leg says it did
         # A registry pull leaves a repo digest; a local build has none. That single fact separates the two
@@ -177,7 +229,7 @@ jobs:
         # and proving nothing it was added to prove.
         run: |
           set -eu
-          digests="$(docker image inspect "${{ steps.img.outputs.ref }}" --format '{{join .RepoDigests ","}}')"
+          digests="$(docker image inspect "${{ steps.leg.outputs.ref }}" --format '{{join .RepoDigests ","}}')"
           if [ "${{ matrix.server }}" = published ]; then
             [ -n "$digests" ] || { echo "the server image carries no repo digest -- it was not pulled" >&2; exit 1; }
             echo "pulled: $digests"
@@ -189,11 +241,13 @@ jobs:
       - name: The target really holds the seeded rows
         # Read the target directly. The script prints a count of its own, and a check that only re-reads
         # the script's summary would pass for a script that printed it unconditionally.
+        env:
+          STORE_DB: ${{ steps.leg.outputs.db }}
         run: |
           set -eu
           cd "$RUNNER_TEMP/tapstate-demo"
           rows="$(docker compose exec -T mongo mongosh --quiet \
-            'mongodb://mongo:27017/views?directConnection=true' \
+            "mongodb://mongo:27017/$STORE_DB?directConnection=true" \
             --eval 'db.order_state.countDocuments()' | tr -d '[:space:]')"
           [ "$rows" = 5 ] || { echo "target holds $rows rows, expected the 5 seeded ones" >&2; exit 1; }
           echo "snapshot: $rows rows in the target"
@@ -202,10 +256,12 @@ jobs:
         # The operations the script's closing instructions hand the user, in the same order. Each wait is
         # bounded: an unbounded one would spend the job timeout to say nothing, where a bounded one names
         # which of the three did not arrive.
+        env:
+          STORE_DB: ${{ steps.leg.outputs.db }}
         run: |
           set -eu
           cd "$RUNNER_TEMP/tapstate-demo"
-          uri='mongodb://mongo:27017/views?directConnection=true'
+          uri="mongodb://mongo:27017/$STORE_DB?directConnection=true"
           # Poll the target until $2 holds, or fail naming the operation $1.
           await() {
             i=0

@@ -5,10 +5,10 @@ import io.tapstate.spi.store.ArtifactMutation;
 import io.tapstate.spi.store.ArtifactStore;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 
 /**
  * Registers the managed state store views materialize into, once at startup, so a deployment has one
@@ -29,24 +29,45 @@ import org.springframework.boot.ApplicationRunner;
  * their own resource under this id keeps it, and the seed reports that it found one rather than replacing
  * what somebody meant to put there.
  */
-final class ViewStoreSeedRunner implements ApplicationRunner {
+final class ViewStoreSeedRunner implements SmartInitializingSingleton {
 
     private static final Logger LOG = LoggerFactory.getLogger(ViewStoreSeedRunner.class);
 
     /** The connector the bundled store speaks; the only shape the view sink writes today. */
     private static final String CONNECTOR = "mongodb";
 
+    /** Where the driver authenticates when a connection string names no database of its own. */
+    private static final String SPEC_DEFAULT_AUTH_SOURCE = "admin";
+
+    /** TLS asked for in the URI, in either of the two spellings the driver accepts. */
+    private static final Pattern TLS_ENABLED = Pattern.compile("[?&](tls|ssl)=true", Pattern.CASE_INSENSITIVE);
+
     private final ArtifactStore artifacts;
     private final String serverStoreUri;
+    private final String tlsCaFile;
 
-    ViewStoreSeedRunner(ArtifactStore artifacts, String serverStoreUri) {
+    ViewStoreSeedRunner(ArtifactStore artifacts, String serverStoreUri, String tlsCaFile) {
         this.artifacts = Objects.requireNonNull(artifacts, "artifacts");
         this.serverStoreUri = Objects.requireNonNull(serverStoreUri, "serverStoreUri");
+        this.tlsCaFile = tlsCaFile;
     }
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void afterSingletonsInstantiated() {
+        seed();
+    }
+
+    void seed() {
         String id = ViewTargetResolver.STATE_STORE_SOURCE_ID;
+        if (trustCannotTravelInTheUri()) {
+            // Seeding anyway would register a connection that can never be made: the connector would
+            // reach the right host and fail the handshake, reporting a store that is running perfectly.
+            // Better to have no store and say why than one that is wrong in a way nothing here can fix.
+            LOG.warn("Not registering the managed state store '{}': this server trusts its own store through a "
+                    + "certificate authority file, and that trust cannot be carried in a connection URI. "
+                    + "Declare a source under that id with the connector's own TLS settings.", id);
+            return;
+        }
         SourceResource store = new SourceResource(
                 id, null, CONNECTOR,
                 Map.of("isUri", true, "uri", viewsUri(serverStoreUri)),
@@ -77,6 +98,11 @@ final class ViewStoreSeedRunner implements ApplicationRunner {
      * where that user does not exist. The store would be registered and permanently unusable, and the
      * failure would arrive as a login error against a database nobody configured. The original database
      * is therefore pinned as {@code authSource} whenever the URI named one and did not already say.
+     *
+     * <p>And where it named none but does carry credentials, the fallback is pinned instead. The spec
+     * falls back to {@code admin} only because no database was named -- which stops being true of the
+     * derived URI the moment this method names one, so an inherited default would land on the view store
+     * exactly as a rewritten path does.
      */
     static String viewsUri(String serverStoreUri) {
         String database = ViewTargetResolver.STATE_STORE_SOURCE_ID;
@@ -88,19 +114,44 @@ final class ViewStoreSeedRunner implements ApplicationRunner {
         int path = beforeQuery.indexOf('/', authorityStart);
         String authority = path < 0 ? beforeQuery : beforeQuery.substring(0, path);
         String originalDatabase = path < 0 ? "" : beforeQuery.substring(path + 1);
-        return authority + "/" + database + withAuthSource(fromQuery, originalDatabase);
+        return authority + "/" + database
+                + withAuthSource(fromQuery, originalDatabase, carriesCredentials(authority, authorityStart));
+    }
+
+    /** Whether the URI carries credentials at all -- userinfo ahead of the host list. */
+    private static boolean carriesCredentials(String authority, int authorityStart) {
+        return authority.indexOf('@', authorityStart) >= 0;
     }
 
     /**
-     * The query with {@code authSource} pinned to {@code originalDatabase}, unless there is nothing to
-     * pin or the caller already said. A URI that named no database has no default to preserve -- the spec
-     * falls back to {@code admin} there, and that is as true of the derived URI as of the original.
+     * The query with {@code authSource} pinned to whatever the original authenticated against, unless the
+     * caller already said or there was never anywhere to move. A named database is pinned whether or not
+     * this URI authenticates today, because it is the value the rewrite silently changes and a credential
+     * added later would inherit the change. With no database named, the spec's own fallback is pinned --
+     * but only for a URI that actually carries credentials, since the option means nothing otherwise and
+     * would have to be explained to whoever reads the seeded resource.
      */
-    private static String withAuthSource(String query, String originalDatabase) {
-        if (originalDatabase.isEmpty() || namesAuthSource(query)) {
+    private static String withAuthSource(String query, String originalDatabase, boolean carriesCredentials) {
+        if (namesAuthSource(query)) {
             return query;
         }
-        return query.isEmpty() ? "?authSource=" + originalDatabase : query + "&authSource=" + originalDatabase;
+        String source = originalDatabase.isEmpty()
+                ? (carriesCredentials ? SPEC_DEFAULT_AUTH_SOURCE : "")
+                : originalDatabase;
+        if (source.isEmpty()) {
+            return query;
+        }
+        return query + (query.isEmpty() ? "?" : "&") + "authSource=" + source;
+    }
+
+    /**
+     * Whether reaching the store takes trust material that a URI has no room for.
+     *
+     * <p>A certificate authority file is consulted only when the URI asks for TLS, so one configured
+     * beside a plaintext connection is inert and changes nothing here.
+     */
+    private boolean trustCannotTravelInTheUri() {
+        return tlsCaFile != null && TLS_ENABLED.matcher(serverStoreUri).find();
     }
 
     /**

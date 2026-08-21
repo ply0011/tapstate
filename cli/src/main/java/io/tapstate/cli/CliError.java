@@ -33,6 +33,13 @@ enum CliError implements TapstateErrorCode {
      */
     ALIAS_INSTALL_DIR_UNKNOWN("cli.alias-install-dir-unknown", Set.of("path")),
 
+    /**
+     * The {@code tap} shortcut could not be written or removed; {@code path} is the shortcut and
+     * {@code reason} is what the filesystem said. Distinct from the name-taken refusal: nothing here is
+     * anyone's file, the link simply could not be made.
+     */
+    ALIAS_LINK_FAILED("cli.alias-link-failed", Set.of("path", "reason")),
+
     /** A connector id supplied to the wizard that is not in the bundled catalog. */
     UNKNOWN_CONNECTOR("cli.unknown-connector", Set.of("connector")),
 

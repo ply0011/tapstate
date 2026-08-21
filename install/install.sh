@@ -282,6 +282,7 @@ install_alias() {
     staged_alias="$alias_dir/.tap.$$"
     ln -s "versions/$alias_version/bin/tapstate" "$staged_alias"
     mv -f "$staged_alias" "$alias_dir/tap"
+    staged_alias=""
 }
 
 main() {
@@ -303,7 +304,11 @@ main() {
     tmp="$(mktemp -d)"
     staged=""
     staged_link=""
-    trap 'rm -rf "$tmp" ${staged:+"$staged"} ${staged_link:+"$staged_link"}' EXIT INT TERM
+    # The alias is staged under a temporary name too, so it is cleaned up on the same terms as the other
+    # two. Left out, an interrupt between its `ln -s` and its `mv` strands a dot-file link in a directory
+    # the user keeps -- and unlike the work area below, nothing else ever removes it.
+    staged_alias=""
+    trap 'rm -rf "$tmp" ${staged:+"$staged"} ${staged_link:+"$staged_link"} ${staged_alias:+"$staged_alias"}' EXIT INT TERM
 
     note_recommended_platform
     fetch "$url" "$tmp/$asset"

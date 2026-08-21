@@ -4,7 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceResource;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.SmartLifecycle;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 /**
  * The managed state store is registered by the deployment at startup, not applied by whoever is using it.
@@ -15,7 +18,7 @@ class ViewStoreSeedRunnerTest {
     void the_store_is_there_without_anyone_applying_it() {
         InMemoryStorePort store = new InMemoryStorePort();
 
-        new ViewStoreSeedRunner(store.artifacts(), "mongodb://mongo:27017/tapstate").run(null);
+        new ViewStoreSeedRunner(store.artifacts(), "mongodb://mongo:27017/tapstate", null).seed();
 
         Resource seeded = store.artifacts().get(ViewTargetResolver.STATE_STORE_SOURCE_ID).orElseThrow();
         assertThat(seeded).isInstanceOf(SourceResource.class);
@@ -38,7 +41,7 @@ class ViewStoreSeedRunnerTest {
                 null, null, null, null, null);
         store.artifacts().create(mine);
 
-        new ViewStoreSeedRunner(store.artifacts(), "mongodb://mongo:27017/tapstate").run(null);
+        new ViewStoreSeedRunner(store.artifacts(), "mongodb://mongo:27017/tapstate", null).seed();
 
         SourceResource kept = (SourceResource)
                 store.artifacts().get(ViewTargetResolver.STATE_STORE_SOURCE_ID).orElseThrow();
@@ -77,5 +80,96 @@ class ViewStoreSeedRunnerTest {
         assertThat(ViewStoreSeedRunner.viewsUri("mongodb://mongo:27017?directConnection=true"))
                 .as("no database, but options")
                 .isEqualTo("mongodb://mongo:27017/views?directConnection=true");
+    }
+
+    @Test
+    void a_uri_that_names_no_database_still_had_somewhere_it_authenticated() {
+        // The spec's fallback is admin, and it is a fallback the derived URI does not inherit: the
+        // original named no database, the derived one names views, so leaving it implicit moves
+        // authentication to the view store exactly as rewriting a named path would. Only where
+        // credentials exist at all -- there is nothing to preserve for a URI that authenticates nowhere.
+        assertThat(ViewStoreSeedRunner.viewsUri("mongodb://user:pw@mongo:27017"))
+                .isEqualTo("mongodb://user:pw@mongo:27017/views?authSource=admin");
+        assertThat(ViewStoreSeedRunner.viewsUri("mongodb://user:pw@mongo:27017?replicaSet=rs0"))
+                .as("no database, but options")
+                .isEqualTo("mongodb://user:pw@mongo:27017/views?replicaSet=rs0&authSource=admin");
+    }
+
+    @Test
+    void a_store_reached_over_tls_with_a_private_ca_is_not_seeded_from_the_uri_alone() {
+        // The trust that lets the server reach its own store is a CA file beside the URI, and it cannot
+        // travel in a URI. Seeding anyway would register a store that can never be connected to, so the
+        // deployment is left to declare one with the connector's own TLS settings.
+        InMemoryStorePort store = new InMemoryStorePort();
+
+        new ViewStoreSeedRunner(store.artifacts(), "mongodb://mongo:27017/tapstate?tls=true", "/etc/ca.pem")
+                .seed();
+
+        assertThat(store.artifacts().get(ViewTargetResolver.STATE_STORE_SOURCE_ID)).isEmpty();
+    }
+
+    @Test
+    void a_ca_file_on_a_plaintext_connection_changes_nothing() {
+        // The driver applies a CA file only when the URI asks for TLS, so an inert one must not turn a
+        // working deployment into one with no store.
+        InMemoryStorePort store = new InMemoryStorePort();
+
+        new ViewStoreSeedRunner(store.artifacts(), "mongodb://mongo:27017/tapstate", "/etc/ca.pem").seed();
+
+        assertThat(store.artifacts().get(ViewTargetResolver.STATE_STORE_SOURCE_ID)).isPresent();
+    }
+
+    @Test
+    void the_store_is_registered_before_anything_in_the_start_phase_runs() {
+        // Every readiness signal this product has is a poll of an HTTP endpoint, and that endpoint starts
+        // answering when the web server's lifecycle is started -- the same phase the recorder below runs
+        // in. Seeding after that point is a race the demo script loses by design: it waits for healthy
+        // and then immediately applies a pipeline whose view needs this store to exist.
+        //
+        // So the assertion is about the phase rather than the value. A seed that runs as an application
+        // runner satisfies "the store ends up registered" and still loses that race, because runners fire
+        // after the refresh this recorder is part of.
+        InMemoryStorePort store = new InMemoryStorePort();
+        AtomicBoolean seededBeforeStart = new AtomicBoolean();
+
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean("seed", ViewStoreSeedRunner.class, () ->
+                    new ViewStoreSeedRunner(store.artifacts(), "mongodb://mongo:27017/tapstate", null));
+            context.registerBean("surface", SurfaceStart.class, () -> new SurfaceStart(() ->
+                    seededBeforeStart.set(store.artifacts()
+                            .get(ViewTargetResolver.STATE_STORE_SOURCE_ID).isPresent())));
+            context.refresh();
+        }
+
+        assertThat(seededBeforeStart.get())
+                .as("the store was already registered when the start phase began")
+                .isTrue();
+    }
+
+    /** Stands in for the web server: started in the same phase, so it observes the same moment. */
+    private static final class SurfaceStart implements SmartLifecycle {
+
+        private final Runnable onStart;
+        private boolean running;
+
+        SurfaceStart(Runnable onStart) {
+            this.onStart = onStart;
+        }
+
+        @Override
+        public void start() {
+            onStart.run();
+            running = true;
+        }
+
+        @Override
+        public void stop() {
+            running = false;
+        }
+
+        @Override
+        public boolean isRunning() {
+            return running;
+        }
     }
 }

@@ -2,7 +2,6 @@ package io.tapstate.cli;
 
 import io.tapstate.core.common.TapstateException;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -49,7 +48,7 @@ final class AliasLinks {
             Files.move(staged, alias, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             quietlyDelete(staged);
-            throw new UncheckedIOException(e);
+            throw linkFailed(alias, e);
         }
     }
 
@@ -67,7 +66,7 @@ final class AliasLinks {
         try {
             Files.delete(alias);
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            throw linkFailed(alias, e);
         }
     }
 
@@ -100,11 +99,31 @@ final class AliasLinks {
                     return;
                 }
             } catch (IOException e) {
-                throw new UncheckedIOException(e);
+                throw linkFailed(alias, e);
             }
         }
         throw new TapstateException(
                 CliError.ALIAS_NAME_TAKEN, Map.of("path", alias.toString()), null);
+    }
+
+    /**
+     * The shortcut could not be written or removed. These are the filesystem's ordinary refusals -- a
+     * directory that is not there, one this user cannot write into, a filesystem with no symbolic links
+     * -- and each of them belongs to the user to act on, so they leave the same way the name-taken
+     * refusal one branch away does. What the filesystem said is carried in {@code reason}: without it
+     * the message names a path and no cause, which is the half the reader already had.
+     */
+    private static TapstateException linkFailed(Path alias, IOException cause) {
+        return new TapstateException(CliError.ALIAS_LINK_FAILED,
+                Map.of("path", alias.toString(), "reason", describe(cause)), cause);
+    }
+
+    /** What the filesystem said, in one line, never empty. */
+    private static String describe(IOException cause) {
+        String said = cause.getMessage();
+        return said == null || said.isBlank()
+                ? cause.getClass().getSimpleName()
+                : cause.getClass().getSimpleName() + ": " + said;
     }
 
     private static void quietlyDelete(Path path) {

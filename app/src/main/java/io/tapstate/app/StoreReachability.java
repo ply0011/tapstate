@@ -43,7 +43,9 @@ interface StoreReachability {
      *
      * <p>A connector reporting FAILED and a connector throwing are the same answer to the only question
      * asked here -- can this pipeline write to it -- so both become the one coded failure, with what the
-     * probe said carried in {@code reason} rather than discarded.
+     * probe said carried in {@code reason} rather than discarded. That holds for a connector that throws
+     * a coded error of its own too: its code names a connector condition, not which store this pipeline
+     * was about to write to, so it is carried in the reason rather than substituted for the answer.
      */
     static StoreReachability probing(ConnectionTester tester, Duration timeout) {
         StoreReachability probe = (storeSourceId, connectorId, settings) -> {
@@ -90,11 +92,21 @@ interface StoreReachability {
                 } catch (InterruptedException e) {
                     answer.cancel(true);
                     Thread.currentThread().interrupt();
-                    throw unreachable(storeSourceId, "interrupted while probing");
+                    // The caller was interrupted, not the store -- the process is going down, and nothing
+                    // was learned about whether the store answers. Coding it would make it a diagnosis:
+                    // the converger records a coded refusal as FAILED, so a shutdown would leave a
+                    // durable, wrong verdict about a store that was never probed. Uncoded and unchecked
+                    // is what a lifecycle event gets, and the flag above is what carries it upward.
+                    throw new IllegalStateException(
+                            "interrupted while probing store " + storeSourceId, e);
                 } catch (ExecutionException e) {
                     Throwable cause = e.getCause();
-                    // A coded refusal from the probe is the answer, not a wrapper to re-describe.
-                    if (cause instanceof TapstateException coded) {
+                    // This check's own refusal is the answer, and it already names the store and what the
+                    // probe said. Anything else is re-described here, coded or not: a connector's own
+                    // coded failure is about the connector and carries no store, and this is the one
+                    // place that still knows which store was being probed.
+                    if (cause instanceof TapstateException coded
+                            && coded.code() == ActuationError.VIEW_STORE_UNREACHABLE) {
                         throw coded;
                     }
                     throw unreachable(storeSourceId, String.valueOf(cause));

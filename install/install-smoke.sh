@@ -458,6 +458,33 @@ else
 fi
 rm -rf "$elsewhere"
 
+# The alias is staged under a temporary name and moved into place, so a run that dies between the two
+# must not leave that name behind. This drives the failure with an `mv` that refuses the alias move --
+# the same window an interrupt opens, reached deterministically -- and then looks for the dot-file. The
+# work area is a temp dir nobody sees again; this one lands in a directory the user keeps forever.
+idir="$(mktemp -d)/bin"
+shim="$(mktemp -d)"
+cat > "$shim/mv" <<'SHIM'
+#!/bin/sh
+# Refuse only the alias staging move; everything else this installer does must still work, or the
+# case would prove that a broken mv breaks the install rather than that the trap cleans up.
+case "$*" in *.tap.*) exit 1 ;; esac
+exec /bin/mv "$@"
+SHIM
+chmod +x "$shim/mv"
+OUT="$(PATH="$shim:$PATH" \
+       TAPSTATE_VERSION="$VERSION" \
+       TAPSTATE_BASE_URL="file://$STUB" \
+       TAPSTATE_INSTALL_DIR="$idir" \
+       sh "$INSTALL_SH" 2>&1)"; RC=$?
+STRANDED="$(find "$idir" -maxdepth 1 -name '.tap.*' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$RC" -ne 0 ] && [ "$STRANDED" = 0 ]; then
+  ok "an aborted alias move leaves no staged dot-file behind"
+else
+  bad "staged alias stranded or the abort was not detected rc=$RC stranded=$STRANDED: $OUT"
+fi
+rm -rf "$shim"
+
 # --- summary ----------------------------------------------------------------------------------------
 echo
 printf '\033[1minstall smoke: %d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
