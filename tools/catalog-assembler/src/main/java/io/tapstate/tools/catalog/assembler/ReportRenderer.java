@@ -24,6 +24,10 @@ final class ReportRenderer {
         sections.add(section("Not derived — no built jar or did not classload (excluded from refresh)",
                 report.notDerived()));
         sections.add(section("MQ suspects — derived cdc, undeclared (need tapstate.modes)", report.mqSuspects()));
+        sections.add(section("Overlay divergences — our declaration differs from the connector's own",
+                report.overlayDivergences()));
+        sections.add(section("Overlay not derivable — we declare a mode the capabilities do not support",
+                report.overlayNotDerivable()));
         sections.add(section("Sink semantics defaulted — no DML signal", report.sinkDefaultedNoSignal()));
         sections.add(section("Unrecognized type tokens — fell to string input", report.unknownTypeFields()));
         sections.add(section("Unresolved label refs — fell back to raw key", report.unresolvedLabelRefs()));

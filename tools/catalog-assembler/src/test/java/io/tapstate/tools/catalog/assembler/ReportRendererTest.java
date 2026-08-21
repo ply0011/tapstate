@@ -21,6 +21,8 @@ class ReportRendererTest {
                 List.of("github"),
                 List.of("hazelcast"),
                 List.of("kafka"),
+                List.of("rabbitmq: upstream [cdc], ours [stream]"),
+                List.of("selectdb: snapshot needs batch_read_function"),
                 List.of("kafka"),
                 List.of(),
                 List.of(),
@@ -40,6 +42,12 @@ class ReportRendererTest {
 
                 ## MQ suspects — derived cdc, undeclared (need tapstate.modes)
                 - kafka
+
+                ## Overlay divergences — our declaration differs from the connector's own
+                - rabbitmq: upstream [cdc], ours [stream]
+
+                ## Overlay not derivable — we declare a mode the capabilities do not support
+                - selectdb: snapshot needs batch_read_function
 
                 ## Sink semantics defaulted — no DML signal
                 - kafka

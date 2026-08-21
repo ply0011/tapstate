@@ -29,6 +29,18 @@ import io.tapstate.core.model.SourceMode;
 final class CatalogAssembler {
 
     private static final String STREAM_READ = "stream_read_function";
+
+    /**
+     * The only two modes capabilities can speak to, and which capability each needs. Deliberately just
+     * these two: stream, api and file are underivable by construction, so checking them would flag
+     * every connector we declare — which is all eighteen of them — and a report that always lists the
+     * same names is one nobody reads. What this catches is a mode we claimed that the connector's own
+     * capabilities contradict, which no other gate sees: an entry that exists is trusted, so a wrong
+     * cdc here is admitted by validation rather than refused.
+     */
+    private static final Map<String, String> DERIVABLE_FROM =
+            Map.of("snapshot", "batch_read_function", "cdc", "stream_read_function");
+
     private static final String WRITE_RECORD = "write_record_function";
 
     private CatalogAssembler() {
@@ -43,6 +55,8 @@ final class CatalogAssembler {
         List<String> unclassified = new ArrayList<>();
         List<String> notDerived = new ArrayList<>();
         List<String> mqSuspects = new ArrayList<>();
+        List<String> overlayDivergences = new ArrayList<>();
+        List<String> overlayNotDerivable = new ArrayList<>();
         List<String> sinkDefaultedNoSignal = new ArrayList<>();
         List<String> unknownTypeFields = new ArrayList<>();
         List<String> unresolvedLabelRefs = new ArrayList<>();
@@ -75,6 +89,21 @@ final class CatalogAssembler {
             if (isMqSuspect(entry, spec, caps)) {
                 mqSuspects.add(entry.id());
             }
+            List<String> ourModes = overlay.modesFor(source.id());
+            if (ourModes != null) {
+                if (spec.declaredModes() != null && !spec.declaredModes().equals(ourModes)) {
+                    // Only when they actually differ. Reporting agreement too would print every
+                    // connector we declare, on every run, and bury the one line that matters.
+                    overlayDivergences.add(entry.id()
+                            + ": upstream " + spec.declaredModes() + ", ours " + ourModes);
+                }
+                for (String mode : ourModes) {
+                    String needed = DERIVABLE_FROM.get(mode);
+                    if (needed != null && !caps.contains(needed)) {
+                        overlayNotDerivable.add(entry.id() + ": " + mode + " needs " + needed);
+                    }
+                }
+            }
             if (sinkDefaultedNoSignal(spec, caps)) {
                 sinkDefaultedNoSignal.add(entry.id());
             }
@@ -84,7 +113,8 @@ final class CatalogAssembler {
         }
 
         IngestReport report = new IngestReport(connectorRepoSha, ingestedIds, unclassified, notDerived,
-                mqSuspects, sinkDefaultedNoSignal, unknownTypeFields, unresolvedLabelRefs, walk.exemptions());
+                mqSuspects, overlayDivergences, overlayNotDerivable, sinkDefaultedNoSignal,
+                unknownTypeFields, unresolvedLabelRefs, walk.exemptions());
         return new Assembly(entries, report);
     }
 

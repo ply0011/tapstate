@@ -52,11 +52,26 @@ class CatalogAssemblerTest {
              "messages":{"default":"en_US","en_US":{}}}
             """;
 
+    private static final String KAFKA_SPEC_DECLARING_CDC = """
+            {"properties":{"id":"kafka","name":"Kafka","realName":"Apache Kafka","icon":"icons/kafka.png",
+              "tags":["Database"]},
+             "tapstate":{"modes":["cdc"]},
+             "configOptions":{"connection":{"properties":{}}},
+             "messages":{"default":"en_US","en_US":{}}}
+            """;
+
+    private static final String KAFKA_SPEC_PATH =
+            "connectors/kafka-connector/src/main/resources/spec_kafka.json";
+
     private Assembly assemble() {
         return assemble(noOverlay());
     }
 
     private Assembly assemble(ConnectorOverlay overlay) {
+        return assemble(overlay, Map.of());
+    }
+
+    private Assembly assemble(ConnectorOverlay overlay, Map<String, String> specOverrides) {
         List<ConnectorSource> sources = List.of(
                 new ConnectorSource("mysql", "mysql-connector",
                         "connectors/mysql-connector/src/main/resources/mysql-spec.json",
@@ -77,7 +92,10 @@ class CatalogAssemblerTest {
                 "connectors/kafka-connector/src/main/resources/spec_kafka.json", KAFKA_SPEC,
                 "connectors-javascript/github-connector/src/main/resources/spec.json", GITHUB_SPEC);
 
-        return CatalogAssembler.assemble(walk, SHA, bitmap, overlay, specs::get);
+        Map<String, String> merged = new java.util.HashMap<>(specs);
+        merged.putAll(specOverrides);
+
+        return CatalogAssembler.assemble(walk, SHA, bitmap, overlay, merged::get);
     }
 
     @Test
@@ -111,6 +129,49 @@ class CatalogAssemblerTest {
         // contains the same eighteen names is a list nobody reads.
         assertThat(assemble(overlayDeclaring("kafka", "stream")).report().mqSuspects())
                 .doesNotContain("kafka");
+    }
+
+
+    @Test
+    void reportsWhenOurDeclarationDisagreesWithTheConnectorsOwn() {
+        Assembly assembly = assemble(overlayDeclaring("kafka", "stream"),
+                Map.of(KAFKA_SPEC_PATH, KAFKA_SPEC_DECLARING_CDC));
+
+        assertThat(assembly.report().overlayDivergences())
+                .singleElement(org.assertj.core.api.InstanceOfAssertFactories.STRING)
+                .contains("kafka").contains("cdc").contains("stream");
+    }
+
+    @Test
+    void agreementBetweenTheTwoDeclarationsIsNotADivergence() {
+        // The discriminating half. Both sources speak and say the same thing, which is the ordinary
+        // case for every connector we declare - reporting it would print all eighteen on every run
+        // and bury the one line that means something.
+        Assembly assembly = assemble(overlayDeclaring("kafka", "cdc"),
+                Map.of(KAFKA_SPEC_PATH, KAFKA_SPEC_DECLARING_CDC));
+
+        assertThat(assembly.report().overlayDivergences()).isEmpty();
+    }
+
+    @Test
+    void reportsAModeWeDeclareThatTheCapabilitiesContradict() {
+        // github has no capabilities in the bitmap at all, so a claim of cdc is one nothing supports.
+        // No other gate sees this: the entry exists, so validation trusts it and admits the mode.
+        Assembly assembly = assemble(overlayDeclaring("github", "cdc"));
+
+        assertThat(assembly.report().overlayNotDerivable())
+                .singleElement(org.assertj.core.api.InstanceOfAssertFactories.STRING)
+                .contains("github").contains("cdc");
+    }
+
+    @Test
+    void anUnderivableModeIsNeverReportedAsUnsupported() {
+        // stream, api and file cannot be derived from capabilities by construction - that is exactly
+        // why they have to be declared. Flagging them would flag every connector we declare, so the
+        // check is deliberately narrow enough to stay silent here.
+        Assembly assembly = assemble(overlayDeclaring("github", "api"));
+
+        assertThat(assembly.report().overlayNotDerivable()).isEmpty();
     }
 
     private static ConnectorOverlay noOverlay() {

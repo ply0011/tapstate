@@ -7,7 +7,11 @@ import java.util.List;
  * visible rather than silent — connectors with no resolvable mode (unclassified), Java connectors
  * whose capabilities could not be derived this refresh because their jar was not built or would not
  * classload (not derived), message-queue connectors derived as cdc because they declare no
- * {@code tapstate.modes} (mq suspects), sinks whose write semantics were defaulted with no DML signal,
+ * {@code tapstate.modes} (mq suspects), connectors where our overlay and the connector's own upstream
+ * declaration disagree (overlay divergences — silence here means they agree, which is the ordinary
+ * case and is deliberately not listed), overlay declarations of a derivable mode that the capability
+ * bitmap does not support (overlay not derivable), sinks whose write semantics were defaulted with no
+ * DML signal,
  * unrecognized Formily type tokens and unresolved i18n label refs, plus the modules the walk set
  * aside. Checked in beside the catalog so every gap is reviewable in the PR.
  */
@@ -16,6 +20,8 @@ record IngestReport(String connectorRepoSha,
                     List<String> unclassified,
                     List<String> notDerived,
                     List<String> mqSuspects,
+                    List<String> overlayDivergences,
+                    List<String> overlayNotDerivable,
                     List<String> sinkDefaultedNoSignal,
                     List<String> unknownTypeFields,
                     List<String> unresolvedLabelRefs,
