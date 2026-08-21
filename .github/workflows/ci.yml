@@ -71,9 +71,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck the catalog scripts
-        run: |
-          shellcheck scripts/refresh-catalog.sh scripts/refresh-catalog-smoke.sh
-          shellcheck scripts/build-real-connectors.sh scripts/build-real-connectors-smoke.sh
+        # One invocation over all four rather than a line each: a `run: |` block runs under bash -e,
+        # so the first script to report anything aborts the step and the ones after it are never
+        # checked - which reads as "the rest were clean". The installer job above lost three scripts
+        # that way for three sessions. Checked against 0.9.0, which is what the runner's apt ships and
+        # is stricter here than a current local build.
+        run: shellcheck scripts/refresh-catalog.sh scripts/refresh-catalog-smoke.sh scripts/build-real-connectors.sh scripts/build-real-connectors-smoke.sh
       - name: refresh driver cases
         run: bash scripts/refresh-catalog-smoke.sh
       - name: connector build cases
