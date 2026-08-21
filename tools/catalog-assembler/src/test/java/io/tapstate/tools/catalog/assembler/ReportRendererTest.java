@@ -40,7 +40,7 @@ class ReportRendererTest {
                 ## Not derived — no built jar or did not classload (excluded from refresh)
                 - hazelcast
 
-                ## MQ suspects — derived cdc, undeclared (need tapstate.modes)
+                ## Unverified modes — derived for a non-database connector nobody declared
                 - kafka
 
                 ## Overlay divergences — our declaration differs from the connector's own

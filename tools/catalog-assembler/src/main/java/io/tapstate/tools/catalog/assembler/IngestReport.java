@@ -6,8 +6,9 @@ import java.util.List;
  * The accounting of one catalog assembly run: what was ingested and every degradation that must be
  * visible rather than silent — connectors with no resolvable mode (unclassified), Java connectors
  * whose capabilities could not be derived this refresh because their jar was not built or would not
- * classload (not derived), message-queue connectors derived as cdc because they declare no
- * {@code tapstate.modes} (mq suspects), connectors where our overlay and the connector's own upstream
+ * classload (not derived), non-database connectors whose modes came only from derivation and so
+ * rest on a guess nobody checked (unverified modes), connectors where our overlay and the
+ * connector's own upstream
  * declaration disagree (overlay divergences — silence here means they agree, which is the ordinary
  * case and is deliberately not listed), overlay declarations of a derivable mode that the capability
  * bitmap does not support (overlay not derivable), sinks whose write semantics were defaulted with no
@@ -19,7 +20,7 @@ record IngestReport(String connectorRepoSha,
                     List<String> ingestedIds,
                     List<String> unclassified,
                     List<String> notDerived,
-                    List<String> mqSuspects,
+                    List<String> unverifiedModes,
                     List<String> overlayDivergences,
                     List<String> overlayNotDerivable,
                     List<String> sinkDefaultedNoSignal,

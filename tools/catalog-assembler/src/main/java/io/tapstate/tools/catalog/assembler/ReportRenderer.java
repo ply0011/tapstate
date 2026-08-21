@@ -23,7 +23,8 @@ final class ReportRenderer {
         sections.add(section("Unclassified — no resolvable mode (need tapstate.modes)", report.unclassified()));
         sections.add(section("Not derived — no built jar or did not classload (excluded from refresh)",
                 report.notDerived()));
-        sections.add(section("MQ suspects — derived cdc, undeclared (need tapstate.modes)", report.mqSuspects()));
+        sections.add(section("Unverified modes — derived for a non-database connector nobody declared",
+                report.unverifiedModes()));
         sections.add(section("Overlay divergences — our declaration differs from the connector's own",
                 report.overlayDivergences()));
         sections.add(section("Overlay not derivable — we declare a mode the capabilities do not support",

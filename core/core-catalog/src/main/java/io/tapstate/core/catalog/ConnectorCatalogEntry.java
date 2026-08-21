@@ -45,4 +45,20 @@ public record ConnectorCatalogEntry(
         return group() == ConnectorGroup.DATABASE
                 || provenance().modeSource().values().stream().anyMatch(ModeSource::isDeclaration);
     }
+
+    /**
+     * Whether this row carries modes that rest on nothing but derivation, on a connector derivation
+     * cannot answer for. A file, a queue and an HTTP endpoint all register the same read functions a
+     * database does, so the probe resolves snapshot/cdc for all of them; for the database that is the
+     * right answer, and for the rest it is a guess that ships as fact — an entry that exists is
+     * trusted, so validation admits the guessed mode rather than deferring on it.
+     *
+     * <p>Disjoint from having no modes at all, deliberately. Both are "no trustworthy mode signal",
+     * but they are different gaps with different fixes: nothing was resolved here versus something
+     * wrong was resolved, and only the second ships a claim. A single bucket would let one turn into
+     * the other with no count moving.
+     */
+    public boolean modesAreUnverified() {
+        return !modes().isEmpty() && !modesAreTrustworthy();
+    }
 }

@@ -13,22 +13,18 @@ import io.tapstate.core.catalog.CatalogEntryAssembler;
 import io.tapstate.core.catalog.ConnectorOverlay;
 import io.tapstate.core.catalog.CatalogJson;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
-import io.tapstate.core.catalog.ConnectorGroup;
 import io.tapstate.core.catalog.NormalizedSpec;
 import io.tapstate.core.catalog.SpecNormalizer;
-import io.tapstate.core.model.SourceMode;
 
 /**
  * Drives the catalog assembly: for each walked connector it parses the spec (reusing core-catalog's
  * JSON reader), normalizes it, merges the derived capability bitmap and any declared modes via the
  * core merge rules, and stamps provenance. Alongside the entries it builds the ingest report,
- * surfacing every degradation — unclassified connectors, undeclared message-queue suspects, sinks
- * defaulted with no DML signal, unrecognized type tokens and unresolved label refs — so nothing is
- * lost silently. Pure: file reads are the caller's, supplied as {@code specContent}.
+ * surfacing every degradation — unclassified connectors, modes nobody declared and only derivation
+ * stands behind, sinks defaulted with no DML signal, unrecognized type tokens and unresolved label
+ * refs — so nothing is lost silently. Pure: file reads are the caller's, supplied as {@code specContent}.
  */
 final class CatalogAssembler {
-
-    private static final String STREAM_READ = "stream_read_function";
 
     /**
      * The only two modes capabilities can speak to, and which capability each needs. Deliberately just
@@ -54,7 +50,7 @@ final class CatalogAssembler {
         List<String> ingestedIds = new ArrayList<>();
         List<String> unclassified = new ArrayList<>();
         List<String> notDerived = new ArrayList<>();
-        List<String> mqSuspects = new ArrayList<>();
+        List<String> unverifiedModes = new ArrayList<>();
         List<String> overlayDivergences = new ArrayList<>();
         List<String> overlayNotDerivable = new ArrayList<>();
         List<String> sinkDefaultedNoSignal = new ArrayList<>();
@@ -86,8 +82,8 @@ final class CatalogAssembler {
             } else if (entry.modes().isEmpty()) {
                 unclassified.add(entry.id());
             }
-            if (isMqSuspect(entry, spec, caps)) {
-                mqSuspects.add(entry.id());
+            if (entry.modesAreUnverified()) {
+                unverifiedModes.add(entry.id());
             }
             List<String> ourModes = overlay.modesFor(source.id());
             if (ourModes != null) {
@@ -113,18 +109,9 @@ final class CatalogAssembler {
         }
 
         IngestReport report = new IngestReport(connectorRepoSha, ingestedIds, unclassified, notDerived,
-                mqSuspects, overlayDivergences, overlayNotDerivable, sinkDefaultedNoSignal,
+                unverifiedModes, overlayDivergences, overlayNotDerivable, sinkDefaultedNoSignal,
                 unknownTypeFields, unresolvedLabelRefs, walk.exemptions());
         return new Assembly(entries, report);
-    }
-
-    /** A stream-reading connector that the merge routed to the MQ group but that declared no modes —
-     *  so it derived cdc/snapshot, which is wrong for a stream source and must be reviewed. */
-    private static boolean isMqSuspect(ConnectorCatalogEntry entry, NormalizedSpec spec, Set<String> caps) {
-        return entry.group() == ConnectorGroup.MQ
-                && caps.contains(STREAM_READ)
-                && spec.declaredModes() == null
-                && !entry.modes().contains(SourceMode.STREAM);
     }
 
     /** Write-capable but the spec carries no DML policy, so the write semantics were a defaulted

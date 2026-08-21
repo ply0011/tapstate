@@ -114,20 +114,20 @@ class CatalogAssemblerTest {
     }
 
     @Test
-    void flagsAnUndeclaredMessageQueueConnectorAsAnMqSuspect() {
+    void flagsAnUndeclaredMessageQueueConnector() {
         // Kafka's name routes it to the MQ group, but with no declaration it derived cdc/snapshot —
         // wrong for a stream source. That must be surfaced, not silently shipped.
         assertThat(entry("kafka").group()).isEqualTo(ConnectorGroup.MQ);
-        assertThat(assemble().report().mqSuspects()).contains("kafka");
+        assertThat(assemble().report().unverifiedModes()).contains("kafka");
     }
 
     @Test
-    void aConnectorOurOverlayDeclaresIsNoLongerASuspect() {
+    void aConnectorOurOverlayDeclaresIsNoLongerUnverified() {
         // The other half of the same rule: suspicion is about nobody having said what the connector
         // reads, so a declaration of ours answers it exactly as an upstream one would. Without this
         // the report would keep naming every connector we ourselves declared, and a list that always
         // contains the same eighteen names is a list nobody reads.
-        assertThat(assemble(overlayDeclaring("kafka", "stream")).report().mqSuspects())
+        assertThat(assemble(overlayDeclaring("kafka", "stream")).report().unverifiedModes())
                 .doesNotContain("kafka");
     }
 
@@ -231,6 +231,70 @@ class CatalogAssemblerTest {
                 .filter(e -> e.id().equals("hazelcast")).findFirst().orElseThrow();
         assertThat(hazelcast.modes()).isEmpty();
         assertThat(hazelcast.sink().capable()).isFalse();
+    }
+
+    @Test
+    void flagsAFileConnectorWhoseModesNobodyDeclared() {
+        // A CSV file does not support cdc. The capability probe cannot tell a file reader from a
+        // database - it sees batch and stream functions and resolves cdc/snapshot for both - so an
+        // undeclared file connector ships a mode it cannot honour. Same failure as the message-queue
+        // case, only the group differs, and the group is not what makes it wrong.
+        Assembly assembly = assembleOne("csv", "File", "io.tapdata.connector.csv.CsvConnector", DB_CAPS);
+
+        assertThat(only(assembly).group()).isEqualTo(ConnectorGroup.FILE);
+        assertThat(only(assembly).modes()).containsExactlyInAnyOrder(SourceMode.CDC, SourceMode.SNAPSHOT);
+        assertThat(assembly.report().unverifiedModes()).contains("csv");
+    }
+
+    @Test
+    void flagsAConnectorDerivedAsSnapshotOnly() {
+        // Batch-read only, so nothing about it looks like a stream - and that is exactly why a check
+        // keyed on the stream capability cannot see it. What makes this connector suspect is that
+        // nobody said what it reads, not which capabilities it happened to register.
+        Assembly assembly = assembleOne("quickapi", "SaaS", "io.tapdata.connector.quickapi.QuickApiConnector",
+                Set.of("batch_read_function"));
+
+        assertThat(only(assembly).group()).isEqualTo(ConnectorGroup.SAAS);
+        assertThat(only(assembly).modes()).containsExactly(SourceMode.SNAPSHOT);
+        assertThat(assembly.report().unverifiedModes()).contains("quickapi");
+    }
+
+    @Test
+    void aDatabaseIsNeverASuspect() {
+        // The discriminating half. A database is the one group derivation is trustworthy for: cdc and
+        // snapshot are what a database does, so deriving them is an answer, not a guess. A check that
+        // flagged every undeclared connector would name most of the catalog and be read by nobody.
+        assertThat(entry("mysql").group()).isEqualTo(ConnectorGroup.DATABASE);
+        assertThat(assemble().report().unverifiedModes()).doesNotContain("mysql");
+    }
+
+    @Test
+    void aConnectorWithNoModesAtAllBelongsToTheOtherBucket() {
+        // The two buckets are disjoint by construction: nothing was derived here, so there is no
+        // wrong mode to review - the gap is that it has no mode at all, which unclassified already
+        // says. Listing it in both would double-count every JavaScript connector.
+        assertThat(entry("github").modes()).isEmpty();
+        assertThat(assemble().report().unclassified()).contains("github");
+        assertThat(assemble().report().unverifiedModes()).doesNotContain("github");
+    }
+
+    /** One connector, its own walk and bitmap - so a case cannot disturb the shared three-connector
+     *  fixture the ordering and indexing assertions pin. */
+    private static Assembly assembleOne(String id, String tag, String connectorClassFqn, Set<String> caps) {
+        String spec = """
+                {"properties":{"id":"%s","name":"%s","icon":"icons/%s.png","tags":["%s"]},
+                 "configOptions":{"connection":{"properties":{}}},
+                 "messages":{"default":"en_US","en_US":{}}}
+                """.formatted(id, id, id, tag);
+        String path = "connectors/" + id + "-connector/src/main/resources/spec_" + id + ".json";
+        WalkResult walk = new WalkResult(
+                List.of(new ConnectorSource(id, id + "-connector", path, connectorClassFqn, false)), List.of());
+        return CatalogAssembler.assemble(walk, SHA, Map.of(id, caps), noOverlay(), Map.of(path, spec)::get);
+    }
+
+    private static ConnectorCatalogEntry only(Assembly assembly) {
+        assertThat(assembly.entries()).hasSize(1);
+        return assembly.entries().get(0);
     }
 
     private ConnectorCatalogEntry entry(String id) {
