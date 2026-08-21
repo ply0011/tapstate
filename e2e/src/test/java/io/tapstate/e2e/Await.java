@@ -23,15 +23,28 @@ final class Await {
 
     /** Waits for {@code condition}, failing with {@code what} and the last reading when the bound expires. */
     static void until(String what, BooleanSupplier condition, Supplier<String> lastReading) {
+        until(what, BOUND, condition, lastReading);
+    }
+
+    /**
+     * The same wait with a bound of the caller's own, for a condition that is legitimately slower than the
+     * default allows - a run driving two real database engines through a snapshot and a change stream is
+     * the case this exists for.
+     *
+     * <p>A bound only decides how long a failing case takes to say so; it can never make a broken run
+     * pass. Widening the shared default would have slowed every other case's failure instead, which is
+     * why this is a parameter rather than a larger constant.
+     */
+    static void until(String what, Duration bound, BooleanSupplier condition, Supplier<String> lastReading) {
         long start = System.nanoTime();
-        long deadline = start + BOUND.toNanos();
+        long deadline = start + bound.toNanos();
         while (true) {
             if (condition.getAsBoolean()) {
                 return;
             }
             if (System.nanoTime() - deadline >= 0) {
                 throw new AssertionError("timed out after " + Duration.ofNanos(System.nanoTime() - start)
-                        + " (bound " + BOUND + ") waiting for " + what + "; last read " + lastReading.get());
+                        + " (bound " + bound + ") waiting for " + what + "; last read " + lastReading.get());
             }
             sleep();
         }

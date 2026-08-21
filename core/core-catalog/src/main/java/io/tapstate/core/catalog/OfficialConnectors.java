@@ -18,8 +18,22 @@ import java.util.List;
  */
 public final class OfficialConnectors {
 
-    /** The supported ids, in the order a message naming them should read. */
-    public static final List<String> IDS = List.of("mysql", "mongodb");
+    /**
+     * The supported ids, in the order a message naming them should read.
+     *
+     * <p>Three engines, each with its managed variants. The variants are enumerated one by one rather
+     * than matched by prefix, because nothing in a connector's identity says which engine it belongs
+     * to: membership is a decision somebody made about a named connector, and a prefix rule would
+     * silently admit every future product whose id happens to begin the same way. Being listed here
+     * means the register path accepts the connector, which is not the same as the release having
+     * verified it — accepting a variant rests on it being the same engine underneath, and only the
+     * three engines themselves are exercised.
+     */
+    public static final List<String> IDS = List.of(
+            "mysql", "aliyun-rds-mysql", "aws-rds-mysql", "polar-db-mysql", "mysql-pxc",
+            "postgres", "aliyun-rds-postgres", "aliyun-adb-postgres", "polar-db-postgres",
+            "tencent-db-postgres",
+            "mongodb", "mongodb-atlas", "mongodb3", "aliyun-db-mongodb", "tencent-db-mongodb");
 
     private OfficialConnectors() {
     }

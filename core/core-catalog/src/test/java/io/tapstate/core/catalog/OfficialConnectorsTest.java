@@ -13,7 +13,14 @@ class OfficialConnectorsTest {
 
     @Test
     void pinsTheConnectorsThisReleaseSupports() {
-        assertThat(OfficialConnectors.IDS).containsExactly("mysql", "mongodb");
+        // Written out in full rather than counted or matched by prefix. Three of these are the engines
+        // the release verifies; the other twelve are managed variants of those three, and a variant is
+        // in only because someone read it and said so.
+        assertThat(OfficialConnectors.IDS).containsExactly(
+                "mysql", "aliyun-rds-mysql", "aws-rds-mysql", "polar-db-mysql", "mysql-pxc",
+                "postgres", "aliyun-rds-postgres", "aliyun-adb-postgres", "polar-db-postgres",
+                "tencent-db-postgres",
+                "mongodb", "mongodb-atlas", "mongodb3", "aliyun-db-mongodb", "tencent-db-mongodb");
     }
 
     @Test

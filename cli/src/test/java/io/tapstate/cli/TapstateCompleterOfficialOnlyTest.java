@@ -30,7 +30,13 @@ class TapstateCompleterOfficialOnlyTest {
 
     @Test
     void aPrefixStillNarrowsWithinThatSet() {
-        assertThat(completer.candidates(List.of("new", "-c", "my"), 2)).containsExactly("mysql");
+        List<String> narrowed = completer.candidates(List.of("new", "-c", "my"), 2);
+        // Two of the supported ids start with this prefix and both are official, so narrowing means
+        // fewer than the whole set — not one result. Asserting a single id here would silently start
+        // failing the moment a second supported connector shares a prefix, which says nothing about
+        // the filter being right.
+        assertThat(narrowed).containsExactly("mysql", "mysql-pxc");
+        assertThat(narrowed).hasSizeLessThan(OfficialConnectors.IDS.size());
     }
 
     @Test

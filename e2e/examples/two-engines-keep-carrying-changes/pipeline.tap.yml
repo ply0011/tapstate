@@ -1,0 +1,11 @@
+version: tapstate/v1
+kind: pipeline
+id: two_engines_cdc
+source: [ src_orders, src_shipments ]
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - { id: both_engines, from: [orders, shipments], type: filter, expr: "op == 'r' || op == 'i'" }
+serve:
+  from: both_engines
+  sync:
+    - source: tgt_mongo

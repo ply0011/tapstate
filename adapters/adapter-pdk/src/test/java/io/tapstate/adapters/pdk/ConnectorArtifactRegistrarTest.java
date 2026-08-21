@@ -176,10 +176,20 @@ class ConnectorArtifactRegistrarTest {
     }
 
     @Test
-    void theDefaultAcceptedSetIsExactlyTheTwoOfficialConnectors() {
+    void theDefaultAcceptedSetIsExactlyTheOfficialConnectors() {
         // The pin. Widening is a deployment's explicit act; the default must not drift, because every
         // shipped artifact leaves it alone and a silent addition here is a support promise nobody made.
-        assertThat(OfficialConnectors.IDS).containsExactly("mysql", "mongodb");
+        //
+        // Written out in full rather than counted or matched by prefix. Three of these are the engines
+        // the release verifies; the other twelve are managed variants of those three, and a variant is
+        // in only because someone read it and said so - there is no family field to derive membership
+        // from, and a prefix rule would admit every future product whose name happens to start the same
+        // way. Order is the order a refusal message names them in.
+        assertThat(OfficialConnectors.IDS).containsExactly(
+                "mysql", "aliyun-rds-mysql", "aws-rds-mysql", "polar-db-mysql", "mysql-pxc",
+                "postgres", "aliyun-rds-postgres", "aliyun-adb-postgres", "polar-db-postgres",
+                "tencent-db-postgres",
+                "mongodb", "mongodb-atlas", "mongodb3", "aliyun-db-mongodb", "tencent-db-mongodb");
     }
 
     @Test

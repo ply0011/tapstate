@@ -49,6 +49,19 @@ import java.util.Objects;
  */
 public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
 
+    /**
+     * The officially supported ids, readable from outside this package.
+     *
+     * <p>Exists so that a gate standing outside every module can assert what a shipped deployment
+     * accepts out of the box. That claim spans two things this package cannot see together — the set
+     * itself, and the fact that nothing a release carries widens it — so the assertion cannot live
+     * here. The set itself is not held here: it is {@link OfficialConnectors#IDS}, so the authoring
+     * surfaces and this register path cannot drift apart.
+     */
+    public static List<String> officialConnectorIds() {
+        return OfficialConnectors.IDS;
+    }
+
     private final ConnectorRegistry registry;
     private final ConnectorIntrospector introspector;
     private final CapabilityDeriver capabilityDeriver;
