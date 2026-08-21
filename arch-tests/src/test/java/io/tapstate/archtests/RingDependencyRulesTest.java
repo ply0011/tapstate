@@ -164,6 +164,31 @@ class RingDependencyRulesTest {
     }
 
     @Test
+    @DisplayName("R1 (tools): the catalog build tools depend only on java.., the core ring and themselves")
+    void toolsDependOnTheCoreRingAndNothingElse() {
+        // No allowEmptyShould(true) here, and that is the whole point of the assertion above it.
+        // Elsewhere in this file the flag lets a rule idle until its ring exists; this prefix has a
+        // module today, so an empty scan does not mean "not built yet" - it means catalog-assembler
+        // fell off the arch-tests classpath and the rule below is checking nothing while reporting
+        // the same green as compliance. ModuleRegistrationTest catches that slip from the pom side;
+        // this catches it from the scan side, which is the side that stays silent on its own.
+        assertThat(tapstateClasses.that(resideInAPackage("io.tapstate.tools..")))
+                .as("the tools prefix must have classes on the scan classpath, or the rule below is "
+                        + "green without having checked anything")
+                .isNotEmpty();
+        classes().that().resideInAPackage("io.tapstate.tools..")
+                .should().onlyDependOnClassesThat().resideInAnyPackage(
+                        "java..",
+                        "io.tapstate.tools..",
+                        "io.tapstate.core..")
+                .because("the catalog build tools are a framework-free leaf over the kernel: they read "
+                        + "spec and capability data and write the bundled catalog, so they carry no "
+                        + "third-party library and no ring dependency. Holding them to this allowlist "
+                        + "is what keeps the default build PDK-free and native-friendly")
+                .check(tapstateClasses);
+    }
+
+    @Test
     @DisplayName("R3: adapters never reach up into runtime / control / surface rings")
     void r3_adaptersDoNotDependOnHigherRings() {
         // Adapters depend one-way on the ports and the kernel. Their third-party system
@@ -189,6 +214,41 @@ class RingDependencyRulesTest {
                 .should().dependOnClassesThat().resideInAPackage("io.tapdata..")
                 .allowEmptyShould(true)
                 .because("the PDK API is locked to adapter-pdk; no other module may import it")
+                .check(tapstateClasses);
+    }
+
+    @Test
+    @DisplayName("R3 (catalog pipeline): the PDK-free side of the catalog pipeline holds no PDK reference")
+    void theCatalogPipelinesPdkFreeSideHoldsNoPdkReference() {
+        // The catalog pipeline is split by PDK exposure on purpose. catalog-derive classloads a
+        // connector jar to read its capabilities, so it touches the PDK; it is kept out of the default
+        // reactor precisely so that transitive tree never enters `mvn verify`. Registering it here to
+        // guard it would trade a discipline problem for a heavy build - so it cannot be scanned, and
+        // the boundary is asserted from the other side instead: the side that must stay clean, whose
+        // classes are already on this classpath at zero build cost.
+        //
+        // r3_pdkLockedToAdapterPdk bans io.tapdata everywhere outside adapter-pdk and therefore covers
+        // these packages too - but it idles empty-green by design, so if either package fell off the
+        // classpath it would report exactly the same green as it does now. The two assertions below
+        // are what this test adds: they pin that both halves of the PDK-free side were actually
+        // scanned, and each is checked separately because a union is non-empty as soon as either
+        // member is.
+        assertThat(tapstateClasses.that(resideInAPackage("io.tapstate.core..")))
+                .as("the kernel must be on the scan classpath for the ban below to mean anything")
+                .isNotEmpty();
+        assertThat(tapstateClasses.that(resideInAPackage("io.tapstate.tools.catalog.assembler..")))
+                .as("the PDK-free assembler must be on the scan classpath for the ban below to mean "
+                        + "anything - it is the half that shares a package prefix with the PDK-touching "
+                        + "deriver, so it is the half worth proving was read")
+                .isNotEmpty();
+        noClasses().that().resideInAnyPackage(
+                        "io.tapstate.core..",
+                        "io.tapstate.tools.catalog.assembler..")
+                .should().dependOnClassesThat().resideInAPackage("io.tapdata..")
+                .because("the catalog pipeline is split by PDK exposure: the deriver classloads "
+                        + "connector jars, the assembler and the kernel never do. That split is what "
+                        + "lets the assembler run in every build while the deriver runs only when "
+                        + "connectors are present")
                 .check(tapstateClasses);
     }
 
