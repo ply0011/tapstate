@@ -100,7 +100,13 @@ class CatalogArtifactTest {
         for (Map.Entry<String, String> entry : catalog.entries().entrySet()) {
             Path file = catalogDir.resolve(entry.getKey() + ".json");
             assertThat(Files.exists(file)).as("catalog entry missing: " + file).isTrue();
-            assertThat(Files.readString(file)).as("catalog entry drift: " + file).isEqualTo(entry.getValue());
+            String checkedIn = Files.readString(file);
+            String regenerated = entry.getValue();
+            // The equality below is what decides red; the clause only says where to look first. It is
+            // computed inside the mismatch case so the common path does not parse 77 entries twice.
+            assertThat(checkedIn)
+                    .as("catalog entry drift: " + file + CatalogEntryDrift.describe(checkedIn, regenerated))
+                    .isEqualTo(regenerated);
         }
         // Orphan guard: no checked-in entry beyond the regenerated set (mirrors the golden orphan gate).
         Set<String> expected = new TreeSet<>();
