@@ -30,7 +30,7 @@ final class ViewTargetResolver {
      * deployment's name for that store is written down: the value travels into the target address
      * rather than being repeated at each use, so renaming the store is a single edit here.
      */
-    static final String STATE_STORE_SOURCE_ID = "warehouse";
+    static final String STATE_STORE_SOURCE_ID = "views";
 
     private ViewTargetResolver() {
     }

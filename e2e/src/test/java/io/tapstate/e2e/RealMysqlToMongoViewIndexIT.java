@@ -94,7 +94,7 @@ class RealMysqlToMongoViewIndexIT {
                 resources.put("src_mysql.tap.yml", sourceYaml(mysqlConfig));
                 // The store a view lands in is the deployment's rather than the pipeline's, so it is
                 // registered under the id the product resolves for every view - the pipeline never names it.
-                resources.put("warehouse.tap.yml", stateStoreYaml(targetUri));
+                resources.put("views.tap.yml", stateStoreYaml(targetUri));
                 resources.put("pipeline.tap.yml", pipelineYaml());
                 control.apply(resources);
 
@@ -197,7 +197,7 @@ class RealMysqlToMongoViewIndexIT {
         return """
                 version: tapstate/v1
                 kind: source
-                id: warehouse
+                id: views
                 connector: mongodb
                 config: { uri: "%s" }
                 """

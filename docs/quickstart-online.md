@@ -244,14 +244,14 @@ mode: cdc
 tables: [ shipments ]
 ```
 
-`work/source/warehouse.tap.yml` — the write target (also `kind: source`):
+`work/source/views.tap.yml` — the write target (also `kind: source`):
 
 ```yaml
 version: tapstate/v1
 kind: source
-id: warehouse
+id: views
 connector: mongodb
-config: { isUri: true, uri: "mongodb://mongo:27017/warehouse?directConnection=true" }
+config: { isUri: true, uri: "mongodb://mongo:27017/views?directConnection=true" }
 ```
 
 `work/pipeline/sync_orders.tap.yml` — the data flow:
@@ -292,10 +292,10 @@ transforms:
 serve:
   from: shape_shipments
   sync:
-    - source: warehouse
+    - source: views
 ```
 
-Two engines, one warehouse. Nothing here assembles an order and its shipments into a
+Two engines, one store. Nothing here assembles an order and its shipments into a
 single document — that is a separate capability; here each half simply arrives, which
 is what makes "insert a row in PostgreSQL and watch it appear" something you can do
 below. `route` names only text columns for the same reason `amount` is never named in
@@ -328,7 +328,7 @@ the row (`after.<field>`) and the change envelope (`src`, plus `op` and `ts`).
 > `amount` decimal is only ever passed through, never named in an expression.)
 
 > Declaring a `view` is the whole instruction to materialize it: the rows land in the
-> managed state store as the collection the view names — `warehouse.order_state` here —
+> managed state store as the collection the view names — `views.order_state` here —
 > and no `serve` block is needed. `view.from` names the **last** step you want
 > materialized (`shape_orders` here); it takes a transform `id` or a concrete resource,
 > **not** a regex such as `/.*/`. `primary_key` is the column documents are addressed
@@ -488,9 +488,24 @@ container, so no client is needed on the host:
 
 ```sh
 docker compose exec mongo mongosh --quiet \
-  "mongodb://mongo:27017/warehouse?directConnection=true" \
+  "mongodb://mongo:27017/views?directConnection=true" \
   --eval "db.order_state.countDocuments()"    # should reach 5
 ```
+
+To point a GUI or a driver at the store from your own machine instead, publish the
+port first — the stack does not, so nothing on the host can see it by default. Add
+`ports: ["127.0.0.1:27017:27017"]` to the `mongo` service in `docker-compose.yml`,
+re-run `docker compose up -d`, and connect with:
+
+```text
+mongodb://127.0.0.1:27017/views?directConnection=true
+```
+
+`directConnection=true` is not optional here. The stack runs a one-member replica set
+whose member is registered under a name that resolves only inside the container, so a
+URI carrying `replicaSet=rs0` makes the driver discover that name and dial an address
+on your own machine where nothing is listening — the connection is refused against
+your own loopback, which reads like a firewall problem and is not one.
 
 ## 8. Exercise change-data-capture
 
@@ -503,17 +518,17 @@ than guessing:
 # insert a row, then wait for it to appear in the target (the sink upserts on the
 # discovered key, so the snapshot->CDC overlap never doubles a row)
 docker compose exec mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit(db.order_state.countDocuments({id:6})?0:1)'; do sleep 1; done
-docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'db.order_state.find({id:6}).pretty()'   # customer_name: 'frank', label: 'frank <orders>'
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit(db.order_state.countDocuments({id:6})?0:1)'; do sleep 1; done
+docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'db.order_state.find({id:6}).pretty()'   # customer_name: 'frank', label: 'frank <orders>'
 
 # update it, and watch the mapped label follow the change
 docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit((db.order_state.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
-docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'db.order_state.find({id:6}).pretty()'
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit((db.order_state.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
+docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'db.order_state.find({id:6}).pretty()'
 
 # delete it, and watch it leave the target too
 docker compose exec mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/warehouse?directConnection=true" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
+until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
 echo "row 6 is gone from MongoDB, too"
 ```
 
@@ -601,11 +616,11 @@ the server and databases are hosted changes.
    with one change: the server now runs on the host, not in the compose network, so
    the connectors address the databases by their host ports instead of the compose
    service names — `config: { host: 127.0.0.1, port: 3306, … }` in `db_src`, and
-   `uri: "mongodb://127.0.0.1:27017/warehouse"` in `warehouse`.
+   `uri: "mongodb://127.0.0.1:27017/views"` in `views`.
 
 6. **Online verbs, observe, CDC** are identical to steps 6–8, except you reach the
    databases with your own client (`docker exec tapstate-mysql …` /
-   `docker exec tapstate-mongo mongosh "mongodb://127.0.0.1:27017/warehouse" …`)
+   `docker exec tapstate-mongo mongosh "mongodb://127.0.0.1:27017/views" …`)
    rather than `docker compose exec`.
 
 Tear down with `docker rm -f tapstate-mysql tapstate-mongo` and `Ctrl-C` in the
@@ -615,6 +630,14 @@ server's terminal.
 
 This runtime is a preview. Known constraints in this slice:
 
+- **The bundled store is not a security boundary.** The `mongo` service runs without
+  `--auth`, and the server's control-plane data — users, tokens, audit, connection
+  configuration, applied artifacts — shares that instance with everything your
+  pipelines write. A holder of a Tapstate token can point an ordinary `kind: source`
+  at the `tapstate` database and read it: valid DSL, not a bypass. The container
+  publishes no host port, so the threshold is a token rather than network reach. Do
+  not put data in this deployment that its own users should not see; isolating the two
+  needs authentication or a second instance, and this preview has neither.
 - **Single node, in-memory.** No multi-node HA. A server restart does **not** resume
   from a persisted offset — it replays from the source (idempotent upsert absorbs the
   overlap). Durable resume / exactly-once are not in this preview.

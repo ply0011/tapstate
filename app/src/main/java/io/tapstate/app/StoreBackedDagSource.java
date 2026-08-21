@@ -77,6 +77,7 @@ final class StoreBackedDagSource implements DagSource {
     private final SinkWriterBinder sinkWriterBinder;
     private final TargetModelResolver targetModelResolver;
     private final NestSettings nestSettings;
+    private final StoreReachability storeReachability;
 
     StoreBackedDagSource(StorePort storePort) {
         this(storePort, assembledSinkWriterBinder());
@@ -85,6 +86,17 @@ final class StoreBackedDagSource implements DagSource {
     /** A source whose nests are held to what {@code nestSettings} allows, and the member configured from. */
     StoreBackedDagSource(StorePort storePort, NestSettings nestSettings) {
         this(storePort, assembledSinkWriterBinder(), nestSettings);
+    }
+
+    /** A source that holds a view's managed store to answering before the pipeline is built. */
+    StoreBackedDagSource(StorePort storePort, StoreReachability storeReachability) {
+        this(storePort, assembledSinkWriterBinder(), NestSettings.defaults(), storeReachability);
+    }
+
+    /** The assembled source: nests held to {@code nestSettings}, the store probed before a view is built. */
+    StoreBackedDagSource(
+            StorePort storePort, NestSettings nestSettings, StoreReachability storeReachability) {
+        this(storePort, assembledSinkWriterBinder(), nestSettings, storeReachability);
     }
 
     /**
@@ -109,10 +121,18 @@ final class StoreBackedDagSource implements DagSource {
     }
 
     StoreBackedDagSource(StorePort storePort, SinkWriterBinder sinkWriterBinder, NestSettings nestSettings) {
+        // No prober: the store is taken at its word. Every construction that means to check one passes it.
+        this(storePort, sinkWriterBinder, nestSettings, StoreReachability.assumingReachable());
+    }
+
+    StoreBackedDagSource(
+            StorePort storePort, SinkWriterBinder sinkWriterBinder, NestSettings nestSettings,
+            StoreReachability storeReachability) {
         this.storePort = Objects.requireNonNull(storePort, "storePort");
         this.sinkWriterBinder = Objects.requireNonNull(sinkWriterBinder, "sinkWriterBinder");
         this.targetModelResolver = new TargetModelResolver(this.storePort);
         this.nestSettings = Objects.requireNonNull(nestSettings, "nestSettings");
+        this.storeReachability = Objects.requireNonNull(storeReachability, "storeReachability");
     }
 
     @Override
@@ -385,6 +405,12 @@ final class StoreBackedDagSource implements DagSource {
             throw new TapstateException(ActuationError.VIEW_STORE_IS_A_CAPTURE_SOURCE,
                     Map.of("store", target.sourceId()), null);
         }
+        // Last of the three, and in this order deliberately: the two above are answered from the store's
+        // own record and cost nothing, so a misconfiguration is named without ever touching the network.
+        // Only once the resource is known to be the deployment's store is it worth asking whether it
+        // answers.
+        storeReachability.requireReachable(
+                target.sourceId(), store.connector(), store.config());
         // Keyed by every source table that can reach the view, all answering with the one collection.
         // The sink resolves a target by the table a row came from, so a view - which collapses those
         // tables into a single object - has to answer to each of their names. Keyed by the view's own

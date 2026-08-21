@@ -1,0 +1,181 @@
+# Publish the install site to the edge, on the event that is supposed to change it.
+#
+# The domain the README tells people to pipe into sh is a Vercel deployment, and until this workflow
+# existed nothing kept it in step with the repository: the site was uploaded by hand once, the project
+# is not connected to git, and no workflow held any Vercel credential. The result is the failure this
+# lane exists to remove -- a release goes out, every pin in the tree says the new version, and the
+# one-liner keeps installing the previous one because the last mile was never automated.
+#
+# Publishing a release is the trigger, not a push: the edge's promise is "the newest published
+# release", so a change to install.sh that has not shipped yet must not reach it. workflow_dispatch is
+# offered for the same reason a rehearsal exists elsewhere -- to re-publish a tag by hand when a
+# deployment failed or when the domain has to be re-pointed without cutting a release.
+#
+# Two things here were learned the expensive way and are steps rather than assumptions:
+#   - a domain added through the Vercel API is not guaranteed a certificate; the first time, https
+#     hung until a certificate was requested explicitly, so this asks for one whenever https does not
+#     answer, rather than trusting that it was issued;
+#   - "the deployment succeeded" is not "the edge serves it": the verification below re-reads both
+#     entry points through the CDN, cache bypassed, and compares them byte for byte with what was
+#     uploaded. A deploy that reports success while the domain still answers with the old body is a
+#     shape this project has already shipped once.
+name: publish install site
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (default: the newest published release)."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-install-site
+  cancel-in-progress: false
+
+env:
+  SITE_DOMAIN: install.tapstate.dev
+  # Pinned: @latest lets a third party change what runs against the publishing credentials on any
+  # given day. This is the version this path was first driven with end to end.
+  VERCEL_CLI_VERSION: "59.1.4"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # main, deliberately, not the event's tag. On a release event the default checkout is the
+          # tag's tree, and this job runs two things that must not come from there: the routing
+          # fallback, whose whole purpose is to cover a tag that predates the checked-in config, and
+          # the verifier that decides whether the deploy actually took. Both would be missing or stale
+          # exactly on the tags that need them. The release's own payload is read out of the tag by
+          # git show below, so the content still comes from the release.
+          ref: main
+          fetch-depth: 0
+
+      - name: Refuse without credentials, and say which one is missing
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        # A missing secret is the whole reason this workflow did not exist before, so it fails loudly
+        # here instead of skipping quietly: a skipped publish looks identical to a successful one in
+        # the run list, which is exactly how the edge went stale unnoticed.
+        run: |
+          set -eu
+          missing=""
+          [ -n "${VERCEL_TOKEN:-}" ]      || missing="$missing VERCEL_TOKEN"
+          [ -n "${VERCEL_ORG_ID:-}" ]     || missing="$missing VERCEL_ORG_ID"
+          [ -n "${VERCEL_PROJECT_ID:-}" ] || missing="$missing VERCEL_PROJECT_ID"
+          [ -z "$missing" ] || {
+            echo "cannot publish the install site: missing repository secret(s):$missing" >&2
+            echo "add them under Settings > Secrets and variables > Actions, then re-run." >&2
+            exit 1
+          }
+
+      - name: Resolve the tag to publish
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          tag="${INPUT_TAG:-${EVENT_TAG:-}}"
+          if [ -z "$tag" ]; then
+            tag="$(gh release list --limit 30 --exclude-drafts --json tagName \
+                     --jq 'first | .tagName')"
+          fi
+          test -n "$tag" || { echo "no published release to publish" >&2; exit 1; }
+          echo "publishing tag: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble the site from that tag
+        id: site
+        # The two scripts come from the tag -- they are the release's content. The routing comes from
+        # the tag too when it has it, and falls back to this checkout for the first release cut before
+        # the config was checked in, which is stated out loud rather than silently substituted.
+        #
+        # The tag arrives through the environment and is checked before use. Interpolating it into the
+        # script text would make a dispatch input part of this job's source, and this job holds the
+        # credentials that publish the domain the README tells people to pipe into sh.
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -eu
+          git check-ref-format "refs/tags/$TAG" \
+            || { echo "refusing a tag that is not a valid ref name: $TAG" >&2; exit 1; }
+          tag="$TAG"
+          git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+          site="$(mktemp -d)"
+          git show "$tag:deploy/quickstart/quickstart.sh" > "$site/quickstart.sh"
+          git show "$tag:install/install.sh"              > "$site/install.sh"
+          if git show "$tag:deploy/install-site/vercel.json" > "$site/vercel.json" 2>/dev/null; then
+            echo "routing: from $tag"
+          else
+            echo "routing: $tag predates the checked-in routing; using this checkout's vercel.json"
+            cp deploy/install-site/vercel.json "$site/vercel.json"
+          fi
+          ls -l "$site"
+          echo "dir=$site" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          SITE_DIR: ${{ steps.site.outputs.dir }}
+        run: |
+          set -eu
+          npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prod --yes \
+            --token "$VERCEL_TOKEN" \
+            --cwd "$SITE_DIR"
+
+      - name: A certificate exists for the domain, or is requested
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        # The check is an https handshake rather than a read of the certificate list, because the
+        # handshake is the property that actually has to hold.
+        run: |
+          set -eu
+          if curl -fsS --max-time 25 -o /dev/null "https://$SITE_DOMAIN/cli"; then
+            echo "https answers; no certificate action needed"
+            exit 0
+          fi
+          echo "https did not answer -- requesting a certificate for $SITE_DOMAIN"
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.vercel.com/v8/certs?teamId=$VERCEL_ORG_ID" \
+            -d "{\"cns\":[\"$SITE_DOMAIN\"]}"
+          echo
+          n=0
+          until curl -fsS --max-time 25 -o /dev/null "https://$SITE_DOMAIN/cli"; do
+            n=$((n + 1))
+            [ "$n" -lt 12 ] || { echo "https still does not answer after a certificate request" >&2; exit 1; }
+            sleep 15
+          done
+          echo "https answers after the certificate was issued"
+
+      - name: The edge really serves what was uploaded
+        # Deploy success is not the assertion; this is. Retried because a fresh production deployment
+        # takes a moment to become what the domain answers with.
+        env:
+          SITE_DIR: ${{ steps.site.outputs.dir }}
+        run: |
+          set -eu
+          n=0
+          until sh deploy/install-site/verify-published.sh "https://$SITE_DOMAIN" "$SITE_DIR"; do
+            n=$((n + 1))
+            [ "$n" -lt 8 ] || { echo "the edge never came to serve the deployment" >&2; exit 1; }
+            echo "not yet serving the new deployment; retrying in 15s"
+            sleep 15
+          done

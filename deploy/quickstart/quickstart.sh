@@ -59,7 +59,7 @@ fetch() {
 # half-started mongosh has to read as "not there yet" rather than abort the run.
 count_target() {   # $1 = collection name
     _c="$(docker compose exec -T mongo mongosh --quiet \
-        'mongodb://mongo:27017/warehouse?directConnection=true' \
+        'mongodb://mongo:27017/views?directConnection=true' \
         --eval "db.$1.countDocuments()" 2>/dev/null | tr -d '[:space:]')"
     case "$_c" in ''|*[!0-9]*) _c=0 ;; esac
     printf '%s' "$_c"
@@ -97,13 +97,6 @@ config: { host: postgres, port: 5432, database: appdb, schema: public, user: pos
 mode: cdc
 tables: [ shipments ]
 YAML
-    cat > work/source/warehouse.tap.yml <<'YAML'
-version: tapstate/v1
-kind: source
-id: warehouse
-connector: mongodb
-config: { isUri: true, uri: "mongodb://mongo:27017/warehouse?directConnection=true" }
-YAML
     cat > work/pipeline/sync_orders.tap.yml <<'YAML'
 version: tapstate/v1
 kind: pipeline
@@ -122,7 +115,7 @@ view:
   from: shape_orders
   primary_key: id
 YAML
-    # The second engine's half, into the same target: two engines, one warehouse. Assembling the two
+    # The second engine's half, into the same target: two engines, one store. Assembling the two
     # into a single object is a separate thing and is not this - here they simply both arrive, which is
     # what makes "insert a row in PostgreSQL and watch it appear" something a reader can actually do.
     #
@@ -144,7 +137,7 @@ transforms:
 serve:
   from: shape_shipments
   sync:
-    - source: warehouse
+    - source: views
 YAML
 }
 
@@ -154,7 +147,17 @@ YAML
 # second or two so a change still in flight is never misread as a change that did not happen.
 print_next_steps() {
     demo_dir="$(basename "$PWD")"
-    uri="mongodb://mongo:27017/warehouse?directConnection=true"
+    # Whole-directory removal is only ever offered for a directory this script made. Run in place --
+    # a saved script executed where it sits -- the directory is the user's and holds their files, so
+    # printing `rm -rf` on it puts a command that destroys unrelated work in front of someone who has
+    # been told, correctly, that everything above was safe to copy.
+    if [ "${demo_dir_is_ours:-no}" = yes ]; then
+        removal_line="  cd .. && rm -rf $demo_dir  remove this directory (CLI, jars, workspace, .env)"
+    else
+        removal_line="  this directory is yours, so nothing here removes it. What the quickstart added:
+    tapstate tap versions/ connectors/ *-connector.jar mysql-init/ postgres-init/ work/ .env docker-compose.yml"
+    fi
+    uri="mongodb://mongo:27017/views?directConnection=true"
     cat <<EOF
 quickstart: pipeline started. The stack is running.
 
@@ -187,9 +190,21 @@ database, reached by a different change mechanism, arriving in the same target c
   until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.shipments.countDocuments({id:7})?0:1)'; do sleep 1; done
   docker compose exec mongo mongosh --quiet "$uri" --eval 'db.shipments.find({id:7}).pretty()'
 
-Tear down (run in this directory):
+Reach the store from your own machine (optional -- the reads above go through the container):
+  The store's port is not published, so nothing on your host can see it by default. To point a GUI or
+  a driver at it, add  ports: ["127.0.0.1:27017:27017"]  to the mongo service in docker-compose.yml,
+  re-run docker compose up -d, and connect with:
+    mongodb://127.0.0.1:27017/views?directConnection=true
+  Keep directConnection=true. This is a one-member replica set that registers its member under a name
+  meaning something only inside the container, so a URI carrying replicaSet=rs0 makes the driver
+  discover that name and dial an address on your own machine where nothing is listening.
+
+Stop, and pick it up later (run in this directory):
+  docker compose stop        stop the stack and keep its data (docker compose start resumes it)
+
+Tear down -- this one is not reversible (run in this directory):
   docker compose down -v     stop the stack and delete its data (a re-run re-registers the connectors)
-  cd .. && rm -rf $demo_dir  remove this directory (CLI, jars, workspace, .env)
+$removal_line
 The pulled images remain; remove them with:  docker image rm <image>
 EOF
 }
@@ -199,9 +214,14 @@ main() {
     # everything this script adds must stay inside one removable directory. Either marker file says
     # "work here": the saved script is the download-then-run form, the compose file is a re-run of an
     # earlier one (piped re-runs land back in the same directory rather than nesting a second).
+    # Whether this directory is ours decides what the teardown may offer. Working in place is a
+    # supported form -- a saved script run where it sits -- and there the directory is the user's, with
+    # their files in it.
+    demo_dir_is_ours=no
     if [ ! -f ./quickstart.sh ] && [ ! -f ./docker-compose.yml ]; then
         mkdir -p tapstate-demo
         cd tapstate-demo
+        demo_dir_is_ours=yes
         printf 'quickstart: working in %s\n' "$PWD"
     fi
 
@@ -299,20 +319,47 @@ main() {
     # Bring up the stack. The compose file pins the published image, so this pulls rather than builds.
     docker compose up -d
 
+    # Both waits below poll on this interval. It is a knob only so the script's own test suite can drive
+    # the waiting paths without spending a minute on each; a run that does not set it waits the same two
+    # seconds it always has.
+    poll="${TAPSTATE_QUICKSTART_POLL_SECONDS:-2}"
+
     # Wait until the server container reports healthy -- its image carries the /healthz healthcheck -- so
-    # the online verbs are not driven before the server can answer. By then the bootstrap sidecar has
-    # created the admin from .env.
+    # the online verbs are not driven before the server can answer.
     printf 'quickstart: waiting for the stack to become healthy'
     i=0
     while [ "$i" -lt 90 ]; do
         if docker compose ps --format json server 2>/dev/null | grep -q '"Health":"healthy"'; then
             break
         fi
-        i=$((i + 1)); printf '.'; sleep 2
+        i=$((i + 1)); printf '.'; sleep "$poll"
     done
     printf '\n'
     docker compose ps --format json server 2>/dev/null | grep -q '"Health":"healthy"' \
         || die "the server did not become healthy in time; inspect it with: docker compose logs server"
+
+    # Then wait for the first admin to actually exist. Server health is not that moment -- it is the
+    # moment before it: the bootstrap sidecar declares depends_on the server being healthy, so health is
+    # precisely when that container is cleared to start its one POST. Driving `login` off the health
+    # check alone is a race with a one-request container, and it is a race this has lost in the wild.
+    #
+    # A one-shot container reports State and ExitCode, never Health, so both are checked: `exited` alone
+    # would accept a bootstrap that ran and failed. A non-zero exit is reported immediately rather than
+    # waited out -- the container is gone, so no amount of further waiting changes the answer.
+    printf 'quickstart: waiting for the first admin to be created'
+    i=0
+    while [ "$i" -lt 60 ]; do
+        bootstrap_ps="$(docker compose ps -a --format json bootstrap 2>/dev/null)"
+        if printf '%s' "$bootstrap_ps" | grep -q '"State":"exited"'; then
+            printf '%s' "$bootstrap_ps" | grep -q '"ExitCode":0' \
+                || { printf '\n'; die "the first admin could not be created; inspect it with: docker compose logs bootstrap"; }
+            break
+        fi
+        i=$((i + 1)); printf '.'; sleep "$poll"
+    done
+    printf '\n'
+    printf '%s' "$bootstrap_ps" | grep -q '"State":"exited"' \
+        || die "the first admin was not created in time; inspect it with: docker compose logs bootstrap"
 
     # Drive the online verbs through the REPL, feeding the password on stdin (the login prompt reads the
     # next line) so it is never a process argument or a shell-history entry. Workspace paths resolve
@@ -325,10 +372,41 @@ main() {
     # whole, which leaves the sources unapplied and the discoveries with nothing to look at. The second
     # engine is under the same rule as the first, not exempt from it -- its pipeline maps a row field too.
     #
-    # Applying a source twice is free; the second apply reports it unchanged.
+    # Applying the source twice is free; the second apply reports it unchanged.
+    #
+    # The REPL's output is captured so a failed login can be named here. It cannot be left to the row
+    # count below: that check fires half a minute later and says "the target is empty", which sends the
+    # reader to the server log to investigate a pipeline that was never started. Authentication is also
+    # the one failure that cascades -- every verb after it reports cli.not-authenticated, so the real
+    # cause ends up at the top of a screen of consequences.
     admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
-    printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\nregister ../postgres-connector.jar\napply source/db_src.tap.yml\napply source/db_shipments.tap.yml\ndiscover-schema db_src\ndiscover-schema db_shipments\napply\nstart sync_orders\nstart sync_shipments\nexit\n' "$admin_pw" \
-        | ./tapstate -w work
+    repl_out="$(printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\nregister ../postgres-connector.jar\napply source/db_src.tap.yml\napply source/db_shipments.tap.yml\ndiscover-schema db_src\ndiscover-schema db_shipments\napply\nstart sync_orders\nstart sync_shipments\nexit\n' "$admin_pw" \
+        | ./tapstate -w work 2>&1)"
+    printf '%s\n' "$repl_out"
+    case "$repl_out" in
+        *control.auth-failed*|*cli.not-authenticated*)
+            # Ask the bootstrap what it actually did. "Created it" and "found one already there" are both
+            # successes to that step -- an admin exists either way, which is what makes a re-run safe --
+            # but only the second can explain a password that does not work: the store outlived the .env
+            # the admin was made from. The two failures need different answers, and prescribing a volume
+            # wipe for the wrong one destroys a user's data to fix nothing.
+            bootstrap_said="$(docker compose logs --no-log-prefix --tail 1 bootstrap 2>/dev/null || true)"
+            case "$bootstrap_said" in
+                *"already exists"*)
+                    # The rerun half of this advice has to match how the script was started. The piped
+                    # form saves no copy of itself, so naming quickstart.sh there sends the user to a
+                    # file that is not present -- after the volume wipe has already happened, which is
+                    # the worst possible moment to hand someone a command that cannot work.
+                    if [ -f ./quickstart.sh ]; then
+                        again="sh quickstart.sh"
+                    else
+                        again="curl -sSL https://install.tapstate.dev | sh"
+                    fi
+                    die "the CLI could not log in: this stack already had an admin from an earlier run, and the password in .env is not the one it was created with. Start clean with: docker compose down -v && $again" ;;
+                *)
+                    die "the CLI could not log in, so no verb after it ran; inspect it with: docker compose logs bootstrap" ;;
+            esac ;;
+    esac
 
     # Snapshot verification, printed automatically: the demo's payoff is a real row count in the target,
     # not an "it should have worked". A fresh snapshot of the seeded rows is quick, but the read still

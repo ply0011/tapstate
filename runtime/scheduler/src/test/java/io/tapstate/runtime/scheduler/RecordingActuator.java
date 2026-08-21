@@ -21,9 +21,15 @@ final class RecordingActuator implements LifecycleActuator {
      */
     private boolean carryingAJob = true;
 
+    /** Armed to make start() throw, as if building the job refused before any job existed. */
+    private RuntimeException refuseStartWith;
+
     @Override
     public void start(String pipelineId) {
         calls.add("start:" + pipelineId);
+        if (refuseStartWith != null) {
+            throw refuseStartWith;
+        }
         carryingAJob = true;
     }
 
@@ -55,6 +61,15 @@ final class RecordingActuator implements LifecycleActuator {
     /** The verbs actuated so far, in order. */
     List<String> calls() {
         return List.copyOf(calls);
+    }
+
+    /**
+     * Arms start() to throw. Distinct from {@link #failWith} on purpose: that arms a job that ran and
+     * died, this one refuses before there is a job at all, and the two reach the converge loop by
+     * completely different paths.
+     */
+    void refuseStartWith(RuntimeException cause) {
+        this.refuseStartWith = cause;
     }
 
     /** Arms failure() to report this cause, as if the pipeline's job had died on its own. */

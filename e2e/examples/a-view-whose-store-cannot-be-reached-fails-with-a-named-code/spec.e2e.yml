@@ -1,0 +1,38 @@
+# A view whose managed state store is declared but not answering. The store here is a real MongoDB
+# connector pointed at a closed port, which is the shape of the condition being pinned: the deployment
+# has a store configured, and it does not reply.
+#
+# What discriminates is that this fails as a *diagnosis* rather than as an absence. The behaviour it
+# replaces was not an error but a wait followed by silence -- the pipeline started, reported itself
+# running, and never wrote a row, because the target could not be reached and nothing said so. A run
+# that regressed to that would leave the state at RUNNING and this example would time out on the state
+# it awaits, which reads very differently from the failure it asserts.
+#
+# failure_code is the whole point, and it is asserted rather than merely requiring a failure: the store
+# being unreachable is a different condition from the store not being configured, and the two are
+# separate codes on purpose because they send an operator to different places. A run that collapsed
+# them would still be FAILED, still carry an error, and still pass every assertion but this one.
+#
+# The port is 1 rather than an address that does not resolve: a closed port refuses immediately, so the
+# example does not spend its bound discovering what it already knows. The server-selection timeout is
+# set short for the same reason.
+#
+# The file target carries the count, and it has to be a second target rather than the view's own store:
+# the store is the thing that cannot be reached, so nothing can read a number back out of it. It also
+# says something the state and the code cannot. An unreachable *view* store stops the whole pipeline, not
+# the view half of it -- a run that failed the view and quietly went on delivering the serve block would
+# be FAILED, would carry this code, and would still have moved rows to a target the author was told
+# nothing reached. Zero here is what forbids that.
+name: a-view-whose-store-cannot-be-reached-fails-with-a-named-code
+setup:
+  connectors: [e2e_file, mongodb]
+  apply: [src_file.tap.yml, views.tap.yml, tgt_file.tap.yml, pipeline.tap.yml]
+  discover: [src_file]
+pipeline: pipeline.tap.yml
+seed:
+  src_file.orders: { rows: 2 }
+steps:
+  - start
+  - await: { state: FAILED }
+  - assert: { failure_code: actuation.view-store-unreachable }
+  - assert: { count: { tgt_file.orders: 0 } }

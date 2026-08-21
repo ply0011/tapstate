@@ -189,6 +189,19 @@ The preview does not provide high availability, durable offset resume, exactly-o
 delivery, a stable State Data API, or push/subscription delivery. It is not intended
 for production-critical paths.
 
+That instance is also not a security boundary, and this one is worth stating as a
+mechanism rather than a caveat. It runs without authentication, and the server's own
+control-plane data — users, tokens, audit records, connection configuration, applied
+artifacts — sits in it alongside whatever your pipelines write. Anyone holding a
+Tapstate token can declare an ordinary source pointing at the control-plane database
+and read it back: that is valid `tapstate/v1`, not a bypass, and no confinement on the
+query surface reaches a source the user declared. The container publishes no host
+port, so the threshold is holding a token rather than reaching the network. Treat the
+bundled store as sharing Tapstate's trust domain, and do not put data in it that the
+users of this deployment should not see. Separating the two means adding
+authentication or a second instance; the preview does neither, deliberately, because
+both would cost the property that you need no MongoDB of your own to run it.
+
 This repository is for developers, platform engineers, and data infrastructure
 teams who want to try the engine, follow development, and help shape the project.
 

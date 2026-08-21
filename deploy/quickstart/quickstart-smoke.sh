@@ -182,13 +182,20 @@ if [ -n "$pw_a" ] && [ "$pw_a" != "$pw_b" ]; then ok "each fresh run gets a diff
 # --- the demo workspace is generated, uses in-network addresses, and honours the CEL constraint ------
 WORK="$PREP/work"
 have work/source/db_src.tap.yml        "generates the source resource"
-have work/source/warehouse.tap.yml     "generates the target resource"
 have work/pipeline/sync_orders.tap.yml "generates the pipeline resource"
 # The second engine's half. Its seed has been fetched and mounted since the compose file grew a
 # postgres service, but nothing read it: the demo generated a mysql source, a mongo target and one
 # pipeline. A seeded database no resource names is indistinguishable from one that is not there.
 have work/source/db_shipments.tap.yml     "generates the second engine's source resource"
 have work/pipeline/sync_shipments.tap.yml "generates the second engine's pipeline"
+# The managed store is deliberately NOT here. It is the deployment's, registered by the server at
+# startup, and a demo that shipped it as a file to apply would be teaching the opposite -- that the
+# store is one more thing an author owns and has to hand back.
+if [ ! -e "$WORK/source/views.tap.yml" ]; then
+  ok "does not generate the managed store: the deployment provides it"
+else
+  bad "the managed store is still generated as a workspace file: $(cat "$WORK/source/views.tap.yml")"
+fi
 # Addresses use compose service names: the connector runs inside the server container, so 127.0.0.1
 # would point the server at itself, not at the databases.
 if grep -q 'host: mysql' "$WORK/source/db_src.tap.yml" 2>/dev/null && ! grep -q '127.0.0.1' "$WORK/source/db_src.tap.yml" 2>/dev/null; then
@@ -196,13 +203,24 @@ if grep -q 'host: mysql' "$WORK/source/db_src.tap.yml" 2>/dev/null && ! grep -q 
 else
   bad "source is not addressed by service name: $(cat "$WORK/source/db_src.tap.yml" 2>/dev/null)"
 fi
-if grep -q 'mongo:27017' "$WORK/source/warehouse.tap.yml" 2>/dev/null && ! grep -q '127.0.0.1' "$WORK/source/warehouse.tap.yml" 2>/dev/null; then
-  ok "target addresses mongo by its compose service name, not loopback"
+# The store the server seeds is derived from its own store URI, so that URI has to be reachable from
+# inside the container for the derived one to be too. Checked on the compose file, which is where it is
+# set: loopback here would point the server at itself and the derived views URI would inherit exactly
+# that mistake, one indirection further from anyone looking for it.
+if grep -q 'TAPSTATE_STORE_MONGO_URI:.*mongo:27017' "$PREP/docker-compose.yml" 2>/dev/null \
+   && ! grep -q 'TAPSTATE_STORE_MONGO_URI:.*127.0.0.1' "$PREP/docker-compose.yml" 2>/dev/null; then
+  ok "the server's store URI addresses mongo by its compose service name, not loopback"
 else
-  bad "target is not addressed by service name: $(cat "$WORK/source/warehouse.tap.yml" 2>/dev/null)"
+  bad "server store URI is not addressed by service name: $(grep TAPSTATE_STORE_MONGO_URI "$PREP/docker-compose.yml" 2>/dev/null)"
+fi
+stale="$(grep -rl 'warehouse' "$WORK" 2>/dev/null || true)"
+if [ -z "$stale" ]; then
+  ok "no resource in the generated workspace still says warehouse"
+else
+  bad "warehouse survives the rename in: $stale"
 fi
 vcount="$(cat "$WORK"/source/*.tap.yml "$WORK"/pipeline/*.tap.yml 2>/dev/null | grep -c '^version: tapstate/v1' || true)"
-if [ "$vcount" = 5 ]; then ok "all five resources declare version: tapstate/v1"; else bad "version lines = $vcount (want 5)"; fi
+if [ "$vcount" = 4 ]; then ok "all four generated resources declare version: tapstate/v1"; else bad "version lines = $vcount (want 4)"; fi
 
 # The second source is addressed the same way the first is, and it reads changes rather than only a
 # snapshot. Both matter to the live check this demo exists to make possible: a row inserted by hand
@@ -276,6 +294,10 @@ run_phase_fakes() {
 #!/bin/sh
 printf '%s\n' "$*" >> .cli-argv
 cat >> .cli-stdin
+# A REPL prints its verbs' errors and still exits 0 -- an interactive session does not end because one
+# command was rejected. FAKE_CLI_OUT lets a case reproduce that shape: output that says it failed, over
+# an exit status that says it did not.
+[ -n "${FAKE_CLI_OUT:-}" ] && printf '%s\n' "$FAKE_CLI_OUT"
 exit 0
 CLI
   chmod +x "$RUN/tapstate"
@@ -285,10 +307,25 @@ CLI
   printf '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; *) echo unknown ;; esac\n' > "$shim/uname"
   cat > "$shim/docker" <<'DOCK'
 #!/bin/sh
-# `compose ps ... server` -> report healthy so the wait loop ends; `compose exec ... mongosh` (a
-# snapshot count read) -> report the row count the case asked for, so a run that delivers and a run
+# `compose ps ... server` -> report healthy so the wait loop ends; `compose ps -a ... bootstrap` -> report
+# the one-shot admin-creation container in whatever state the case asked for; `compose exec ... mongosh`
+# (the snapshot count read) -> report the row count the case asked for, so a run that delivers and a run
 # that delivers nothing can both be driven; every other subcommand no-ops.
 #
+# The two `ps` answers are deliberately different shapes. A server reports Health; a one-shot container
+# reports State and ExitCode and never reports Health at all. A script that waited on the wrong one would
+# read a field the other never publishes, which is exactly the confusion these fakes have to be able to
+# expose rather than paper over.
+# A brace inside ${VAR:-default} would close the expansion, so the default is set on its own line.
+bs="${FAKE_BOOTSTRAP_PS:-}"
+[ -n "$bs" ] || bs='{"State":"exited","ExitCode":0}'
+# Which container is being asked about is decided before the subcommand is, because `ps` appears in the
+# bootstrap query too -- answering on the subcommand alone would hand the server's Health line back for
+# every query and quietly make the two indistinguishable.
+# `logs` is answered before the container is looked at, because the bootstrap log query names the
+# container too -- deciding on the container alone would hand a ps line back to a log query.
+case " $* " in *" logs "*) echo "${FAKE_BOOTSTRAP_LOG:-bootstrap: first admin created}"; exit 0 ;; esac
+case " $* " in *" bootstrap "*) echo "$bs"; exit 0 ;; esac
 # The count is answered per collection rather than once for all of them. That is what lets a case drive
 # "the first engine arrived and the second did not" - the shape a demo wired to only one of its two
 # sources actually produces, and the one a check on a single total cannot tell apart from success.
@@ -305,10 +342,13 @@ done
 exit 0
 DOCK
   chmod +x "$shim/uname" "$shim/docker"
-  RUN_OUT="$(cd "$RUN" && PATH="$shim:$PATH" \
+  RUN_OUT="$(cd "${RUN_CWD:-$RUN}" && PATH="$shim:$PATH" \
     TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$CLI_STUB" \
     TAPSTATE_QUICKSTART_BASE_URL="file://$QS_STUB" TAPSTATE_CONNECTORS_URL="file://$QS_STUB/connectors-preview" \
     FAKE_TARGET_ROWS="${1:-5}" FAKE_SHIPMENT_ROWS="${2:-6}" \
+    FAKE_BOOTSTRAP_PS="${FAKE_BOOTSTRAP_PS:-}" FAKE_CLI_OUT="${FAKE_CLI_OUT:-}" \
+    FAKE_BOOTSTRAP_LOG="${FAKE_BOOTSTRAP_LOG:-}" \
+    TAPSTATE_QUICKSTART_POLL_SECONDS=0 \
     sh "$RUN/quickstart.sh" 2>&1)"; RUN_RC=$?
   rm -rf "$shim"
 }
@@ -354,10 +394,68 @@ check_apply_order() {   # $1 = source id
 }
 check_apply_order db_src
 check_apply_order db_shipments
-if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -q 'rm -rf'; then
-  ok "prints teardown on completion (down -v + rm -rf, images noted)"
+if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -qi 'images remain'; then
+  ok "prints teardown on completion (down -v, images noted)"
 else
   bad "no teardown printed: $RUN_OUT"
+fi
+# Run in place -- a saved script executed where it sits -- the directory is the user's and holds their
+# files. Offering `rm -rf` on it is a command that destroys unrelated work, printed to someone who has
+# just been told everything above was safe to copy. This run is exactly that shape.
+if ! printf '%s' "$RUN_OUT" | grep -q 'rm -rf'; then
+  ok "a directory the quickstart did not create is never offered for removal"
+else
+  bad "offered to rm -rf a directory it does not own: $(printf '%s' "$RUN_OUT" | grep 'rm -rf')"
+fi
+if printf '%s' "$RUN_OUT" | grep -q 'this directory is yours'; then
+  ok "and says so, rather than leaving the teardown looking incomplete"
+else
+  bad "silently omitted the removal line instead of saying why: $RUN_OUT"
+fi
+
+# The other half, or the pair proves nothing: a script that never offers removal would pass both
+# assertions above. Run from an empty directory, the quickstart makes tapstate-demo, owns it, and there
+# the whole-directory removal is the correct advice.
+saved_out="$RUN_OUT"; saved_rc="$RUN_RC"
+OWNED="$(mktemp -d)"
+RUN_CWD="$OWNED" run_phase_fakes
+if printf '%s' "$RUN_OUT" | grep -q 'rm -rf tapstate-demo'; then
+  ok "a directory the quickstart created is offered for removal by name"
+else
+  bad "own directory not offered for removal: $RUN_OUT"
+fi
+if [ -d "$OWNED/tapstate-demo" ]; then
+  ok "and that directory is the one it made, not the caller's"
+else
+  bad "the run did not make its own directory under $OWNED"
+fi
+rm -rf "$OWNED"
+RUN_OUT="$saved_out"; RUN_RC="$saved_rc"
+# Telling someone to publish the port is the half of the advice that does not work on its own: the
+# set registers its member under a container-internal name, so a driver that discovers the topology
+# dials the host's own loopback and is refused. The note has to carry directConnection with it.
+if printf '%s' "$RUN_OUT" | grep -q 'ports: \["127.0.0.1:27017:27017"\]' \
+   && printf '%s' "$RUN_OUT" | grep -q 'directConnection=true' \
+   && printf '%s' "$RUN_OUT" | grep -qi 'replicaSet=rs0'; then
+  ok "says how to reach the store from the host, and why directConnection is required"
+else
+  bad "host access to the store is undocumented or incomplete: $RUN_OUT"
+fi
+# Stopping and destroying are different intentions and the demo has to offer both. Until it did, the
+# only documented way out deleted the data, so a user who just wanted their laptop back had to guess
+# -- and guessing wrong on this one is unrecoverable.
+if printf '%s' "$RUN_OUT" | grep -q 'docker compose stop' \
+   && printf '%s' "$RUN_OUT" | grep -qi 'keep its data'; then
+  ok "offers a non-destructive stop, and says the data survives it"
+else
+  bad "no non-destructive stop offered: $RUN_OUT"
+fi
+# The warning has to sit on the destructive line itself. Asserting that the word appears somewhere in
+# the output is satisfied by the CDC walkthrough's DELETE statement, several screens further up.
+if printf '%s' "$RUN_OUT" | grep 'down -v' | grep -qi 'delet'; then
+  ok "the destructive teardown says on its own line that it deletes data"
+else
+  bad "the down -v line does not say what it destroys: $(printf '%s' "$RUN_OUT" | grep 'down -v')"
 fi
 # The snapshot payoff is a real row count, printed with no user action, and it names both engines (the
 # fake docker returns 5 orders and 6 shipments). Naming them is the point: one number for the pair
@@ -385,6 +483,65 @@ if printf '%s' "$RUN_OUT" | grep -q 'INSERT INTO shipments' \
   ok "the CDC section also demonstrates a row inserted in the second engine"
 else
   bad "no second-engine change demonstrated: $RUN_OUT"
+fi
+
+# --- the first admin exists before anyone tries to log in ---------------------------------------------
+# The bootstrap sidecar depends_on the server being *healthy*, so it only starts at the moment the server
+# reports healthy. Waiting on server health therefore proves the opposite of what it looks like it proves:
+# it is the moment the admin is guaranteed NOT to exist yet. Observed as a real flake -- two runs of the
+# same commit, one logged in fine and one drew control.auth-failed, after which every following verb
+# reported cli.not-authenticated and the run died on the row count with the real cause scrolled off the top.
+FAKE_BOOTSTRAP_PS='{"State":"running","ExitCode":0}' run_phase_fakes
+unset FAKE_BOOTSTRAP_PS
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -qi 'admin'; then
+  ok "refuses to drive the verbs while the admin has not been created yet, and says so"
+else
+  bad "raced the bootstrap instead of waiting (rc=$RUN_RC): $RUN_OUT"
+fi
+# A bootstrap that ran and *failed* is a different condition from one still running, and it must not be
+# waited out until the timeout: the container is gone, so waiting can only end one way.
+FAKE_BOOTSTRAP_PS='{"State":"exited","ExitCode":1}' run_phase_fakes
+unset FAKE_BOOTSTRAP_PS
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'docker compose logs bootstrap'; then
+  ok "a bootstrap that exited non-zero fails the run and points at its log"
+else
+  bad "a failed bootstrap was not surfaced (rc=$RUN_RC): $RUN_OUT"
+fi
+# An authentication failure must be named where it happens. Without this the run still fails -- but it
+# fails 30 seconds later on "did not reach the target (0 of 5 rows)", which sends the reader to the server
+# log to investigate a pipeline that was never started. The discriminating part is that the run below
+# delivers its rows: a check that merely required a non-zero exit would pass on the row count alone.
+FAKE_CLI_OUT='error: control.auth-failed' run_phase_fakes
+unset FAKE_CLI_OUT
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'could not log in' \
+   && ! printf '%s' "$RUN_OUT" | grep -q 'did not reach the target'; then
+  ok "an auth failure is diagnosed as an auth failure, not as an empty target"
+else
+  bad "auth failure not named at the point it happened (rc=$RUN_RC): $RUN_OUT"
+fi
+
+# An admin left over from an earlier run is the likely reason a demo whose password is generated cannot
+# log in, and it is the one case the user can act on without reading anything. The bootstrap step reports
+# success either way -- creating the admin and finding one already there are both "an admin exists" -- so
+# a run against a stack whose volume outlived its .env fails at login with both facts true and filed in
+# different places. Reported here as the remedy rather than as a log to go and read.
+FAKE_CLI_OUT='error: control.auth-failed' \
+  FAKE_BOOTSTRAP_LOG='bootstrap: an admin already exists, nothing to do' run_phase_fakes
+unset FAKE_CLI_OUT FAKE_BOOTSTRAP_LOG
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'down -v'; then
+  ok "an auth failure against a pre-existing admin names the reset that fixes it"
+else
+  bad "stale-admin auth failure did not name the remedy (rc=$RUN_RC): $RUN_OUT"
+fi
+# ...and the generic message is kept for an auth failure with no such history, which is a different
+# situation with a different answer: wiping the volume there would destroy data to fix nothing.
+FAKE_CLI_OUT='error: control.auth-failed' \
+  FAKE_BOOTSTRAP_LOG='bootstrap: first admin created' run_phase_fakes
+unset FAKE_CLI_OUT FAKE_BOOTSTRAP_LOG
+if [ "$RUN_RC" -ne 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'down -v'; then
+  ok "an auth failure with a freshly created admin does not prescribe wiping the volume"
+else
+  bad "the stale-admin remedy leaked into an unrelated auth failure (rc=$RUN_RC): $RUN_OUT"
 fi
 
 # A run whose online verbs did not take must fail, loudly and non-zero. The REPL is the reason this
@@ -442,6 +599,17 @@ case "$DEFAULT_QBASE" in
     bad "default asset base '$DEFAULT_QBASE' is not derived from CLI_VERSION — a branch keeps moving after the release" ;;
 esac
 
+# The replica-set member address is the one thing in this file a client outside the container reads.
+# Registered as localhost it points every such client at its own loopback, and the connection refused
+# there reads like a local firewall problem rather than a name that means nothing here. Asserting the
+# service name also keeps replicaSet= URIs working for anything a user adds to the compose network.
+if grep -q "rs.initiate({" "$HERE/docker-compose.yml" \
+   && grep "rs.initiate({" "$HERE/docker-compose.yml" | grep -q "host: 'mongo:27017'"; then
+  ok "the replica set registers its member under the service name, not localhost"
+else
+  bad "replica-set member address: $(grep "rs.initiate({" "$HERE/docker-compose.yml" || echo '(no rs.initiate call found)')"
+fi
+
 # Second, the compose file must name a published image. A `build:` key is unusable from a demo directory:
 # its context points into a repository that is not there. The source path keeps its build through an
 # explicit override file instead, so the released stack and the development stack stop being the same
@@ -458,6 +626,20 @@ if grep -qE '^\s*image:\s*ghcr\.io/' "$COMPOSE"; then
 else
   bad "docker-compose.yml does not pin a ghcr.io image: $(grep -nE '^\s*image:' "$COMPOSE" | tr '\n' ' ')"
 fi
+# The bundled state store is the official upstream image, pulled like any other. Tapstate does not
+# redistribute a MongoDB binary, and pulling a stock image in a compose file is the ordinary way to depend
+# on one -- packaging it into the distribution instead would be a redistribution decision, made silently,
+# by whoever edited this file. Assert the store service names an unqualified upstream image (no registry
+# host, so Docker Hub's official library) rather than something built or re-hosted here.
+STORE_IMAGE="$(awk '/^  mongo:/{f=1} f&&/image:/{print $2; exit}' "$COMPOSE")"
+case "$STORE_IMAGE" in
+  mongo:*)
+    ok "the state store is the official upstream image ($STORE_IMAGE), not one repackaged here" ;;
+  "")
+    bad "no image found for the mongo service in $COMPOSE" ;;
+  *)
+    bad "the state store image is not the upstream official one: $STORE_IMAGE" ;;
+esac
 # The image tag drifting from the build is the same defect as the CLI pin drifting, and gets the same guard.
 COMPOSE_TAG="$(sed -n 's|.*image:.*ghcr\.io/[^:]*:\(.*\)|\1|p' "$COMPOSE" | sed 's/}$//; s/.*:-//')"
 if [ "$COMPOSE_TAG" = "$POM_VERSION" ]; then

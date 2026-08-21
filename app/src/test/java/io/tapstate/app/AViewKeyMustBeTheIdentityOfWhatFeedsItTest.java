@@ -84,10 +84,10 @@ class AViewKeyMustBeTheIdentityOfWhatFeedsItTest {
 
     @Test
     void a_capture_source_squatting_on_the_managed_store_id_is_refused_rather_than_written_into() {
-        // The store is resolved by its id alone, and "warehouse" is a name an author plausibly gives
-        // their own upstream database. A resource under that id that declares capture settings is an
-        // authored source, and materializing a view into it would write into a database the deployment
-        // does not own - silently, because the id resolved fine.
+        // The store is resolved by its id alone, and nothing reserves that id: an author can declare a
+        // source under it, whatever it happens to be called. A resource under that id that declares
+        // capture settings is an authored source, and materializing a view into it would write into a
+        // database the deployment does not own - silently, because the id resolved fine.
         InMemoryArtifactStore artifacts = new InMemoryArtifactStore();
         artifacts.save(new SourceResource("src", null, "fake", Map.of("host", "h"), SourceMode.CDC,
                 List.of(TableRef.literal("orders")), null, null, null));

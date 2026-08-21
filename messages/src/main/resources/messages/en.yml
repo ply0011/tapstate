@@ -26,6 +26,9 @@ actuation.view-storage-tier-unsupported:
 actuation.view-store-not-configured:
   message: "The managed state store `{store}` a view materializes into is not configured."
   solution: "Start the deployment's managed state store, or register a source under that id for views to materialize into."
+actuation.view-store-unreachable:
+  message: "The managed state store `{store}` a view materializes into did not answer: {reason}"
+  solution: "Check that the state store is running and reachable from the server, then start the pipeline again."
 actuation.view-key-not-feed-identity:
   message: "View `{view}` declares key `{key}`, but what feeds it is identified by `{identity}`."
   solution: "Declare the view's primaryKey as that identity column. An identity spanning several columns cannot be served by a view today - a view's key is a single column, and materializing on fewer columns than the identity collapses distinct records."
@@ -66,6 +69,15 @@ capture.start-from-unparsable:
 capture.event-table-not-selected:
   message: "The capture stream emitted table `{table}`, which this pipeline did not select."
   solution: "Update the source table selection or verify the connector emits the configured table names."
+cli.alias-install-dir-unknown:
+  message: "No installed `tapstate` was found in `{path}`."
+  solution: "Run this where tapstate is installed, or set TAPSTATE_INSTALL_DIR to that directory - the same variable the installer honours."
+cli.alias-link-failed:
+  message: "The `tap` shortcut at `{path}` could not be created or removed: {reason}"
+  solution: "Check that the directory exists and you can write to it, then run `tapstate alias install` again. tapstate itself works without the shortcut."
+cli.alias-name-taken:
+  message: "`{path}` already exists and is not the tapstate shortcut."
+  solution: "Leave it in place - tapstate works without the shortcut. Remove that file yourself if you want the `tap` name, then run `tapstate alias install` again."
 cli.artifact-exists:
   message: "An artifact already exists at {path}."
   solution: "Choose a different id or --out, or pass --force to overwrite."

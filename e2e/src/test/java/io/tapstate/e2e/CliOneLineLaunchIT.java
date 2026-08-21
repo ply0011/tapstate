@@ -56,7 +56,12 @@ class CliOneLineLaunchIT {
             // `ls` is a credentialed read: reaching an answer at all proves the connection was made and
             // the credential exchanged, both from the arguments, with no session ever opened
             assertThat(run.exitCode()).isZero();
-            assertThat(run.stdout()).contains("no resources");
+            // A server that has never been applied to is not empty any more: it registers the state store
+            // its views materialize into as it starts, so the first listing on a fresh deployment shows
+            // that one resource. Asserting it here rather than loosening the check keeps this test's real
+            // subject -- that a one-line launch reaches a credentialed read at all -- pinned to a
+            // specific answer instead of to whatever happens to come back.
+            assertThat(run.stdout()).contains("source  views");
             // and the command's own output is all that reached stdout -- the point of the form is that
             // something downstream reads it, and two lines about having connected would land there too
             assertThat(run.stdout()).doesNotContain("connected to").doesNotContain("logged in as");
