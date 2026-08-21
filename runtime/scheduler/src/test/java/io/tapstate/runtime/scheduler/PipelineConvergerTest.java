@@ -328,6 +328,47 @@ class PipelineConvergerTest {
     }
 
     /**
+     * The restart road reaches the same refusal as the CAS road, and it used to escape here. A store
+     * that is unreachable when a process comes up is exactly the condition this refusal exists for --
+     * the previous process left a RUNNING checkpoint, this one cannot put a job behind it, and the
+     * pipeline is not going to run. Letting the throw out leaves the checkpoint saying RUNNING while
+     * the loop retries every tick, which is the same state the coded refusal was introduced to remove
+     * on the other road: the read face says healthy and the reason lives in the server log alone.
+     */
+    @Test
+    @DisplayName("a restart whose start is refused with a coded reason converges to FAILED, not RUNNING")
+    void aCodedRefusalOnTheRestartRoadConvergesToFailed() {
+        converge(RUNNING); // a previous process left the checkpoint at RUNNING
+        actuator.carryingNothing(); // and this process has no job behind it
+        TapstateException refusal = new TapstateException(
+                new StubCode("actuation.view-store-unreachable"), Map.of("store", "views"), null);
+        actuator.refuseStartWith(refusal);
+
+        ConvergeResult result = converger.converge("p1");
+
+        assertThat(result.status()).isEqualTo(ConvergeStatus.FAILED);
+        assertThat(result.failure()).contains(refusal);
+        // The recorded state is the half that matters most here: a checkpoint left at RUNNING is what
+        // makes every read face keep answering healthy over a data plane that does not exist.
+        assertThat(state.read("p1").orElseThrow().stateJson()).isEqualTo(StateJson.of(FAILED));
+    }
+
+    /**
+     * An uncoded throw on the restart road stays a defect, same as on the other one. Recording it as
+     * the pipeline's failure would file a bug in this process under the user's name.
+     */
+    @Test
+    @DisplayName("an uncoded fault on the restart road still escapes")
+    void anUncodedFaultOnTheRestartRoadStillEscapes() {
+        converge(RUNNING);
+        actuator.carryingNothing();
+        actuator.refuseStartWith(new IllegalStateException("a bug in the builder"));
+
+        assertThatThrownBy(() -> converger.converge("p1"))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /**
      * And the tick after that one does not submit a second time. The guard is "no job is carrying it",
      * not "this process did not start it": once one is, the loop has nothing left to do, or every tick
      * would re-submit for the life of the pipeline.

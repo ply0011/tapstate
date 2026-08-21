@@ -71,7 +71,16 @@ public final class PipelineConverger {
             // resuming the job. Submitting is absent-safe, and the guard is "no job is carrying it"
             // rather than "this process did not start it", so the next tick actuates nothing.
             if (!actuator.isCarryingAJob(pipelineId)) {
-                actuator.start(pipelineId);
+                try {
+                    actuator.start(pipelineId);
+                } catch (TapstateException refused) {
+                    // Same refusal, third road. This one is the worst of the three to let escape: the
+                    // checkpoint already says RUNNING, so an escaping throw leaves every read face
+                    // answering healthy over a data plane that was never built, and the loop retries
+                    // for the life of the process. A store that is unreachable when a process comes up
+                    // is exactly the condition the coded refusal exists for.
+                    return failedWith(pipelineId, refused);
+                }
                 return ConvergeResult.converged(actualDoc.orElseThrow());
             }
         }
