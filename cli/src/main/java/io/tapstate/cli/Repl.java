@@ -2256,7 +2256,8 @@ final class Repl {
         }
         if (changeCaptureUnavailable(report)) {
             out.println();
-            out.println("  Change capture will not work on this connection until the check above passes.");
+            out.println("  Change capture will not work on this connection until the "
+                    + CHANGE_STREAM_CHECK + " check passes.");
             out.println("  A snapshot will; a pipeline reading changes will start and never see any.");
         }
     }

@@ -1981,6 +1981,33 @@ class ReplTest {
         assertThat(out).contains("snapshot");
     }
 
+    /**
+     * The advisory names the check it is about, because "the check above" need not be the one that
+     * failed. Checks are printed in the order the connector reports them, and nothing puts the
+     * change-stream check last - so a passing check after it made the advisory point at a result that
+     * is fine, and blame the wrong thing to go and fix.
+     */
+    @Test
+    void testNamesTheChangeStreamCheckWhenAPassingCheckIsPrintedAfterIt() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("Read log", "WARNING", "no replication slot",
+                                null, null, "410003"),
+                        new ConnectionReport.Check("ping", "PASSED", null, null, null, null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Read log check passes");
+        assertThat(out).as("the last check printed is a passing one, so 'above' would misname it")
+                .doesNotContain("the check above");
+    }
+
     /** A connection whose change-stream check passed says nothing of the sort. */
     @Test
     void testDoesNotWarnAboutChangeCaptureWhenTheLogCheckPassed() {
