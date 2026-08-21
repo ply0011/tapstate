@@ -187,9 +187,26 @@ class ApiExceptionHandlerTest {
                 "connector.spec-invalid",
                 "connector.registration-conflict",
                 "connector.not-registered",
-                "connector.ambiguous-registration")) {
+                "connector.ambiguous-registration",
+                // Attributed to the caller by the read face, which knows the source was theirs to name;
+                // here it must stay server-side, or the same code on a resolve path would be miscalled.
+                "connector.capability-missing")) {
             assertThat(ApiExceptionHandler.statusFor(new StubCode(code))).as(code)
                     .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    @Test
+    void aReadRefusedOnTheRequestAsWrittenIsABadRequest() {
+        // Judgements this face makes before anything is sent, on the request itself. Left to the default
+        // they answer 500, which tells a caller the server broke rather than that their request was
+        // refused - the one thing a refusal has to be distinguishable from.
+        for (String code : List.of(
+                "data-browser.invalid-limit",
+                "data-browser.connector-not-browsable",
+                "data-browser.unorderable-field")) {
+            assertThat(ApiExceptionHandler.statusFor(new StubCode(code))).as(code)
+                    .isEqualTo(HttpStatus.BAD_REQUEST);
         }
     }
 

@@ -23,6 +23,50 @@ class OperationTest {
     }
 
     @Test
+    void acceptsAKebabDomainJustAsAnErrorCodeDoes() {
+        // An operation id and an error code are the same shape — <domain>.<symbol>, lower kebab in
+        // either segment — and a domain whose name is two words is spelled the same way in both. A rule
+        // that admitted the hyphen only after the dot would force one of the two to spell its domain
+        // differently from the other, for the same domain.
+        Operation op = new Operation("data-browser.collections", Scope.READ, false, null, Map.of());
+
+        assertThat(op.id()).isEqualTo("data-browser.collections");
+    }
+
+    @Test
+    void rejectsASegmentThatIsNotWellFormedKebab() {
+        for (String id : new String[] {"-data.collections", "data-.collections", "data--browser.find",
+                "data-browser.-find", "data-browser.find-"}) {
+            assertThatThrownBy(() -> new Operation(id, Scope.READ, false, null, Map.of()))
+                    .as(id)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void readsAnIdTooLongToRecurseOver() {
+        // The id check used to be a pattern holding one repetition inside another - dash-joined words
+        // inside dot-joined segments - and this engine recurses once per iteration of a repeated group.
+        // Past a few thousand it therefore ended in a StackOverflowError: an Error, not the refusal the
+        // constructor promises, so a caller could neither catch it as one nor learn what was wrong.
+        // Both repetitions are covered here, and both are well past where the old check died (measured:
+        // about 5,000 dash-joined words, about 10,000 segments).
+        String longKebab = "a" + "-b".repeat(20_000) + ".verb";
+        String longDotted = "a" + ".b".repeat(20_000);
+
+        assertThat(new Operation(longKebab, Scope.READ, false, null, Map.of()).id()).isEqualTo(longKebab);
+        assertThat(new Operation(longDotted, Scope.READ, false, null, Map.of()).id()).isEqualTo(longDotted);
+
+        // and one of each that is out of the language, so the length is not what decides the answer
+        assertThatThrownBy(() -> new Operation(longKebab + "-", Scope.READ, false, null, Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dot-scoped");
+        assertThatThrownBy(() -> new Operation(longDotted + ".", Scope.READ, false, null, Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dot-scoped");
+    }
+
+    @Test
     void exposureIsDefensivelyCopiedAndUnmodifiable() {
         Map<Frontend, Maturity> source = new HashMap<>();
         source.put(Frontend.CLI, Maturity.POC);

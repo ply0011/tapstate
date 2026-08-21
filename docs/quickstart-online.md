@@ -84,6 +84,21 @@ builds the server from this checkout instead; every `docker compose …` below t
 picks up both without repeating them. Set it once per shell — a new terminal needs
 it again.
 
+> **Forgetting it fails silently, and the symptom points at the wrong thing.** Without
+> `COMPOSE_FILE`, `docker compose` reads `docker-compose.yml` alone: the stack comes up
+> on the *published* server image, and every change in your checkout is simply absent.
+> Nothing reports a missing variable — you see a product that behaves like an older
+> release, so the natural next move is to go debug the code you just changed. Ask the
+> stack which image it will actually run:
+>
+> ```sh
+> docker compose config --format json \
+>   | python3 -c 'import sys,json;print(json.load(sys.stdin)["services"]["server"]["image"])'
+> ```
+>
+> `tapstate:dev` is the image built from this checkout; a `ghcr.io/...` one is a published
+> release. Check this first whenever a change you know you made appears not to be there.
+
 ## 2. Bring up the stack
 
 > **Preview.** With the development override in play, the server image is built
@@ -166,16 +181,17 @@ cannot find the sidecar.
 
 ## 4. Get the connector jars
 
-This walkthrough needs a MySQL and a MongoDB connector. Prebuilt jars are published
-as release assets — download them next to the compose file:
+This walkthrough needs a MySQL, a PostgreSQL and a MongoDB connector. Prebuilt jars are
+published as release assets — download them next to the compose file:
 
 ```sh
 base=https://github.com/tapstate/tapstate/releases/download/connectors-preview
 curl -fL -O "$base/mysql-connector.jar"
+curl -fL -O "$base/postgres-connector.jar"
 curl -fL -O "$base/mongodb-connector.jar"
 ```
 
-These two are what this release registers, and they are published so this page runs
+These three are what this release registers, and they are published so this page runs
 without building the connector repositories first. A jar declaring any other connector
 is refused with `connector.not-official`, whether it is uploaded with `register` or
 staged in the seed directory. They are shaded and carry their own drivers on an
@@ -184,8 +200,8 @@ with the Universal FOSS Exception (see [`NOTICE`](../NOTICE)).
 
 ## 5. Author the resources
 
-A workspace is a folder partitioned by resource kind. Create three resources — the
-read source, the write target, and the pipeline that connects them:
+A workspace is a folder partitioned by resource kind. Create five resources — one read
+source per engine, the write target they share, and a pipeline for each source:
 
 ```sh
 mkdir -p work/source work/pipeline
@@ -197,7 +213,7 @@ Unnamed, the CLI falls back to its default workspace, `tap-work`, and finds noth
 (`TAPSTATE_WORKDIR=work` in the environment does the same job for both.)
 
 The connector configs address the databases by their **compose service names**
-(`mysql`, `mongo`): the connector runs inside the server container, where those
+(`mysql`, `postgres`, `mongo`): the connector runs inside the server container, where those
 names resolve and loopback is the server itself.
 
 `work/source/db_src.tap.yml` — the read source (the demo MySQL):
@@ -210,6 +226,22 @@ connector: mysql
 config: { host: mysql, port: 3306, database: appdb, username: root, password: secret }
 mode: cdc
 tables: [ orders ]
+```
+
+`work/source/db_shipments.tap.yml` — the second read source, on a different engine
+(the demo PostgreSQL). Two settings are spelled differently from the MySQL source
+above, and both are this connector's own spelling rather than a choice: the account is
+`user` where MySQL says `username`, and a table is addressed by schema as well as by
+database.
+
+```yaml
+version: tapstate/v1
+kind: source
+id: db_shipments
+connector: postgres
+config: { host: postgres, port: 5432, database: appdb, schema: public, user: postgres, password: secret }
+mode: cdc
+tables: [ shipments ]
 ```
 
 `work/source/views.tap.yml` — the write target (also `kind: source`):
@@ -242,6 +274,32 @@ view:
   from: shape_orders
   primary_key: id
 ```
+
+`work/pipeline/sync_shipments.tap.yml` — the second engine's flow, into the same target:
+
+```yaml
+version: tapstate/v1
+kind: pipeline
+id: sync_shipments
+source: db_shipments
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: shape_shipments
+    from: [ shipments ]
+    type: map
+    fields:
+      route: "=after.carrier + ' -> ' + after.status"
+serve:
+  from: shape_shipments
+  sync:
+    - source: views
+```
+
+Two engines, one store. Nothing here assembles an order and its shipments into a
+single document — that is a separate capability; here each half simply arrives, which
+is what makes "insert a row in PostgreSQL and watch it appear" something you can do
+below. `route` names only text columns for the same reason `amount` is never named in
+the orders pipeline: see the note on numeric columns further down.
 
 One `map` step reshapes the stream, and it carries every change through — insert, update
 and delete. An insert or update is reshaped by the fields below; a delete has no `after`
@@ -282,7 +340,7 @@ the row (`after.<field>`) and the change envelope (`src`, plus `op` and `ts`).
 Validate offline before going online (no server needed):
 
 ```sh
-./tapstate-cli/bin/tapstate validate work       # expects: valid: 3 resources in work
+./tapstate-cli/bin/tapstate validate work       # expects: valid: 5 resources in work
 ```
 
 ## 6. Go online and run
@@ -297,11 +355,15 @@ tapstate(offline:work)> connect http://127.0.0.1:8080
 tapstate(127.0.0.1:8080)> login admin
 Password:                       # the admin password from step 2 (not echoed)
 tapstate(admin@127.0.0.1:8080)> register ../mysql-connector.jar
+tapstate(admin@127.0.0.1:8080)> register ../postgres-connector.jar
 tapstate(admin@127.0.0.1:8080)> register ../mongodb-connector.jar
 tapstate(admin@127.0.0.1:8080)> apply source/db_src.tap.yml
+tapstate(admin@127.0.0.1:8080)> apply source/db_shipments.tap.yml
 tapstate(admin@127.0.0.1:8080)> discover-schema db_src
+tapstate(admin@127.0.0.1:8080)> discover-schema db_shipments
 tapstate(admin@127.0.0.1:8080)> apply
 tapstate(admin@127.0.0.1:8080)> start sync_orders
+tapstate(admin@127.0.0.1:8080)> start sync_shipments
 ```
 
 - **`register`** uploads a connector jar to the server (content-addressed and
@@ -312,18 +374,21 @@ tapstate(admin@127.0.0.1:8080)> start sync_orders
 - **`apply`** with no argument applies the whole workspace as one batch. The batch is
   the reference closure — a pipeline and the sources it names must be applied
   together, so apply the workspace, not one file at a time.
-- **The source is applied on its own first**, which is the one exception to that. This
-  pipeline's `label` reads a row field, and an expression that reads row fields is
-  refused until the source it reads has a discovered schema — while the discovery, in
-  turn, needs the source to exist on the server. A single batch carrying both can
-  therefore not succeed in either order: it is refused whole, leaving the source
-  unapplied and the discovery with nothing to look at. Applying the source twice costs
-  nothing; the second apply reports it unchanged.
+- **Each capture source is applied on its own first**, which is the one exception to
+  that. Both pipelines read a row field in an expression — `sync_orders` in its `label`,
+  `sync_shipments` in its `route` — and an expression that reads row fields is refused
+  until the source it reads has a discovered schema, while the discovery, in turn, needs
+  the source to exist on the server. A single batch carrying both can therefore not
+  succeed in either order: it is refused whole, leaving the sources unapplied and the
+  discoveries with nothing to look at. Applying a source twice costs nothing; the second
+  apply reports it unchanged.
 - **`discover-schema db_src`** reads the source schema and derives the target model
-  and primary key. Run it **after** the source is applied and **before** the apply that
-  carries the pipeline.
+  and primary key. Run it **after** that source is applied and **before** the apply that
+  carries the pipelines — and run it **once per source**, so `db_shipments` needs its
+  own. The second engine is not exempt: its pipeline reads a row field too.
 - **`start sync_orders`** submits the pipeline: it reads the current rows (snapshot),
-  then tails changes (CDC).
+  then tails changes (CDC). Each pipeline is started on its own; `sync_shipments`
+  carries the second engine's half the same way.
 
 ## AI-driven alternative: run the pipeline through MCP
 
@@ -337,6 +402,7 @@ CLI session first:
 
 ```console
 tapstate(admin@127.0.0.1:8080)> register ../mysql-connector.jar
+tapstate(admin@127.0.0.1:8080)> register ../postgres-connector.jar
 tapstate(admin@127.0.0.1:8080)> register ../mongodb-connector.jar
 tapstate(admin@127.0.0.1:8080)> token create --scope write
 created <token-id> WRITE

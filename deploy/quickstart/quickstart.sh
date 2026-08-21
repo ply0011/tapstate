@@ -36,7 +36,7 @@ set -eu
 # nothing and install.sh refuses, which would strand the quickstart at the CLI step on a clean machine.
 # Pin it here instead, the same way the demo connector jars are pinned to a published tag. This must
 # match the version in pom.xml; quickstart-smoke.sh fails the build when the two drift apart.
-CLI_VERSION="0.2.0"
+CLI_VERSION="0.2.1"
 
 die() {
     printf 'quickstart: %s\n' "$1" >&2
@@ -52,6 +52,17 @@ fetch() {
     else
         die "neither curl nor wget is available to download $1."
     fi
+}
+
+# One collection's row count in the target, as a plain integer. A read that fails, or answers anything
+# that is not a number, counts as zero: this is polled while the stack is still settling, and a
+# half-started mongosh has to read as "not there yet" rather than abort the run.
+count_target() {   # $1 = collection name
+    _c="$(docker compose exec -T mongo mongosh --quiet \
+        'mongodb://mongo:27017/views?directConnection=true' \
+        --eval "db.$1.countDocuments()" 2>/dev/null | tr -d '[:space:]')"
+    case "$_c" in ''|*[!0-9]*) _c=0 ;; esac
+    printf '%s' "$_c"
 }
 
 # Generate the demo workspace: a source, a target, and the pipeline joining them, ready to apply. The
@@ -72,6 +83,20 @@ config: { host: mysql, port: 3306, database: appdb, username: root, password: se
 mode: cdc
 tables: [ orders ]
 YAML
+    # The second engine's source. Two settings are spelled differently from the MySQL source above, and
+    # both are this connector's own spelling rather than a choice: the account is `user` where MySQL says
+    # `username`, and a table is addressed by schema as well as by database. `mode: cdc` is what makes a
+    # row inserted after the stack is up cross at all - a snapshot-only source would carry the seeded
+    # rows and then nothing, which reads from outside as a demo that works.
+    cat > work/source/db_shipments.tap.yml <<'YAML'
+version: tapstate/v1
+kind: source
+id: db_shipments
+connector: postgres
+config: { host: postgres, port: 5432, database: appdb, schema: public, user: postgres, password: secret }
+mode: cdc
+tables: [ shipments ]
+YAML
     cat > work/pipeline/sync_orders.tap.yml <<'YAML'
 version: tapstate/v1
 kind: pipeline
@@ -89,6 +114,30 @@ view:
   id: order_state
   from: shape_orders
   primary_key: id
+YAML
+    # The second engine's half, into the same target: two engines, one store. Assembling the two
+    # into a single object is a separate thing and is not this - here they simply both arrive, which is
+    # what makes "insert a row in PostgreSQL and watch it appear" something a reader can actually do.
+    #
+    # The map names only `carrier` and `status`, both text columns. Numeric columns have no CEL overload
+    # in this preview, so `id` and `order_id` are passed through untouched rather than named - the same
+    # rule the orders pipeline follows for its decimal `amount`.
+    cat > work/pipeline/sync_shipments.tap.yml <<'YAML'
+version: tapstate/v1
+kind: pipeline
+id: sync_shipments
+source: db_shipments
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: shape_shipments
+    from: [ shipments ]
+    type: map
+    fields:
+      route: "=after.carrier + ' -> ' + after.status"
+serve:
+  from: shape_shipments
+  sync:
+    - source: views
 YAML
 }
 
@@ -122,6 +171,14 @@ directory). A change reaches the target in about a second, so each read waits fo
   docker compose exec mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
   until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
   echo "row 6 is gone from MongoDB, too"
+
+The second engine, the same way. This is the one worth trying if you only try one: a different
+database, reached by a different change mechanism, arriving in the same target collection.
+
+  # insert a shipment in PostgreSQL, then wait for it to appear in the target
+  docker compose exec postgres psql -U postgres -d appdb -c "INSERT INTO shipments VALUES (7,4,'ups','pending');"
+  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.shipments.countDocuments({id:7})?0:1)'; do sleep 1; done
+  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.shipments.find({id:7}).pretty()'
 
 Reach the store from your own machine (optional -- the reads above go through the container):
   The store's port is not published, so nothing on your host can see it by default. To point a GUI or
@@ -185,9 +242,15 @@ main() {
     # verified asset nor overwrites an edit the user made to it. The seed dir is created empty on purpose:
     # a registered jar's bytes live in the store, and the demo registers over the CLI upload path, so the
     # seed stays the documented empty convenience rather than the route registration depends on.
-    mkdir -p mysql-init connectors
-    [ -f ./docker-compose.yml ]           || fetch "${qbase}/deploy/quickstart/docker-compose.yml" ./docker-compose.yml
-    [ -f ./mysql-init/01-orders.sql ]     || fetch "${qbase}/deploy/quickstart/mysql-init/01-orders.sql" ./mysql-init/01-orders.sql
+    #
+    # Both seed directories are fetched, not just the one the demo pipeline reads. The compose file
+    # mounts each of them, and a missing mount source is not an error Docker reports - it creates an
+    # empty directory and starts a database with no demo data in it, which then fails much later as a
+    # pipeline that reads nothing.
+    mkdir -p mysql-init postgres-init connectors
+    [ -f ./docker-compose.yml ]              || fetch "${qbase}/deploy/quickstart/docker-compose.yml" ./docker-compose.yml
+    [ -f ./mysql-init/01-orders.sql ]        || fetch "${qbase}/deploy/quickstart/mysql-init/01-orders.sql" ./mysql-init/01-orders.sql
+    [ -f ./postgres-init/01-shipments.sql ]  || fetch "${qbase}/deploy/quickstart/postgres-init/01-shipments.sql" ./postgres-init/01-shipments.sql
 
     # Install the CLI in place as ./tapstate, reusing install.sh wholesale (download, checksum, atomic
     # place). TAPSTATE_INSTALL_DIR here is the seam that keeps it out of PATH: `rm -rf` of this directory
@@ -204,11 +267,17 @@ main() {
         esac
     fi
 
-    # The demo connector jars. These two are what this release registers, and they are fetched so the
+    # The demo connector jars. These three are what this release registers, and they are fetched so the
     # demo runs without the user choosing. They sit outside connectors/ so the seed dir stays empty.
+    #
+    # The postgres one is fetched for the same reason its seed is: the compose file has run a postgres
+    # service with a seeded shipments table since the second engine was added, and a demo that fetches
+    # only two jars can never read it. The half that is missing then is precisely the interesting one -
+    # a row a user types into the second engine after the stack is up.
     cbase="${TAPSTATE_CONNECTORS_URL:-${TAPSTATE_BASE_URL:-https://github.com/tapstate/tapstate/releases}/download/connectors-preview}"
-    [ -f ./mysql-connector.jar ]   || fetch "${cbase}/mysql-connector.jar" ./mysql-connector.jar
-    [ -f ./mongodb-connector.jar ] || fetch "${cbase}/mongodb-connector.jar" ./mongodb-connector.jar
+    [ -f ./mysql-connector.jar ]    || fetch "${cbase}/mysql-connector.jar" ./mysql-connector.jar
+    [ -f ./mongodb-connector.jar ]  || fetch "${cbase}/mongodb-connector.jar" ./mongodb-connector.jar
+    [ -f ./postgres-connector.jar ] || fetch "${cbase}/postgres-connector.jar" ./postgres-connector.jar
 
     # A random admin password replaces the shipped admin/admin default so a stack left running is not
     # trivially reachable. It is written only to .env (readable by this user alone) and announced once
@@ -281,11 +350,12 @@ main() {
     # next line) so it is never a process argument or a shell-history entry. Workspace paths resolve
     # against work/, so the jars beside it are ../<jar>.
     #
-    # The source is applied on its own first, then discovered, then everything is applied. The pipeline
-    # maps a row field, and an expression that reads row fields is refused until the source it reads has
-    # a discovered schema -- while a discovery, in turn, needs the source to exist on the server. One
-    # apply for both therefore cannot succeed in either order: the batch is refused whole, which leaves
-    # the source unapplied and the discovery with nothing to look at.
+    # Each capture source is applied on its own first, then discovered, then everything is applied. Both
+    # pipelines map a row field, and an expression that reads row fields is refused until the source it
+    # reads has a discovered schema -- while a discovery, in turn, needs the source to exist on the
+    # server. One apply for all of it therefore cannot succeed in either order: the batch is refused
+    # whole, which leaves the sources unapplied and the discoveries with nothing to look at. The second
+    # engine is under the same rule as the first, not exempt from it -- its pipeline maps a row field too.
     #
     # Applying the source twice is free; the second apply reports it unchanged.
     #
@@ -295,7 +365,7 @@ main() {
     # the one failure that cascades -- every verb after it reports cli.not-authenticated, so the real
     # cause ends up at the top of a screen of consequences.
     admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
-    repl_out="$(printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\napply source/db_src.tap.yml\ndiscover-schema db_src\napply\nstart sync_orders\nexit\n' "$admin_pw" \
+    repl_out="$(printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\nregister ../postgres-connector.jar\napply source/db_src.tap.yml\napply source/db_shipments.tap.yml\ndiscover-schema db_src\ndiscover-schema db_shipments\napply\nstart sync_orders\nstart sync_shipments\nexit\n' "$admin_pw" \
         | ./tapstate -w work 2>&1)"
     printf '%s\n' "$repl_out"
     case "$repl_out" in
@@ -318,14 +388,17 @@ main() {
     # not an "it should have worked". A fresh snapshot of the seeded rows is quick, but the read still
     # retries so a slow first run is not misreported as an empty target.
     echo 'quickstart: waiting for the snapshot to reach the target'
-    seeded=5    # rows the demo seed puts in MySQL; the target is complete once it holds them all
-    rows=0; i=0
+    seeded_orders=5      # rows the demo seed puts in MySQL
+    seeded_shipments=6   # rows the demo seed puts in PostgreSQL
+    # Both halves are waited on, and both are named if the wait runs out. A demo wired to only one of
+    # its two engines fills that engine's collection and leaves the other empty, so a check on a single
+    # count reports it as success - and the half left out would be the second engine, which is the whole
+    # reason there is a second one.
+    orders=0; shipments=0; i=0
     while [ "$i" -lt 30 ]; do
-        rows="$(docker compose exec -T mongo mongosh --quiet \
-            'mongodb://mongo:27017/views?directConnection=true' \
-            --eval 'db.order_state.countDocuments()' 2>/dev/null | tr -d '[:space:]')"
-        case "$rows" in ''|*[!0-9]*) rows=0 ;; esac
-        [ "$rows" -ge "$seeded" ] && break
+        orders="$(count_target order_state)"
+        shipments="$(count_target shipments)"
+        [ "$orders" -ge "$seeded_orders" ] && [ "$shipments" -ge "$seeded_shipments" ] && break
         i=$((i + 1)); sleep 2
     done
 
@@ -334,9 +407,10 @@ main() {
     # so it exits 0 whether the verbs took or errored, and set -e sees nothing wrong. This count is the
     # only evidence the script has that a pipeline is moving data. The stack is left standing rather
     # than torn down -- the server log is the next thing to read, and a teardown would take it along.
-    [ "$rows" -ge "$seeded" ] \
-        || die "the snapshot did not reach the target ($rows of $seeded rows); inspect it with: docker compose logs server"
-    printf 'quickstart: the view now holds %s rows (MySQL orders -> MongoDB views.order_state)\n' "$rows"
+    { [ "$orders" -ge "$seeded_orders" ] && [ "$shipments" -ge "$seeded_shipments" ]; } \
+        || die "the snapshot did not reach the target (orders $orders of $seeded_orders, shipments $shipments of $seeded_shipments); inspect it with: docker compose logs server"
+    printf 'quickstart: the target now holds %s orders from MySQL and %s shipments from PostgreSQL\n' \
+        "$orders" "$shipments"
 
     print_next_steps
 }

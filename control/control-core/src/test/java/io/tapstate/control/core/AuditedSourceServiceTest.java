@@ -103,7 +103,7 @@ class AuditedSourceServiceTest {
     }
 
     private AuditedSourceService service(ArtifactStore store, AuditStore auditStore) {
-        SourceService sourceService = new SourceService(catalog, store, representation);
+        SourceService sourceService = new SourceService(catalog, store, representation, DataBrowserFollows.NONE);
         return new AuditedSourceService(sourceService, new AuditGate(auditStore, CLOCK));
     }
 

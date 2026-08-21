@@ -91,9 +91,9 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/rocketmq-connector/src/main/resources/spec_rocketmq.json",
-    "specContentHash": "12147cd47bab28b2",
+    "specContentHash": "f92cca761a2a11ee",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {

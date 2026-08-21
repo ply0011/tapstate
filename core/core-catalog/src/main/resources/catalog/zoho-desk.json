@@ -138,7 +138,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/zoho-desk-connector/src/main/resources/spec.json",
     "specContentHash": "43d2f4245cf9efcb",
     "pdkApiVersion": null,

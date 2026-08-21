@@ -131,7 +131,7 @@ curl -sSL https://install.tapstate.dev/cli -o install.sh && less install.sh && s
 # Or skip the installer: download a release asset and check it yourself.
 # Assets are tapstate-<version>-<os>-<arch>.tar.gz, each next to its .sha256
 # (and all of them listed in the release's checksums.txt):
-v=0.2.0 p=darwin-arm64   # your version, and your platform: darwin|linux, arm64|x64
+v=0.2.1 p=darwin-arm64   # your version, and your platform: darwin|linux, arm64|x64
 curl -sSLO "https://github.com/tapstate/tapstate/releases/download/v$v/tapstate-$v-$p.tar.gz"
 curl -sSLO "https://github.com/tapstate/tapstate/releases/download/v$v/tapstate-$v-$p.tar.gz.sha256"
 shasum -a 256 -c "tapstate-$v-$p.tar.gz.sha256"   # sha256sum -c on Linux
@@ -248,10 +248,10 @@ so install the complete bundle when exposing the command globally:
 ```sh
 # Build the native CLI and MCP Boot JAR, then assemble bin/ + libexec/.
 mvn -Pnative -pl cli,control/mcp-server,distribution/cli-bundle -am -DskipTests package
-tar -xzf distribution/cli-bundle/target/cli-bundle-0.2.0-native.tar.gz
-mkdir -p "$HOME/.tapstate/versions/0.2.0" "$HOME/.tapstate/bin"
-mv tapstate-cli-0.2.0/* "$HOME/.tapstate/versions/0.2.0/"
-ln -s "$HOME/.tapstate/versions/0.2.0/bin/tapstate" "$HOME/.tapstate/bin/tapstate"
+tar -xzf distribution/cli-bundle/target/cli-bundle-0.2.1-native.tar.gz
+mkdir -p "$HOME/.tapstate/versions/0.2.1" "$HOME/.tapstate/bin"
+mv tapstate-cli-0.2.1/* "$HOME/.tapstate/versions/0.2.1/"
+ln -s "$HOME/.tapstate/versions/0.2.1/bin/tapstate" "$HOME/.tapstate/bin/tapstate"
 export PATH="$HOME/.tapstate/bin:$PATH"
 ```
 
@@ -265,7 +265,7 @@ Verify:
 
 ```console
 $ tapstate --version
-tapstate 0.2.0
+tapstate 0.2.1
 ```
 
 ### Quick start (offline CLI)

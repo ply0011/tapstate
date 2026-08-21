@@ -1,0 +1,47 @@
+# One business object assembled out of two different database engines.
+#
+# The order lives in MySQL, its shipments live in PostgreSQL, and the document that reaches the target
+# carries the shipments inside the order. This is the case the whole cross-source claim is for, and it is
+# the one a reader is most likely to think a view or a join could do instead - it could not. There is no
+# join across two engines, and neither database can see the other's table.
+#
+# The child counts are deliberately uneven: two, one, three. A document count cannot discriminate here -
+# three orders arrive whether or not their shipments did, so an implementation that honoured only the
+# first stream would satisfy a count assertion perfectly. Asserting the length of each order's array is
+# what makes the second engine's contribution visible, and asserting three DIFFERENT lengths is what
+# stops a constant from passing.
+#
+# This is the first checked-in example to assert doc.size at all; until now only a parser unit test
+# exercised it.
+#
+# Runs only where real connector jars are available.
+name: a-child-collection-arrives-from-another-engine
+setup:
+  databases:
+    orders: { kind: mysql }
+    shipments: { kind: postgres }
+    tgt: { kind: mongo }
+  connectors: [mysql, postgres, mongodb]
+  apply: [src_orders.tap.yml, src_shipments.tap.yml, tgt_mongo.tap.yml, pipeline.tap.yml]
+  discover: [src_orders, src_shipments]
+pipeline: pipeline.tap.yml
+seed:
+  src_orders.orders:
+    values:
+      - { id: 1, customer: alice }
+      - { id: 2, customer: bob }
+      - { id: 3, customer: carol }
+  src_shipments.shipments:
+    values:
+      - { id: 1, order_id: 1, carrier: dhl }
+      - { id: 2, order_id: 1, carrier: ups }
+      - { id: 3, order_id: 2, carrier: fedex }
+      - { id: 4, order_id: 3, carrier: dhl }
+      - { id: 5, order_id: 3, carrier: ups }
+      - { id: 6, order_id: 3, carrier: fedex }
+steps:
+  - start
+  - await: { count: { tgt_mongo.orders: 3 } }
+  - await: { doc: { tgt_mongo.orders: { where: { id: 1 }, size: { shipments: 2 } } } }
+  - await: { doc: { tgt_mongo.orders: { where: { id: 2 }, size: { shipments: 1 } } } }
+  - await: { doc: { tgt_mongo.orders: { where: { id: 3 }, size: { shipments: 3 } } } }

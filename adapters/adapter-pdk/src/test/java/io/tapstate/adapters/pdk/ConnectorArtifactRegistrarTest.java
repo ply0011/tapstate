@@ -175,10 +175,48 @@ class ConnectorArtifactRegistrarTest {
     }
 
     @Test
-    void theDefaultAcceptedSetIsExactlyTheTwoOfficialConnectors() {
+    void theDefaultAcceptedSetIsExactlyTheOfficialConnectors() {
         // The pin. Widening is a deployment's explicit act; the default must not drift, because every
         // shipped artifact leaves it alone and a silent addition here is a support promise nobody made.
-        assertThat(ConnectorArtifactRegistrar.OFFICIAL_CONNECTOR_IDS).containsExactly("mysql", "mongodb");
+        //
+        // Written out in full rather than counted or matched by prefix. Three of these are the engines
+        // the release verifies; the other twelve are managed variants of those three, and a variant is
+        // in only because someone read it and said so - there is no family field to derive membership
+        // from, and a prefix rule would admit every future product whose name happens to start the same
+        // way. Order is the order a refusal message names them in.
+        assertThat(ConnectorArtifactRegistrar.OFFICIAL_CONNECTOR_IDS).containsExactly(
+                "mysql", "aliyun-rds-mysql", "aws-rds-mysql", "polar-db-mysql", "mysql-pxc",
+                "postgres", "aliyun-rds-postgres", "aliyun-adb-postgres", "polar-db-postgres",
+                "tencent-db-postgres",
+                "mongodb", "mongodb-atlas", "mongodb3", "aliyun-db-mongodb", "tencent-db-mongodb");
+    }
+
+    @Test
+    void refusesEachIndependentDatabaseProductByItsOwnId(@TempDir Path dir) {
+        // The boundary the widening is meant to keep: a managed variant of a supported engine is in, an
+        // independent product that merely speaks a similar protocol is out - its change-capture is its
+        // own mechanism and nothing here has run against it.
+        //
+        // Every id is asserted separately, not one representative. A whitelist implemented as a prefix
+        // or substring test passes a single-id version of this while admitting the rest: "tidb" would
+        // be refused while "aliyun-adb-mysql" sailed through on the "mysql" it ends with.
+        for (String independent : List.of("mariadb", "tidb", "oceanbase", "open-gauss", "highgo",
+                "vastbase", "greenplum", "huawei-gauss-db")) {
+            Path jar = Synthetic.seedableConnector(dir, independent);
+            InMemoryConnectorRegistry registry = new InMemoryConnectorRegistry();
+            ConnectorArtifactRegistrar registrar = new ConnectorArtifactRegistrar(
+                    registry, new ConnectorIntrospector(),
+                    id -> new ConnectorCapabilities(Set.of("batch_read_function")),
+                    new InMemoryConnectorCatalogStore(), new InMemoryConnectorSpecStore());
+
+            assertThatThrownBy(() -> registrar.register(jar, RegistrationSource.REGISTER))
+                    .as("registering %s must be refused by its own id", independent)
+                    .isInstanceOfSatisfying(TapstateException.class, e -> {
+                        assertThat(e.code()).isEqualTo(ConnectorError.NOT_OFFICIAL);
+                        assertThat(e.args()).containsEntry("connector", independent);
+                    });
+            assertThat(registry.list()).isEmpty();
+        }
     }
 
     @Test

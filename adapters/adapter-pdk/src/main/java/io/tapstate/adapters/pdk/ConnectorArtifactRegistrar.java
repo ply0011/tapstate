@@ -51,11 +51,35 @@ public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
     /**
      * The connectors this release officially supports, in the order a refusal message names them. A
      * list rather than a set so that order — and therefore the message — is fixed; the membership test
-     * over two entries costs nothing. This is the default accepted set and the only one any shipped
-     * artifact uses; a test pins its exact contents, because a silent addition here would be a support
-     * promise nobody made.
+     * over this many entries costs nothing. This is the default accepted set and the only one any
+     * shipped artifact uses; a test pins its exact contents, because a silent addition here would be a
+     * support promise nobody made.
+     *
+     * <p>Three engines, each with its managed variants. The variants are enumerated one by one rather
+     * than matched by prefix, because nothing in a connector's identity says which engine it belongs
+     * to: membership is a decision somebody made about a named connector, and a prefix rule would
+     * silently admit every future product whose id happens to begin the same way. Being listed here
+     * means the register path accepts the connector, which is not the same as the release having
+     * verified it — accepting a variant rests on it being the same engine underneath, and only the
+     * three engines themselves are exercised.
      */
-    static final List<String> OFFICIAL_CONNECTOR_IDS = List.of("mysql", "mongodb");
+    static final List<String> OFFICIAL_CONNECTOR_IDS = List.of(
+            "mysql", "aliyun-rds-mysql", "aws-rds-mysql", "polar-db-mysql", "mysql-pxc",
+            "postgres", "aliyun-rds-postgres", "aliyun-adb-postgres", "polar-db-postgres",
+            "tencent-db-postgres",
+            "mongodb", "mongodb-atlas", "mongodb3", "aliyun-db-mongodb", "tencent-db-mongodb");
+
+    /**
+     * The officially supported ids, readable from outside this package.
+     *
+     * <p>Exists so that a gate standing outside every module can assert what a shipped deployment
+     * accepts out of the box. That claim spans two things this package cannot see together — this set,
+     * and the fact that nothing a release carries widens it — so the assertion cannot live here, and a
+     * package-private constant would leave it unmakeable.
+     */
+    public static List<String> officialConnectorIds() {
+        return OFFICIAL_CONNECTOR_IDS;
+    }
 
     private final ConnectorRegistry registry;
     private final ConnectorIntrospector introspector;

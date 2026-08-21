@@ -9,8 +9,11 @@ package io.tapstate.spi.store;
  * is FAILED — not a thrown error; a warning check never fails the outcome. Only a failure that prevents
  * the test from running at all (the connector cannot be loaded / level-gated, or throws out of its own
  * test) surfaces as a coded exception. The port carries no connector-framework types.
+ *
+ * <p>An {@link ExecutionPort}: it drives a connector, so it runs on the runtime side and control
+ * reaches it only through the whitelisted probe seam.
  */
-public interface ConnectionTester {
+public interface ConnectionTester extends ExecutionPort {
 
     /** Tests {@code config} by driving its connector and returns the normalized result. */
     ConnectionTestResult test(ConnectionConfig config);

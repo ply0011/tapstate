@@ -1,9 +1,11 @@
 package io.tapstate.archtests;
 
+import io.tapstate.adapters.pdk.ConnectorArtifactRegistrar;
 import io.tapstate.app.ConnectorPluginProperties;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -75,8 +77,13 @@ class ConnectorAcceptanceGatesTest {
             "deploy/quickstart/quickstart.sh",
             "docs/quickstart-online.md");
 
-    /** Directories that are neither shipped nor written by hand. */
-    private static final Set<String> PRUNED = Set.of(".git", "target", "node_modules");
+    /**
+     * Directories that are neither shipped nor written by hand: version-control internals, build output,
+     * fetched dependencies, and the tool directory a session's own worktree is created under. The last
+     * one holds a whole second copy of this repository, so walking it turns every shipped file into a
+     * second reading of itself at a path nothing else accounts for.
+     */
+    private static final Set<String> PRUNED = Set.of(".git", "target", "node_modules", ".claude");
 
     @Test
     @DisplayName("the accepted connector set ships closed - nothing a release carries widens it")
@@ -146,6 +153,34 @@ class ConnectorAcceptanceGatesTest {
     }
 
     @Test
+    @DisplayName("a second copy of the repository under a tool directory is not scanned")
+    void aNestedCheckoutIsNotScanned(@TempDir Path root) throws IOException {
+        // Working each session in its own worktree is this repository's own rule, and the tool that makes
+        // them puts every one under .claude/worktrees - a whole second copy of the repository, inside the
+        // tree this scan walks. Every file in that copy reads as shipped, the declaration among them, and
+        // the declaration's copy is not at the path the skip compares against. So the gate accuses it: the
+        // most alarming thing this gate can say, said about a working tree that is doing exactly what the
+        // project asks for, on a machine where nothing is wrong. CI has no worktrees, so it stays green
+        // there and the reading lands only on whoever is following the rule.
+        //
+        // The real file is written beside it rather than left out, because "nothing was flagged" and
+        // "nothing was walked" are the same green - the pruning has to be shown to skip one thing while
+        // still reaching another.
+        Path nested = root.resolve(".claude/worktrees/a-session/app/src/main/java/io/tapstate/app");
+        Files.createDirectories(nested);
+        Files.writeString(nested.resolve("ConnectorPluginProperties.java"), "private List<String> alsoAcceptIds;");
+        Path shipped = root.resolve("app/src/main/java/io/tapstate/app");
+        Files.createDirectories(shipped);
+        Files.writeString(shipped.resolve("Real.java"), "// a file the walk must still reach");
+
+        assertThat(shippedFiles(root).stream().map(file -> relative(root, file)).toList())
+                .as("a copy of the repository under a tool-managed directory is not something a release "
+                        + "carries, so walking into it can only produce accusations about files that are "
+                        + "already accounted for at their real paths")
+                .containsExactly("app/src/main/java/io/tapstate/app/Real.java");
+    }
+
+    @Test
     @DisplayName("the file allowed to name the setting still declares it")
     void theOneFileAllowedToNameTheSettingStillDoes() {
         // A skipped file that no longer declares the setting would sit here forever, quietly excusing
@@ -159,6 +194,45 @@ class ConnectorAcceptanceGatesTest {
                 .as("the skipped file is skipped because it declares the setting - if it no longer does, "
                         + "the exception is stale and something else is being let through under it")
                 .contains("alsoAcceptIds");
+    }
+
+    /**
+     * The three engines the release actually exercises. Held separately from the full set so that this
+     * gate can state the layering it is guarding: everything else accepted is a managed variant of one
+     * of these, admitted on the strength of being the same engine underneath rather than on having been
+     * run.
+     */
+    private static final List<String> VERIFIED_ENGINES = List.of("mysql", "postgres", "mongodb");
+
+    /** Every id a shipped deployment accepts out of the box, in refusal-message order. */
+    private static final List<String> ACCEPTED_OUT_OF_THE_BOX = List.of(
+            "mysql", "aliyun-rds-mysql", "aws-rds-mysql", "polar-db-mysql", "mysql-pxc",
+            "postgres", "aliyun-rds-postgres", "aliyun-adb-postgres", "polar-db-postgres",
+            "tencent-db-postgres",
+            "mongodb", "mongodb-atlas", "mongodb3", "aliyun-db-mongodb", "tencent-db-mongodb");
+
+    @Test
+    @DisplayName("what a shipped deployment accepts out of the box is exactly this set")
+    void whatAShippedDeploymentAcceptsIsExactlyThisSet() {
+        // Two facts make the claim, and neither is enough alone: this is the set the register path is
+        // built with, and nothing a release carries adds to it (the two tests above). Stating it here,
+        // outside every module, is the only place both are in view - the module that owns the list
+        // cannot see the deployment assets, and the assets are not compiled by anything.
+        //
+        // Written out a second time on purpose. The module test pins the field against the field; this
+        // pins it against a list maintained apart from it, so widening the set means saying so twice, in
+        // two modules, which is the smallest amount of friction that still makes a support promise
+        // deliberate. A test that read the same constant it asserts would agree with any value it held.
+        assertThat(ConnectorArtifactRegistrar.officialConnectorIds())
+                .as("adding an id here is a promise that the product accepts that connector - it is made "
+                        + "in two places so that it cannot be made absent-mindedly in one")
+                .containsExactlyElementsOf(ACCEPTED_OUT_OF_THE_BOX);
+
+        // The layering the set encodes: three engines are verified, the rest ride on being the same
+        // engine. Asserting the count rather than listing the variants again keeps this from being a
+        // third copy, while still failing if a fourth engine is slipped in as though it were a variant.
+        assertThat(ACCEPTED_OUT_OF_THE_BOX).containsAll(VERIFIED_ENGINES);
+        assertThat(ACCEPTED_OUT_OF_THE_BOX).hasSize(VERIFIED_ENGINES.size() * 5);
     }
 
     @Test
@@ -195,9 +269,18 @@ class ConnectorAcceptanceGatesTest {
 
     /** Everything a release carries or a user reads: shipped sources, deployment assets, documentation. */
     private static List<Path> shippedFiles() {
+        return shippedFiles(REPOSITORY);
+    }
+
+    /**
+     * The same walk over a named root. The root is a parameter only so that what the walk refuses to
+     * enter can be witnessed over a tree a test builds - pruning is the half of this scan that fails
+     * silently, by widening rather than by narrowing.
+     */
+    private static List<Path> shippedFiles(Path root) {
         List<Path> files = new ArrayList<>();
         try {
-            Files.walkFileTree(REPOSITORY, new SimpleFileVisitor<>() {
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
                     return PRUNED.contains(directory.getFileName().toString())
@@ -207,14 +290,14 @@ class ConnectorAcceptanceGatesTest {
 
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
-                    if (isShipped(relative(file))) {
+                    if (isShipped(relative(root, file))) {
                         files.add(file);
                     }
                     return FileVisitResult.CONTINUE;
                 }
             });
         } catch (IOException e) {
-            throw new UncheckedIOException("walking the repository at " + REPOSITORY, e);
+            throw new UncheckedIOException("walking the repository at " + root, e);
         }
         return files;
     }
@@ -227,7 +310,11 @@ class ConnectorAcceptanceGatesTest {
     }
 
     private static String relative(Path file) {
-        return REPOSITORY.relativize(file).toString().replace('\\', '/');
+        return relative(REPOSITORY, file);
+    }
+
+    private static String relative(Path root, Path file) {
+        return root.relativize(file).toString().replace('\\', '/');
     }
 
     /**

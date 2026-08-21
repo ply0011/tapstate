@@ -1,7 +1,7 @@
 # Connector catalog ingest report
 
-Connector repo SHA: `b4151f21`
-Ingested connectors: 77
+Connector repo SHA: `d889798e`
+Ingested connectors: 78
 
 ## Unclassified — no resolvable mode (need tapstate.modes)
 - ai-chat
@@ -9,19 +9,17 @@ Ingested connectors: 77
 - bigquery
 - databend
 - elasticsearch
-- hudi
 - lark-im
 - lark-task
+- risingwave
 - tablestore
 - vika
 
 ## Not derived — no built jar or did not classload (excluded from refresh)
 - hazelcast
-- kafka_avro
-- postgres
 
 ## MQ suspects — derived cdc, undeclared (need tapstate.modes)
-(none)
+- kafka_avro
 
 ## Sink semantics defaulted — no DML signal
 - activemq
@@ -31,7 +29,9 @@ Ingested connectors: 77
 - doris
 - dummy
 - file-stream
+- hbase
 - kafka
+- kafka_avro
 - kafka_enhanced
 - rabbitmq
 - redis

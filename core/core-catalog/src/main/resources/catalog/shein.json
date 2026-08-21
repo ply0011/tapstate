@@ -40,9 +40,9 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/shein-connector/src/main/resources/spec.json",
-    "specContentHash": "047a88eca2d0c3b3",
+    "specContentHash": "cc04f4e6f3f420a6",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {

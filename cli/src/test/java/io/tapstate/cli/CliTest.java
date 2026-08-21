@@ -94,6 +94,9 @@ class CliTest {
         TreeSet<String> registeredOffline = new TreeSet<>(Cli.newCommandLine().getSubcommands().keySet());
         registeredOffline.removeAll(Cli.CONNECTED_VERBS);
         registeredOffline.removeAll(Cli.UNIMPLEMENTED_COMPOSITE_VERBS);
+        // the live views project no operation, so they are not in the connected list, but they are the
+        // opposite of offline: each is a loop over reads that only a server can answer
+        registeredOffline.removeAll(Cli.LIVE_VIEW_VERBS);
         // the meta commands are about the CLI, not about a resource: they project no operation and so
         // belong to no verb whitelist. Subtracting them by name keeps this guard's real job -- catching
         // a *product* verb registered without being declared -- rather than widening it to anything new
@@ -553,6 +556,7 @@ class CliTest {
         // does — this pins the entries to the registered names, in both directions
         TreeSet<String> registered = new TreeSet<>(Cli.CONNECTED_VERBS);
         registered.addAll(Cli.UNIMPLEMENTED_COMPOSITE_VERBS);
+        registered.addAll(Cli.LIVE_VIEW_VERBS);
         assertThat(new TreeSet<>(Cli.VERB_HELP.keySet())).isEqualTo(registered);
     }
 
@@ -716,7 +720,7 @@ class CliTest {
     void versionFlagPrintsTheVersion() {
         Run r = run("--version");
         assertThat(r.code()).isZero();
-        assertThat(r.out()).contains("tapstate 0.2.0");
+        assertThat(r.out()).contains("tapstate 0.2.1");
     }
 
     @Test

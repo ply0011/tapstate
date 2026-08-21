@@ -212,7 +212,9 @@ class NewCmdTest {
         // exercising the wizard -> shared output contract wiring without a terminal
         CommandLine cl = Cli.newCommandLine();
         NewCmd cmd = cl.getSubcommands().get("new").getCommand();
-        cmd.prompter = new ScriptedPrompter("postgres", "src_pg");
+        // elasticsearch resolves no source mode, so the wizard skips the mode question and two
+        // scripted answers are the whole flow. SourceWizardTest guards that premise directly.
+        cmd.prompter = new ScriptedPrompter("elasticsearch", "src_es");
         StringWriter out = new StringWriter();
         StringWriter err = new StringWriter();
         cl.setOut(new PrintWriter(out));
@@ -221,12 +223,12 @@ class NewCmdTest {
         int code = cl.execute("new", "--out", dir.toString());
 
         assertThat(code).isZero();
-        assertThat(Files.readString(dir.resolve("src_pg.tap.yml"))).isEqualTo(
+        assertThat(Files.readString(dir.resolve("src_es.tap.yml"))).isEqualTo(
                 """
                 version: tapstate/v1
                 kind: source
-                id: src_pg
-                connector: postgres
+                id: src_es
+                connector: elasticsearch
                 """);
     }
 

@@ -69,13 +69,60 @@ services:
       - tapstate-quickstart-mysql:/var/lib/mysql
       - ./mysql-init:/docker-entrypoint-initdb.d:ro
 
+  postgres:
+    # The demo's second source database, on a different engine from the first. That is the whole point
+    # of it being here: the demo assembles one object out of two independent capture streams, and two
+    # tables inside one database would not need assembling - a view or a join would do it. Two engines
+    # have neither.
+    #
+    # A standing service like mysql above, not a dependency of the server.
+    image: postgres:16
+    # Logical decoding is what change-data-capture reads here, and unlike the mysql image's defaults
+    # the postgres defaults do NOT serve it: wal_level ships as 'replica', which produces a WAL that
+    # physical replication can follow and logical decoding cannot. Without this the connector's snapshot
+    # half works and its stream half fails at slot creation, which is the confusing half-working state
+    # this line exists to avoid.
+    #
+    # The slot and publication themselves are deliberately not created here. The connector creates its
+    # own slot when the stream starts, and creating one up front would leave an unconsumed slot pinning
+    # WAL for as long as the demo sits idle - the standard way a demo postgres fills its disk.
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      # Headroom for the slot the connector creates, plus room to create a second one without an
+      # error that reads as a connector defect. The defaults are 10 each; these are small numbers
+      # either way, and being explicit documents that the demo expects replication to be used.
+      - "-c"
+      - "max_wal_senders=4"
+      - "-c"
+      - "max_replication_slots=4"
+    environment:
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: appdb
+    healthcheck:
+      # The database name is named explicitly: pg_isready defaults to the connecting user's name, so
+      # an unqualified check can pass against a server whose demo database is not there yet. The image
+      # also starts a short-lived internal server during first-boot initialization, which is why this
+      # asserts the real one by connecting over TCP rather than accepting any answer.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d appdb"]
+      interval: 3s
+      timeout: 10s
+      retries: 40
+      start_period: 30s
+    volumes:
+      # Same shape as mysql above: the seed runs on an empty data directory only, so a named volume
+      # means it seeds once and the demo's rows survive a restart.
+      - tapstate-quickstart-postgres:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+
   server:
     # A demo directory is not a checkout, so this stack pulls a published image and never builds: a
     # build: here would point its context at a repository that is not there. Working from the source
     # tree adds the build back through docker-compose.dev.yml, which only exists inside the repository.
     # The tag is pinned rather than floating, so a demo brought up months apart runs the same server
     # both times; the quickstart smoke fails the build if it drifts from the version being built.
-    image: ghcr.io/tapstate/tapstate:0.2.0
+    image: ghcr.io/tapstate/tapstate:0.2.1
     depends_on:
       mongo:
         condition: service_healthy
@@ -152,3 +199,4 @@ services:
 volumes:
   tapstate-quickstart-mongo:
   tapstate-quickstart-mysql:
+  tapstate-quickstart-postgres:

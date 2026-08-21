@@ -31,6 +31,7 @@ final class Synthetic {
                 + "import io.tapdata.entity.event.dml.TapInsertRecordEvent;"
                 + "import io.tapdata.entity.event.dml.TapUpdateRecordEvent;"
                 + "import io.tapdata.entity.event.dml.TapDeleteRecordEvent;"
+                + "import io.tapdata.entity.event.ddl.TapDDLUnknownEvent;"
                 + "import java.util.ArrayList;"
                 + "import java.util.LinkedHashMap;"
                 + "import java.util.List;"
@@ -61,6 +62,34 @@ final class Synthetic {
     /** A row map {@code {id: value}} as a Java expression string. */
     private static String row(String var, int id) {
         return "Map<String,Object> " + var + " = new LinkedHashMap<>(); " + var + ".put(\"id\", " + id + ");";
+    }
+
+    /**
+     * Streams an insert, then a schema change, then another insert. A source really does interleave the
+     * two, and the schema change is the one a view of rows has nowhere to put — so a follow driven by
+     * this connector is what tells "left out" apart from "passed along as nothing".
+     */
+    static Path ddlEmittingSource(Path dir) {
+        String register = ""
+                + "functions.supportStreamRead((context, tables, offset, size, consumer) -> {"
+                + "  consumer.streamReadStarted();"
+                + row("first", 1)
+                + "  List<TapEvent> one = new ArrayList<>();"
+                + "  one.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(first));"
+                + "  consumer.accept(one, null);"
+                + "  List<TapEvent> ddl = new ArrayList<>();"
+                + "  TapDDLUnknownEvent schemaChange = new TapDDLUnknownEvent();"
+                + "  schemaChange.setTableId(\"t1\"); schemaChange.setReferenceTime(2L);"
+                + "  ddl.add(schemaChange);"
+                + "  consumer.accept(ddl, null);"
+                + row("second", 2)
+                + "  List<TapEvent> two = new ArrayList<>();"
+                + "  two.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(3L).after(second));"
+                + "  consumer.accept(two, null);"
+                + "  consumer.streamReadEnded();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.DdlEmittingSource",
+                source("DdlEmittingSource", "", register));
     }
 
     /** Batch-reads two snapshot rows and streams an insert / update / delete; a full source connector. */
@@ -112,6 +141,34 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.TableAware", source("TableAware", "", register));
     }
 
+    /**
+     * A source whose streamRead reads what it was asked to watch by walking the context's table map
+     * rather than asking for one name at a time, emitting one row per entry carrying that entry's name
+     * and column count. A connector expands a partitioned table into its children this way, at the start
+     * of the stream and before any change is decoded. A table map that answers only lookup cannot be
+     * walked at all, so a drive through one fails outright rather than yielding fewer rows.
+     */
+    static Path tableMapIteratingStreamSource(Path dir) {
+        String register = ""
+                + "functions.supportStreamRead((context, tables, offset, size, consumer) -> {"
+                + "  consumer.streamReadStarted();"
+                + "  io.tapdata.entity.utils.cache.Iterator<io.tapdata.entity.utils.cache.Entry<TapTable>>"
+                + "      entries = context.getTableMap().iterator();"
+                + "  List<TapEvent> evs = new ArrayList<>();"
+                + "  while (entries.hasNext()) {"
+                + "    io.tapdata.entity.utils.cache.Entry<TapTable> entry = entries.next();"
+                + "    Map<String,Object> r = new LinkedHashMap<>();"
+                + "    r.put(\"name\", entry.getKey());"
+                + "    r.put(\"columns\", entry.getValue().getNameFieldMap().size());"
+                + "    evs.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(r));"
+                + "  }"
+                + "  consumer.accept(evs, null);"
+                + "  consumer.streamReadEnded();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.TableMapIteratingStream",
+                source("TableMapIteratingStream", "", register));
+    }
+
     /** A connector whose constructor throws — instantiation fails, a load failure. */
     static Path ctorThrowsSource(Path dir) {
         return SyntheticJar.compileToJar(dir, "synthetic.CtorThrows",
@@ -133,6 +190,41 @@ final class Synthetic {
                 + "  throw new RuntimeException(\"stream boom\");"
                 + "});";
         return SyntheticJar.compileToJar(dir, "synthetic.ThrowingStream", source("ThrowingStream", "", register));
+    }
+
+    /**
+     * Streams one insert whose row holds values no JSON writer knows, at three depths. A connector
+     * hands on whatever its driver produced, and a document store's own key arrives as a driver object
+     * rather than as a string or a number; {@code UUID} stands in for one here, because what matters is
+     * a value outside the map/list/string/number/boolean set and not which class it is.
+     *
+     * <p>The plain values beside them are the half that discriminates: a projection that renders every
+     * value as text would satisfy "the driver object became a string" while quietly turning a number
+     * into one.
+     */
+    static Path opaqueValueSource(Path dir) {
+        String opaque = "java.util.UUID.fromString(\"00000000-0000-0000-0000-00000000002a\")";
+        String register = ""
+                + "functions.supportStreamRead((context, tables, offset, size, consumer) -> {"
+                + "  consumer.streamReadStarted();"
+                + "  Map<String,Object> r = new LinkedHashMap<>();"
+                + "  r.put(\"id\", 7);"
+                + "  r.put(\"flag\", Boolean.TRUE);"
+                + "  r.put(\"name\", \"row-7\");"
+                + "  r.put(\"key\", " + opaque + ");"
+                + "  Map<String,Object> nested = new LinkedHashMap<>();"
+                + "  nested.put(\"ref\", " + opaque + ");"
+                + "  r.put(\"meta\", nested);"
+                + "  List<Object> refs = new ArrayList<>();"
+                + "  refs.add(" + opaque + ");"
+                + "  r.put(\"refs\", refs);"
+                + "  List<TapEvent> evs = new ArrayList<>();"
+                + "  evs.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(r));"
+                + "  consumer.accept(evs, null);"
+                + "  consumer.streamReadEnded();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.OpaqueValue",
+                source("OpaqueValue", "", register));
     }
 
     /** A connector whose batchRead emits a delete-shaped event — unprojectable as a snapshot row. */
@@ -606,6 +698,24 @@ final class Synthetic {
     }
 
     /**
+     * A registrable connector declaring whichever id the caller names — for driving the acceptance
+     * guard across a set of ids rather than one representative.
+     *
+     * <p>The entry class name is the id with everything that cannot appear in a Java identifier removed,
+     * so that ids carrying dashes still compile. That mangling is invisible to the guard, which reads
+     * the id from the spec and never from the class.
+     */
+    static Path seedableConnector(Path dir, String connectorId) {
+        String type = "Seed" + connectorId.replaceAll("[^A-Za-z0-9]", "");
+        String src = SELF_SCAN_IMPORTS
+                + "@TapConnectorClass(\"" + connectorId + "-spec.json\")"
+                + "public class " + type + " implements TapConnector {" + INERT_CONNECTOR_BODY + "}";
+        return SyntheticJar.compileToJar(dir, "synthetic." + type, src,
+                Map.of(connectorId + "-spec.json", "{\"properties\":{\"id\":\"" + connectorId + "\"}}"),
+                Map.of("PDK-API-Version", "1.3.5"));
+    }
+
+    /**
      * A registrable connector declaring an officially supported id, so it passes the runtime-register
      * guard. Used wherever a test drives the register path itself rather than the guard — post-guard
      * those paths only ever run for an official connector, so an unofficial fixture would exercise a
@@ -720,5 +830,197 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.VariantConnector", src,
                 Map.of("base-spec.json", "{\"id\":\"base\"}", "variant-spec.json", "{\"id\":\"variant\"}"),
                 Map.of("PDK-API-Version", "1.3.5"));
+    }
+
+    /** The shared scaffold for a data-browser connector: the three read-face functions the caller fills in. */
+    private static String readFace(String simpleName, String registerBody) {
+        return readFace(simpleName, registerBody,
+                "  public void init(TapConnectionContext c) {}"
+                        + "  public void stop(TapConnectionContext c) {}");
+    }
+
+    /**
+     * A data-browser connector that appends every {@code init} and {@code stop} it is driven through to
+     * the file named by the {@code synthetic.marker} system property. Counting these from the outside
+     * needs a channel that outlives one connector's isolated class loader — a static counter inside the
+     * connector is reset by every fresh load, which is exactly the thing under test — and a file read
+     * back by the test is that channel.
+     */
+    static Path lifecycleRecordingSource(Path dir) {
+        String register = "functions.supportGetTableNamesFunction((c, batchSize, consumer) -> {"
+                + "  List<String> names = new ArrayList<>(); names.add(\"orders\"); consumer.accept(names);"
+                + "});";
+        String lifecycle = ""
+                + "  public void init(TapConnectionContext c) { mark(\"init\"); }"
+                + "  public void stop(TapConnectionContext c) { mark(\"stop\"); }"
+                + "  private static void mark(String what) {"
+                + "    try {"
+                + "      java.nio.file.Files.writeString("
+                + "        java.nio.file.Path.of(System.getProperty(\"synthetic.marker\")), what + \"\\n\","
+                + "        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);"
+                + "    } catch (java.io.IOException e) { throw new RuntimeException(e); }"
+                + "  }";
+        return SyntheticJar.compileToJar(dir, "synthetic.LifecycleRecording",
+                readFace("LifecycleRecording", register, lifecycle));
+    }
+
+    private static String readFace(String simpleName, String registerBody, String lifecycleBody) {
+        return ""
+                + "package synthetic;"
+                + "import io.tapdata.pdk.apis.TapConnector;"
+                + "import io.tapdata.pdk.apis.functions.ConnectorFunctions;"
+                + "import io.tapdata.entity.codec.TapCodecsRegistry;"
+                + "import io.tapdata.pdk.apis.context.TapConnectionContext;"
+                + "import io.tapdata.pdk.apis.entity.ConnectionOptions;"
+                + "import io.tapdata.pdk.apis.entity.ExecuteResult;"
+                + "import io.tapdata.pdk.apis.entity.TestItem;"
+                + "import io.tapdata.pdk.apis.functions.connection.TableInfo;"
+                + "import io.tapdata.entity.schema.TapTable;"
+                + "import java.util.ArrayList;"
+                + "import java.util.LinkedHashMap;"
+                + "import java.util.List;"
+                + "import java.util.Map;"
+                + "import java.util.function.Consumer;"
+                + "public class " + simpleName + " implements TapConnector {"
+                + "  public void registerCapabilities(ConnectorFunctions functions, TapCodecsRegistry codecs) {"
+                + registerBody
+                + "  }"
+                + lifecycleBody
+                + "  public void discoverSchema(TapConnectionContext c, List<String> t, int n, Consumer<List<TapTable>> s) {}"
+                + "  public ConnectionOptions connectionTest(TapConnectionContext c, Consumer<TestItem> s) { return ConnectionOptions.create(); }"
+                + "  public int tableCount(TapConnectionContext c) { return 1; }"
+                + "}";
+    }
+
+    /**
+     * A data-browser connector registering all three read-face functions, each shaped after the real
+     * mongodb connector's own behaviour: table names arrive in more than one consumer batch, query
+     * results arrive in more than one {@code ExecuteResult}, and the query fills a missing
+     * {@code database} into the caller's own params map — so a caller that passes an immutable map
+     * fails here exactly as it would there. The query echoes what it was handed back as rows, so a
+     * test can assert on the request the drive assembled.
+     *
+     * <p>The {@code database} echo is captured <em>before</em> the connector fills its own in, and the
+     * fill stays unconditional. Both halves are load-bearing: reading the param after the fill would
+     * report the connector's value whatever the caller sent, and making the fill conditional would take
+     * the write away from the one test that proves the map is writable.
+     */
+    static Path readFaceSource(Path dir) {
+        String register = ""
+                + "functions.supportGetTableNamesFunction((c, batchSize, consumer) -> {"
+                + "  List<String> first = new ArrayList<>(); first.add(\"orders\"); consumer.accept(first);"
+                + "  List<String> second = new ArrayList<>(); second.add(\"shipments\"); consumer.accept(second);"
+                + "});"
+                + "functions.supportGetTableInfoFunction((c, table) ->"
+                + "  TableInfo.create().numOfRows(512L).storageSize(4096L).avgObjSize(8L));"
+                + "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  Map<String,Object> params = command.getParams();"
+                // Sentinels rather than null: the echo travels back as a row value, and a null one is
+                // indistinguishable from "no such echo" at the far end. Absent and present-but-null are
+                // kept apart because they are different mistakes -- the second one also defeats the fill
+                // below, so a caller that sends null is worse off than one that sends nothing.
+                + "  Object arrivedDatabase = params.get(\"database\") != null ? params.get(\"database\")"
+                + "    : (params.containsKey(\"database\") ? \"<sent-but-null>\" : \"<none-was-sent>\");"
+                + "  params.put(\"database\", \"filled-in-by-the-connector\");"
+                + "  Map<String,Object> first = new LinkedHashMap<>();"
+                + "  first.put(\"echoed\", \"command\"); first.put(\"value\", command.getCommand());"
+                + "  List<Map<String,Object>> batch1 = new ArrayList<>(); batch1.add(first);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch1));"
+                + "  Map<String,Object> second = new LinkedHashMap<>();"
+                + "  second.put(\"echoed\", \"collection\"); second.put(\"value\", params.get(\"collection\"));"
+                + "  List<Map<String,Object>> batch2 = new ArrayList<>(); batch2.add(second);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch2));"
+                + "  Map<String,Object> third = new LinkedHashMap<>();"
+                + "  third.put(\"echoed\", \"database-as-it-arrived\"); third.put(\"value\", arrivedDatabase);"
+                + "  List<Map<String,Object>> batch3 = new ArrayList<>(); batch3.add(third);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch3));"
+                // Same sentinel treatment as the database above, and for the same reason: a request that
+                // asks for no order must leave the key out entirely, because a connector reads a present
+                // sort and an absent one differently.
+                + "  Object arrivedSort = params.containsKey(\"sort\") ? params.get(\"sort\")"
+                + "    : \"<none-was-sent>\";"
+                + "  Map<String,Object> fourth = new LinkedHashMap<>();"
+                + "  fourth.put(\"echoed\", \"sort\"); fourth.put(\"value\", arrivedSort);"
+                + "  List<Map<String,Object>> batch4 = new ArrayList<>(); batch4.add(fourth);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch4));"
+                // The filter arrives already in this connector's own dialect: the seam above carries a
+                // neutral vocabulary, and what a test needs to see is what the translation produced.
+                + "  Map<String,Object> fifth = new LinkedHashMap<>();"
+                + "  fifth.put(\"echoed\", \"filter\"); fifth.put(\"value\", params.get(\"filter\"));"
+                + "  List<Map<String,Object>> batch5 = new ArrayList<>(); batch5.add(fifth);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch5));"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.ReadFace", readFace("ReadFace", register));
+    }
+
+    /**
+     * A data-browser connector holding {@code held} rows, whose query honours the limit it is given and
+     * whose {@code getTableInfo} reports that same count. Honouring the limit is what makes "is there
+     * more" observable at all: a connector that ignored it would answer every read with the whole
+     * collection and no bound could be told apart from any other.
+     */
+    static Path boundedQuerySource(Path dir, int held) {
+        String register = "functions.supportGetTableInfoFunction((c, table) ->"
+                + "  TableInfo.create().numOfRows(" + held + "L).storageSize(4096L).avgObjSize(8L));"
+                + boundedQuery(held);
+        return SyntheticJar.compileToJar(dir, "synthetic.BoundedQuery", readFace("BoundedQuery", register));
+    }
+
+    /**
+     * The same bounded query with no {@code getTableInfo} registered — the shape of a connector that
+     * can serve a read but cannot say how much it holds. Reachable: which functions a connector offers
+     * is a property of the connector, not of the request.
+     */
+    static Path unreportedSizeQuerySource(Path dir, int held) {
+        return SyntheticJar.compileToJar(dir, "synthetic.UnreportedSizeQuery",
+                readFace("UnreportedSizeQuery", boundedQuery(held)));
+    }
+
+    private static String boundedQuery(int held) {
+        return "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  int limit = ((Number) command.getParams().get(\"limit\")).intValue();"
+                + "  int emitted = Math.min(" + held + ", limit);"
+                + "  List<Map<String,Object>> batch = new ArrayList<>();"
+                + "  for (int i = 0; i < emitted; i++) {"
+                + "    Map<String,Object> row = new LinkedHashMap<>(); row.put(\"n\", i); batch.add(row);"
+                + "  }"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch));"
+                + "});";
+    }
+
+    /**
+     * A data-browser connector whose query gives up part way through and returns as if it had not.
+     * It emits one batch, then interrupts the thread it is running on — which is precisely the state
+     * that makes a real connector's read loop stop: the loop asks whether it is still alive between
+     * batches, and a connector reads that as "started and not interrupted". Nothing throws, nothing is
+     * reported through the result, and the rows already accumulated are dropped. What arrives at the
+     * bridge is a short answer that looks exactly like a small collection.
+     */
+    static Path abandoningQuerySource(Path dir) {
+        String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  Map<String,Object> row = new LinkedHashMap<>(); row.put(\"n\", 0);"
+                + "  List<Map<String,Object>> batch = new ArrayList<>(); batch.add(row);"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>().result(batch));"
+                + "  Thread.currentThread().interrupt();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.AbandoningQuery",
+                readFace("AbandoningQuery", register));
+    }
+
+    /** A data-browser connector whose query reports its failure through {@code ExecuteResult.error}. */
+    static Path erroringQuerySource(Path dir) {
+        String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  consumer.accept(new ExecuteResult<List<Map<String,Object>>>()"
+                + "    .error(new RuntimeException(\"query boom\")));"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.ErroringQuery", readFace("ErroringQuery", register));
+    }
+
+    /** A data-browser connector whose query throws out of the function itself. */
+    static Path throwingQuerySource(Path dir) {
+        String register = "functions.supportExecuteCommandFunction((c, command, consumer) -> {"
+                + "  throw new RuntimeException(\"execute boom\");"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.ThrowingQuery", readFace("ThrowingQuery", register));
     }
 }

@@ -91,9 +91,9 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/selectdb-connector/src/main/resources/spec_selectdb.json",
-    "specContentHash": "4700879d5da4e5a4",
+    "specContentHash": "461c8c5b7580c711",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {

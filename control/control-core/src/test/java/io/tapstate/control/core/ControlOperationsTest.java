@@ -32,6 +32,9 @@ class ControlOperationsTest {
                         "connector.register",
                         "connector.list",
                         "connector.get",
+                        "data-browser.collections",
+                        "data-browser.find",
+                        "data-browser.stats",
                         "cluster.members",
                         "pipeline.start",
                         "pipeline.stop",
@@ -80,6 +83,12 @@ class ControlOperationsTest {
         // mutates nothing, so it is read.
         assertThat(registry.resolve("connector.list").scope()).isEqualTo(Scope.READ);
         assertThat(registry.resolve("connector.get").scope()).isEqualTo(Scope.READ);
+        // the three data-browser verbs look at what a declared source's own database holds. They read
+        // through to the connector and persist nothing at all — not even the result, unlike the two
+        // connection probes — so they are read-scoped.
+        for (String id : List.of("data-browser.collections", "data-browser.find", "data-browser.stats")) {
+            assertThat(registry.resolve(id).scope()).as(id).isEqualTo(Scope.READ);
+        }
         // cluster.members reads live topology; it is authenticated like every registry operation, but
         // needs no write or admin privilege.
         assertThat(registry.resolve("cluster.members").scope()).isEqualTo(Scope.READ);
@@ -130,6 +139,9 @@ class ControlOperationsTest {
                 "connection.schema",
                 "connector.list",
                 "connector.get",
+                "data-browser.collections",
+                "data-browser.find",
+                "data-browser.stats",
                 "cluster.members",
                 "user.list",
                 "token.list",
@@ -142,18 +154,29 @@ class ControlOperationsTest {
     }
 
     @Test
-    void theRegistryOpensEveryL1OperationOnTheCliFaceAtPoc() {
+    void theRegistryOpensEveryL1OperationOnTheCliFace() {
         // A scope statement about the registry alone: the CLI face opens every registered operation and
-        // clips none of them below POC. Whether each one has a verb behind it is not knowable from here
+        // clips none of them. Whether each one has a verb behind it is not knowable from here
         // — control-core cannot see the CLI — and is gated where both are visible, in arch-tests.
-        assertThat(registry.exposedOn(Frontend.CLI, Maturity.POC)).hasSize(33);
+        assertThat(registry.exposedOn(Frontend.CLI)).hasSize(36);
         assertThat(registry.all()).allSatisfy(op ->
-                assertThat(op.exposure()).as(op.id()).containsEntry(Frontend.CLI, Maturity.POC));
+                assertThat(op.exposure()).as(op.id()).containsEntry(Frontend.CLI, Maturity.CURRENT));
     }
 
     @Test
-    void betaMcpFaceIsTheOnlineAuthoringClosureAndRestExposureRemainsEmpty() {
-        assertThat(registry.exposedOn(Frontend.MCP, Maturity.BETA))
+    void everyOperationIsStagedAtTheOneShippedStageOnEveryFaceItIsOpenOn() {
+        // One stage across the whole registry, not one per face. A second stage in here is what makes a
+        // face's surface depend on which ceiling it happened to name, which is the thing the ceilingless
+        // exposedOn(Frontend) exists to remove — an entry left at another stage would put it back.
+        assertThat(registry.all()).allSatisfy(op ->
+                assertThat(op.exposure().values()).as(op.id()).containsOnly(Maturity.CURRENT));
+    }
+
+    @Test
+    void mcpFaceIsTheOnlineAuthoringClosurePlusTheReadFaceAndRestExposureRemainsEmpty() {
+        // The read face joins on the same terms as everything else here — a mark on the registry entry.
+        // The three are read-scoped, so a caller holding no write capability still gets all three.
+        assertThat(registry.exposedOn(Frontend.MCP))
                 .extracting(Operation::id)
                 .containsExactlyInAnyOrder(
                         "connector.list", "connector.get",
@@ -162,7 +185,10 @@ class ControlOperationsTest {
                         "connection.discover-schema", "connection.schema",
                         "artifact.validate", "artifact.apply", "artifact.delete", "artifact.get",
                         "pipeline.start", "pipeline.stop", "pipeline.status",
-                        "pipeline.metrics", "pipeline.snapshot", "pipeline.logs");
+                        "pipeline.metrics", "pipeline.snapshot", "pipeline.logs",
+                        "data-browser.collections", "data-browser.find", "data-browser.stats");
+        // Deliberately the widest ceiling, not the shipped one: REST carries no operation at any stage,
+        // which is a stronger statement than "none has reached the stage we ship".
         assertThat(registry.exposedOn(Frontend.REST, Maturity.GA)).isEmpty();
     }
 
@@ -182,7 +208,9 @@ class ControlOperationsTest {
         assertThat(required.stream().map(String::valueOf).toList()).contains("expectedContentHash");
 
         Operation get = registry.resolve("artifact.get");
-        assertThat(get.exposure()).containsEntry(Frontend.MCP, Maturity.BETA);
+        // The stage is the one the build ships at, not a stage this assertion names: what it pins is
+        // that the read is on the face at all.
+        assertThat(get.exposure()).containsEntry(Frontend.MCP, Maturity.CURRENT);
         assertThat(get.scope())
                 .as("the read that supplies a precondition must not itself need write access")
                 .isEqualTo(Scope.READ);
@@ -201,7 +229,7 @@ class ControlOperationsTest {
     @Test
     void theDestructiveArtifactVerbIsWriteScopedOnTheMcpFace() {
         Operation delete = registry.resolve("artifact.delete");
-        assertThat(delete.exposure()).containsEntry(Frontend.MCP, Maturity.BETA);
+        assertThat(delete.exposure()).containsEntry(Frontend.MCP, Maturity.CURRENT);
         assertThat(delete.scope())
                 .as("a READ-scoped delete would be exposed in read-only MCP sessions")
                 .isEqualTo(Scope.WRITE);

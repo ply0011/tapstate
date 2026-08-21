@@ -25,18 +25,28 @@ public final class SourceService {
     private final Supplier<TapstateCatalog> catalog;
     private final ArtifactStore store;
     private final SourceRepresentation representation;
+
+    /**
+     * The live follows against each source. A delete has to reach them because nothing else
+     * does: the refusals that guard it read the artifact graph, and a watcher is not in the
+     * graph -- so a source that exists only to be read passes both and its stream outlives it.
+     */
+    private final DataBrowserFollows follows;
     private final CanonicalWriter writer = new CanonicalWriter();
 
     public SourceService(
-            TapstateCatalog catalog, ArtifactStore store, SourceRepresentation representation) {
-        this(() -> Objects.requireNonNull(catalog, "catalog"), store, representation);
+            TapstateCatalog catalog, ArtifactStore store, SourceRepresentation representation,
+            DataBrowserFollows follows) {
+        this(() -> Objects.requireNonNull(catalog, "catalog"), store, representation, follows);
     }
 
     public SourceService(
-            Supplier<TapstateCatalog> catalog, ArtifactStore store, SourceRepresentation representation) {
+            Supplier<TapstateCatalog> catalog, ArtifactStore store, SourceRepresentation representation,
+            DataBrowserFollows follows) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.store = Objects.requireNonNull(store, "store");
         this.representation = Objects.requireNonNull(representation, "representation");
+        this.follows = Objects.requireNonNull(follows, "follows");
     }
 
     /** Validates one Source against the live connector contract and renders canonical YAML without writing. */
@@ -147,8 +157,11 @@ public final class SourceService {
         }
 
         switch (store.delete(id, expectedContentHash)) {
-            case DELETED -> {
-            }
+            case DELETED ->
+                // After the delete, never before. A delete that was refused -- because the source is
+                // referenced, or the caller's precondition did not hold -- must leave its streams
+                // running: the refusals are what decide whether the source is going away.
+                    follows.closeFollowsOf(id);
             case NOT_FOUND -> throw error(SourceError.NOT_FOUND, Map.of("id", id));
             case VERSION_CONFLICT -> throw error(
                     SourceError.VERSION_CONFLICT, Map.of("id", id));

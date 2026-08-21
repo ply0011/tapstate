@@ -163,6 +163,18 @@
       "visibleWhen": null
     },
     {
+      "name": "useNativeCdc",
+      "type": "boolean",
+      "label": {
+        "en_US": "Native CDC"
+      },
+      "required": false,
+      "default": "false",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
       "name": "timezone",
       "type": "string",
       "label": {
@@ -339,9 +351,9 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/oceanbase-mysql-connector/src/main/resources/oceanbase-spec.json",
-    "specContentHash": "f322acce7e736b1b",
+    "specContentHash": "22569c7fca980b83",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {

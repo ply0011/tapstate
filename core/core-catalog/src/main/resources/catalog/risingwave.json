@@ -1,0 +1,183 @@
+{
+  "id": "risingwave",
+  "name": "RisingWave",
+  "displayName": "RisingWave",
+  "icon": "icons/risingwave.png",
+  "group": "database",
+  "modes": [],
+  "discovery": "catalog",
+  "sink": {
+    "capable": true,
+    "writeSemantics": [
+      "upsert",
+      "append"
+    ]
+  },
+  "pushOut": false,
+  "config": [
+    {
+      "name": "host",
+      "type": "string",
+      "label": {
+        "en_US": "Host"
+      },
+      "required": true,
+      "default": null,
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "port",
+      "type": "number",
+      "label": {
+        "en_US": "Port"
+      },
+      "required": true,
+      "default": "4566",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "database",
+      "type": "string",
+      "label": {
+        "en_US": "Database"
+      },
+      "required": true,
+      "default": "dev",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "schema",
+      "type": "string",
+      "label": {
+        "en_US": "Schema"
+      },
+      "required": false,
+      "default": "public",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "user",
+      "type": "string",
+      "label": {
+        "en_US": "User"
+      },
+      "required": true,
+      "default": "root",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "password",
+      "type": "string",
+      "label": {
+        "en_US": "Password"
+      },
+      "required": false,
+      "default": null,
+      "secret": true,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "ingest_mode",
+      "type": "string",
+      "label": {
+        "en_US": "Write Mode"
+      },
+      "required": false,
+      "default": "streaming",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "ingestEndpoint",
+      "type": "string",
+      "label": {
+        "en_US": "Ingest Endpoint"
+      },
+      "required": false,
+      "default": null,
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "webhookSecret",
+      "type": "string",
+      "label": {
+        "en_US": "Webhook Secret"
+      },
+      "required": false,
+      "default": null,
+      "secret": true,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "webhookSecretName",
+      "type": "string",
+      "label": {
+        "en_US": "RisingWave Secret Name"
+      },
+      "required": false,
+      "default": null,
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "sslmode",
+      "type": "string",
+      "label": {
+        "en_US": "SSL Mode"
+      },
+      "required": false,
+      "default": "prefer",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "extParams",
+      "type": "string",
+      "label": {
+        "en_US": "Extra Parameters"
+      },
+      "required": false,
+      "default": null,
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "timezone",
+      "type": "string",
+      "label": {
+        "en_US": "Timezone"
+      },
+      "required": false,
+      "default": "",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    }
+  ],
+  "provenance": {
+    "connectorRepoSha": "d889798e",
+    "specPath": "connectors/risingwave-connector/src/main/resources/spec_risingwave.json",
+    "specContentHash": "f45046942a7bc83d",
+    "pdkApiVersion": null,
+    "requiredLevel": null,
+    "modeSource": {}
+  }
+}
