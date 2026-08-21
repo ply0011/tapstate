@@ -5,7 +5,6 @@ import io.tapstate.control.core.ConnectorDetail;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ConnectorRegistrationReport;
 import io.tapstate.core.common.TapstateException;
-import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -44,8 +43,7 @@ class ConnectorController {
 
     @Verb("connector.register")
     @PostMapping("/connectors:register")
-    ConnectorRegistrationReport register(
-            @RequestBody(required = false) ConnectorRegisterRequest request, HttpServletRequest http) {
+    ConnectorRegistrationReport register(@RequestBody(required = false) ConnectorRegisterRequest request) {
         // Refuse a missing / blank-field body at the boundary as a coded 400, rather than letting a null or
         // undecodable artifact trip a bare guard deeper down (a 500).
         ConnectorRegisterRequest body =
@@ -53,7 +51,7 @@ class ConnectorController {
         MalformedRequest.requireText(body.artifact(), "a base64-encoded `artifact` is required");
         byte[] artifact = decode(body.artifact());
         try {
-            return registerService.register(artifact, AuthInterceptor.authenticatedPrincipal(http));
+            return registerService.register(artifact, AuthenticatedCaller.subject());
         } catch (TapstateException e) {
             // A connector-domain failure at register is the uploaded artifact's fault (client input): a 400
             // with the coded body. The same code raised on the resolve path (connection test / discovery) is

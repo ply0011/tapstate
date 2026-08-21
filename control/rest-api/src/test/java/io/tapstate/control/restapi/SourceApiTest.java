@@ -374,7 +374,8 @@ class SourceApiTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({RestApiConfiguration.class, SourceDraftTestConfiguration.class, SourceServiceTestConfiguration.class,
+    @Import({RestApiConfiguration.class, RestApiSecurityConfiguration.class,
+            SourceDraftTestConfiguration.class, SourceServiceTestConfiguration.class,
             SourceController.class,
             SourceDraftController.class,
             ApiExceptionHandler.class})
@@ -392,12 +393,6 @@ class SourceApiTest {
             return new TokenService(store, secrets, clock);
         }
         @Bean TokenSigner tokenSigner() { return new FixedSigner(); }
-        @Bean CredentialAuthenticator credentialAuthenticator(TokenService tokens, TokenSigner signer) {
-            return new CredentialAuthenticator(tokens, signer);
-        }
-        @Bean AuthInterceptor authInterceptor(OperationRegistry registry, CredentialAuthenticator credentials) {
-            return new AuthInterceptor(registry, credentials);
-        }
         @Bean JsonMapperBuilderCustomizer sourceJsonContract() {
             return new ControlHttpFace().sourceJsonContract();
         }

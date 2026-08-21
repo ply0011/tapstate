@@ -1,10 +1,12 @@
 package io.tapstate.control.restapi;
 
 import io.tapstate.control.core.ArtifactQueryService;
+import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.PipelineLogQueryService;
 import io.tapstate.control.core.PipelineObservationQueryService;
+import io.tapstate.control.core.OperationRegistry;
 import io.tapstate.control.core.Scope;
 import io.tapstate.control.core.TokenSecrets;
 import io.tapstate.control.core.TokenService;
@@ -20,6 +22,7 @@ import io.tapstate.messages.MessageCatalog;
 import io.tapstate.spi.store.ObservationStore;
 import io.tapstate.core.model.PipelineResource;
 import io.tapstate.core.model.Resource;
+import io.tapstate.core.model.SourceResource;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.TokenRecord;
 import io.tapstate.spi.store.TokenStore;
@@ -199,6 +202,23 @@ class PipelineStreamApiTest {
                         .isEqualTo(401));
     }
 
+    @Test
+    void anAuthenticatedFollowHandshakeReachesTheFollowHandler() {
+        FollowFixture fixture = context.getBean(FollowFixture.class);
+        fixture.setAnswering(true);
+        try {
+            WebSocket ws = connect(
+                    "/api/data-browser/views/order_state/tail", readToken(), new FrameSink());
+            try {
+                assertThat(ws.isOutputClosed()).isFalse();
+            } finally {
+                ws.abort();
+            }
+        } finally {
+            fixture.setAnswering(false);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static List<String> messages(Map<?, ?> frame) {
         List<String> out = new ArrayList<>();
@@ -234,7 +254,7 @@ class PipelineStreamApiTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({PipelineStreamConfiguration.class, DataBrowserStreamConfiguration.class})
+    @Import({RestApiSecurityConfiguration.class, PipelineStreamConfiguration.class, DataBrowserStreamConfiguration.class})
     static class TestApp {
 
         @Bean
@@ -253,22 +273,25 @@ class PipelineStreamApiTest {
         }
 
         @Bean
+        FollowFixture followFixture() {
+            return new FollowFixture();
+        }
+
+        @Bean
         PipelineObservationQueryService pipelineObservationQueryService(ObservationStore store) {
             return new PipelineObservationQueryService(new ArtifactQueryService(appliedPipelines()), store);
         }
 
-        /**
-         * Present so the follow endpoint is mounted at all. Every probe refuses: the case here is that
-         * the handshake is turned away before any of them is reached, and a probe that answered would
-         * let that case pass even if the guard were gone.
-         */
         @Bean
-        io.tapstate.control.core.DataBrowserService dataBrowserService() {
+        io.tapstate.control.core.DataBrowserService dataBrowserService(FollowFixture fixture) {
             return new io.tapstate.control.core.DataBrowserService(
                     appliedPipelines(),
                     new NoDiscoveries(),
                     config -> {
-                        throw new AssertionError("the handshake must be refused before any read");
+                        if (!fixture.answering()) {
+                            throw new AssertionError("the handshake must be refused before any read");
+                        }
+                        return List.of("order_state");
                     },
                     (config, collection) -> {
                         throw new AssertionError("the handshake must be refused before any read");
@@ -277,7 +300,10 @@ class PipelineStreamApiTest {
                         throw new AssertionError("the handshake must be refused before any read");
                     },
                     (config, request, listener) -> {
-                        throw new AssertionError("the handshake must be refused before any follow");
+                        if (!fixture.answering()) {
+                            throw new AssertionError("the handshake must be refused before any read");
+                        }
+                        return () -> { };
                     });
         }
 
@@ -307,8 +333,25 @@ class PipelineStreamApiTest {
         }
 
         @Bean
+        OperationRegistry operationRegistry() {
+            return ControlOperations.registry();
+        }
+
+        @Bean
         CredentialAuthenticator credentialAuthenticator(TokenService tokens, TokenSigner signer) {
             return new CredentialAuthenticator(tokens, signer);
+        }
+    }
+
+    static final class FollowFixture {
+        private boolean answering;
+
+        boolean answering() {
+            return answering;
+        }
+
+        void setAnswering(boolean answering) {
+            this.answering = answering;
         }
     }
 
@@ -427,6 +470,10 @@ class PipelineStreamApiTest {
 
             @Override
             public Optional<Resource> get(String id) {
+                if (id.equals("views")) {
+                    return Optional.of(new SourceResource(id, null, "mongodb",
+                            Map.of("uri", "mongodb://db.local"), null, null, null, null, null));
+                }
                 return Optional.of(new PipelineResource(id, null, List.of("src_x"), null, null, null, null, null));
             }
 

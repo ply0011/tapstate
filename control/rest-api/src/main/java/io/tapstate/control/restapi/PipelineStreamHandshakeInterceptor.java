@@ -18,7 +18,7 @@ import java.util.Optional;
 
 /**
  * Authenticates and grade-checks a streaming websocket handshake, the counterpart to the {@code /api}
- * {@link AuthInterceptor} for the two thin stream channels. A watch / follow stream is category-2 CLI
+ * Spring Security's REST authorization manager for the two thin stream channels. A watch / follow stream is category-2 CLI
  * sugar riding a read operation ({@code pipeline.status} / {@code pipeline.logs}); it invents no new
  * operation, so the handshake is gated by the grade of that underlying read. The credential travels in
  * the same {@code Authorization: Bearer <credential>} header a one-shot read uses.

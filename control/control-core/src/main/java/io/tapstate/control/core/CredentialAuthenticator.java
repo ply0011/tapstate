@@ -35,7 +35,7 @@ public final class CredentialAuthenticator {
         if (presented == null || presented.isBlank()) {
             return Optional.empty();
         }
-        if (presented.startsWith(TokenService.TOKEN_PREFIX)) {
+        if (TokenService.isMachineToken(presented)) {
             return tokenService.authenticate(presented);
         }
         return tokenSigner.verify(presented);
