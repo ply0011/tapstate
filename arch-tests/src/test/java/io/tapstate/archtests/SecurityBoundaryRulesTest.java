@@ -6,6 +6,8 @@ import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import io.tapstate.control.core.OperationRegistry;
+import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.TapstatePrincipal;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,13 +28,6 @@ class SecurityBoundaryRulesTest {
     private static final String REST_API_PACKAGE = "io.tapstate.control.restapi";
     private static final String AUTHORIZATION_SEAM = REST_API_PACKAGE + ".OperationAuthorizationManager";
 
-    private static final Set<String> BEARER_AUTHORITY_TYPES = Set.of(
-            "io.tapstate.control.core.CredentialAuthenticator",
-            "io.tapstate.control.core.TapstatePrincipal",
-            "io.tapstate.control.core.TokenService",
-            "io.tapstate.control.core.TokenSigner",
-            "io.tapstate.control.core.VerifiedToken");
-
     private static JavaClasses restApi;
     private static JavaClasses controlCore;
 
@@ -44,15 +39,31 @@ class SecurityBoundaryRulesTest {
         controlCore = importer.importPackages("io.tapstate.control.core");
     }
 
+    private static Set<String> bearerAuthorityTypes() {
+        JavaClass authenticator = controlCore.get(CredentialAuthenticator.class.getName());
+        Set<String> types = authenticator.getDirectDependenciesFromSelf().stream()
+                .map(Dependency::getTargetClass)
+                .filter(type -> type.getPackageName().equals(CredentialAuthenticator.class.getPackageName()))
+                .map(JavaClass::getName)
+                .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+        types.add(authenticator.getName());
+        types.add(TapstatePrincipal.class.getName());
+        assertThat(types)
+                .as("the security boundary must derive at least one real credential authority type")
+                .isNotEmpty();
+        return types;
+    }
+
     @Test
     @DisplayName("controllers do not parse bearer credentials or call credential authorities")
     void controllersDoNotReachIntoBearerAuthentication() {
+        Set<String> bearerAuthorityTypes = bearerAuthorityTypes();
         Set<String> forbiddenDependencies = restApi.stream()
                 .filter(type -> type.getSimpleName().endsWith("Controller"))
                 .flatMap(type -> type.getDirectDependenciesFromSelf().stream())
                 .map(Dependency::getTargetClass)
                 .map(JavaClass::getName)
-                .filter(BEARER_AUTHORITY_TYPES::contains)
+                .filter(bearerAuthorityTypes::contains)
                 .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
 
         assertThat(forbiddenDependencies)

@@ -204,12 +204,18 @@ class PipelineStreamApiTest {
 
     @Test
     void anAuthenticatedFollowHandshakeReachesTheFollowHandler() {
-        WebSocket ws = connect(
-                "/api/data-browser/views/order_state/tail", readToken(), new FrameSink());
+        FollowFixture fixture = context.getBean(FollowFixture.class);
+        fixture.setAnswering(true);
         try {
-            assertThat(ws.isOutputClosed()).isFalse();
+            WebSocket ws = connect(
+                    "/api/data-browser/views/order_state/tail", readToken(), new FrameSink());
+            try {
+                assertThat(ws.isOutputClosed()).isFalse();
+            } finally {
+                ws.abort();
+            }
         } finally {
-            ws.abort();
+            fixture.setAnswering(false);
         }
     }
 
@@ -267,23 +273,38 @@ class PipelineStreamApiTest {
         }
 
         @Bean
+        FollowFixture followFixture() {
+            return new FollowFixture();
+        }
+
+        @Bean
         PipelineObservationQueryService pipelineObservationQueryService(ObservationStore store) {
             return new PipelineObservationQueryService(new ArtifactQueryService(appliedPipelines()), store);
         }
 
         @Bean
-        io.tapstate.control.core.DataBrowserService dataBrowserService() {
+        io.tapstate.control.core.DataBrowserService dataBrowserService(FollowFixture fixture) {
             return new io.tapstate.control.core.DataBrowserService(
                     appliedPipelines(),
                     new NoDiscoveries(),
-                    config -> List.of("order_state"),
+                    config -> {
+                        if (!fixture.answering()) {
+                            throw new AssertionError("the handshake must be refused before any read");
+                        }
+                        return List.of("order_state");
+                    },
                     (config, collection) -> {
                         throw new AssertionError("the handshake must be refused before any read");
                     },
                     (config, query) -> {
                         throw new AssertionError("the handshake must be refused before any read");
                     },
-                    (config, request, listener) -> () -> { });
+                    (config, request, listener) -> {
+                        if (!fixture.answering()) {
+                            throw new AssertionError("the handshake must be refused before any read");
+                        }
+                        return () -> { };
+                    });
         }
 
         @Bean
@@ -319,6 +340,18 @@ class PipelineStreamApiTest {
         @Bean
         CredentialAuthenticator credentialAuthenticator(TokenService tokens, TokenSigner signer) {
             return new CredentialAuthenticator(tokens, signer);
+        }
+    }
+
+    static final class FollowFixture {
+        private boolean answering;
+
+        boolean answering() {
+            return answering;
+        }
+
+        void setAnswering(boolean answering) {
+            this.answering = answering;
         }
     }
 

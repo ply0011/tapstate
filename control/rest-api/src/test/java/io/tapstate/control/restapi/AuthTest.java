@@ -303,20 +303,22 @@ class AuthTest {
     }
 
     @Test
-    void unknownApiAndRootRoutesFailClosedWithTheCodedSecurityResponses() {
-        ApiError unknownApi = client().get().uri("/api/not-a-control-verb")
-                .exchange((request, response) -> {
-                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-                    return response.bodyTo(ApiError.class);
-                });
+    void unknownApiRoutesReachMvcWhileUnknownRootRoutesRemainUnauthorized() {
+        HttpStatusCode unknownApi = client().get().uri("/api/not-a-control-verb")
+                .exchange((request, response) -> response.getStatusCode());
         ApiError unknownRoot = client().get().uri("/not-a-public-endpoint")
                 .exchange((request, response) -> {
                     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
                     return response.bodyTo(ApiError.class);
                 });
 
-        assertThat(unknownApi.code()).isEqualTo("control.unauthenticated");
+        assertThat(unknownApi).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(unknownRoot.code()).isEqualTo("control.unauthenticated");
+
+        HttpStatusCode wrongMethod = client().put().uri("/api/sources")
+                .header("Authorization", "Bearer " + machineToken(Scope.ADMIN))
+                .exchange((request, response) -> response.getStatusCode());
+        assertThat(wrongMethod).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
     }
 
     @Test

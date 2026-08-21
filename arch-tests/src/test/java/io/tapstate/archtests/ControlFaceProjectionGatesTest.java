@@ -11,6 +11,8 @@ import io.tapstate.control.restapi.Verb;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Set;
@@ -53,6 +55,23 @@ class ControlFaceProjectionGatesTest {
                 .collect(toCollection(TreeSet::new));
     }
 
+    private static Set<String> apiHandlersWithoutVerb() {
+        return restApi.stream()
+                .filter(type -> type.isAnnotatedWith(RestController.class))
+                .flatMap(type -> type.getMethods().stream())
+                .filter(ControlFaceProjectionGatesTest::isRequestMapping)
+                .filter(method -> !method.isAnnotatedWith(Verb.class))
+                .map(JavaMethod::getDescription)
+                .collect(toCollection(TreeSet::new));
+    }
+
+    private static boolean isRequestMapping(JavaMethod method) {
+        return method.getAnnotations().stream()
+                .map(annotation -> annotation.getRawType())
+                .anyMatch(type -> type.isEquivalentTo(RequestMapping.class)
+                        || type.isMetaAnnotatedWith(RequestMapping.class));
+    }
+
     /** Every operation the registry opens on the CLI face — the online verb surface. */
     private static Set<String> registeredVerbs() {
         return ControlOperations.registry().exposedOn(Frontend.CLI).stream()
@@ -67,6 +86,14 @@ class ControlFaceProjectionGatesTest {
                 .as("an endpoint may only project a registered, CLI-exposed operation — a face composes "
                         + "registered operations, it never invents an endpoint")
                 .isSubsetOf(registeredVerbs());
+    }
+
+    @Test
+    @DisplayName("every HTTP handler carries an operation projection")
+    void everyApiHandlerDeclaresVerb() {
+        assertThat(apiHandlersWithoutVerb())
+                .as("an /api handler without @Verb would bypass the registry and must fail the build")
+                .isEmpty();
     }
 
     /**

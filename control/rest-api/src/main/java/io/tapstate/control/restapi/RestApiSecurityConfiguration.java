@@ -4,6 +4,8 @@ import io.tapstate.control.core.OperationRegistry;
 import io.tapstate.control.core.TokenService;
 import io.tapstate.control.core.TokenSigner;
 import io.tapstate.messages.MessageCatalog;
+import jakarta.servlet.DispatcherType;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -16,8 +18,9 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationFilter;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.DispatcherTypeRequestMatcher;
 import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
-import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.springframework.web.servlet.handler.HandlerMappingIntrospector;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
@@ -47,7 +50,7 @@ class RestApiSecurityConfiguration {
     @Order(1)
     SecurityFilterChain apiSecurityFilterChain(
             HttpSecurity http,
-            RequestMappingHandlerMapping handlers,
+            ObjectProvider<HandlerMappingIntrospector> handlers,
             OperationRegistry registry,
             AuthenticationManager authenticationManager,
             ApiSecurityErrorWriter errors) throws Exception {
@@ -68,6 +71,7 @@ class RestApiSecurityConfiguration {
                         .accessDeniedHandler(new CodedAccessDeniedHandler(errors)))
                 .addFilterAfter(bearer, SecurityContextHolderFilter.class)
                 .authorizeHttpRequests(authorize -> authorize
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         // WebSocket upgrades retain their own handshake gate because they are not MVC verbs.
                         .requestMatchers(
                                 "/api/pipelines/*/status/watch",
@@ -100,6 +104,7 @@ class RestApiSecurityConfiguration {
     private static AuthenticationFilter bearerFilter(
             AuthenticationManager manager, CodedAuthenticationEntryPoint entryPoint) {
         AuthenticationFilter filter = new AuthenticationFilter(manager, new StrictBearerAuthenticationConverter());
+        filter.setRequestMatcher(new DispatcherTypeRequestMatcher(DispatcherType.REQUEST));
         filter.setSuccessHandler(new ContinuingAuthenticationSuccessHandler());
         filter.setFailureHandler((request, response, failure) -> entryPoint.commence(request, response, failure));
         return filter;

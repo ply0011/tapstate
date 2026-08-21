@@ -172,7 +172,7 @@ class ControlPlaneAssemblyIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", SOURCE))
                 .exchange((request, response) -> response.getStatusCode());
-        assertThat(noYamlSourceEndpoint).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(noYamlSourceEndpoint).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     private static void assertStructuredSource(Map<?, ?> source, String host) {
@@ -366,7 +366,7 @@ class ControlPlaneAssemblyIT {
         properties.addAll(List.of(extraProperties));
         context = new SpringApplicationBuilder(AssemblyApp.class)
                 .properties(properties.toArray(String[]::new))
-                .run();
+                .run("--server.port=0");
         return ((WebServerApplicationContext) context).getWebServer().getPort();
     }
 
