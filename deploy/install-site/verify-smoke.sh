@@ -114,5 +114,24 @@ out="$(run_verify)"; rc=$?
 if [ "$rc" -ne 0 ]; then ok "a stale body carrying the current pin is still caught"
 else bad "a stale body with a matching pin passed (rc=$rc): $out"; fi
 
+# --- 7. no digest tool at all -------------------------------------------------------------------
+# The failure mode is a pass, not an error: with the refusal inside digest(), the exit ended only the
+# command substitution, both sides came back empty, and two empty strings compare equal. A verifier
+# that reports ok when it could not hash anything is worse than one that is absent.
+serve_fresh_quickstart; serve_fresh_installer
+# A PATH with everything the script needs except a way to hash. Emptying PATH instead would only
+# prove that sh cannot be found.
+nodigest="$(mktemp -d)"
+for tool in sh curl awk sed grep cat rm mktemp printf; do
+  real="$(command -v "$tool" 2>/dev/null)" && ln -sf "$real" "$nodigest/$tool"
+done
+out="$(PATH="$nodigest" sh "$VERIFY" "$BASE" "$EXPECTED" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && ! grep -q '^ok ' <<<"$out" && grep -qi 'no sha256 tool' <<<"$out"; then
+  ok "with no digest tool it refuses instead of reporting a result"
+else
+  bad "reported a result without being able to hash (rc=$rc): $out"
+fi
+rm -rf "$nodigest"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

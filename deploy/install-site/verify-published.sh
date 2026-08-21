@@ -20,15 +20,22 @@ set -eu
 base="${1:?usage: verify-published.sh <base-url> <expected-dir>}"
 expected="${2:?usage: verify-published.sh <base-url> <expected-dir>}"
 
+# Refused up front rather than inside digest(). Every call is `x="$(digest ...)"`, and an exit there
+# ends the command substitution's subshell, not this script: both sides would come back empty, the
+# comparison of two empty strings would hold, and the verifier would print ok having compared nothing.
+# A checker that passes when it cannot check is worse than no checker.
+if command -v sha256sum >/dev/null 2>&1; then
+    DIGEST_TOOL="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+    DIGEST_TOOL="shasum -a 256"
+else
+    echo "no sha256 tool (sha256sum or shasum) is available; refusing to report a result" >&2
+    exit 1
+fi
+
 digest() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{print $1}'
-    else
-        echo "no sha256 tool (sha256sum or shasum) is available; cannot verify" >&2
-        exit 1
-    fi
+    # shellcheck disable=SC2086
+    $DIGEST_TOOL "$1" | awk '{print $1}'
 }
 
 # The pin each script carries, echoed on failure so the message names the skew instead of only

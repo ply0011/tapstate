@@ -47,19 +47,26 @@ class ViewStoreSeedRunnerTest {
 
     @Test
     void the_views_database_is_its_own_but_reached_the_same_way() {
-        // Only the database is rewritten. Credentials, host list and options are what it took to reach the
-        // server at all, so dropping any of them would leave a URI that addresses the right database on a
-        // server it can no longer log in to -- and each of these shapes is one a real deployment has.
+        // Credentials, host list and options are what it took to reach the server at all, so dropping any
+        // of them would leave a URI that addresses the right database on a server it can no longer log in
+        // to. And carrying them is not enough on its own: with no explicit authSource the spec
+        // authenticates against the database in the URI, so rewriting the path alone moves the
+        // authentication database as well, and a user defined in the control-plane database does not
+        // exist in the derived one. This assertion used to say the credentials survive without ever
+        // asking whether they would still work.
         assertThat(ViewStoreSeedRunner.viewsUri("mongodb://mongo:27017/tapstate"))
-                .isEqualTo("mongodb://mongo:27017/views");
+                .isEqualTo("mongodb://mongo:27017/views?authSource=tapstate");
         assertThat(ViewStoreSeedRunner.viewsUri("mongodb://mongo:27017/tapstate?directConnection=true"))
                 .as("options are carried, not dropped")
-                .isEqualTo("mongodb://mongo:27017/views?directConnection=true");
+                .isEqualTo("mongodb://mongo:27017/views?directConnection=true&authSource=tapstate");
         assertThat(ViewStoreSeedRunner.viewsUri("mongodb://user:pw@a:27017,b:27017/tapstate?replicaSet=rs0"))
-                .as("credentials and every member of the set survive")
-                .isEqualTo("mongodb://user:pw@a:27017,b:27017/views?replicaSet=rs0");
+                .as("credentials, every member of the set, and the database they authenticate against")
+                .isEqualTo("mongodb://user:pw@a:27017,b:27017/views?replicaSet=rs0&authSource=tapstate");
+        assertThat(ViewStoreSeedRunner.viewsUri("mongodb://user:pw@h:27017/tapstate?authSource=admin"))
+                .as("an authSource the deployment set is left exactly as it is")
+                .isEqualTo("mongodb://user:pw@h:27017/views?authSource=admin");
         assertThat(ViewStoreSeedRunner.viewsUri("mongodb://mongo:27017"))
-                .as("a URI that names no database still gets one")
+                .as("a URI that names no database still gets one, and has no default to preserve")
                 .isEqualTo("mongodb://mongo:27017/views");
         assertThat(ViewStoreSeedRunner.viewsUri("mongodb://mongo:27017?directConnection=true"))
                 .as("no database, but options")

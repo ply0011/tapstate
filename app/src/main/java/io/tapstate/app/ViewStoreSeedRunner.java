@@ -67,8 +67,16 @@ final class ViewStoreSeedRunner implements ApplicationRunner {
      *
      * <p>Views are kept in their own database rather than beside the control plane's collections: the two
      * are the deployment's and the user's data respectively, and a listing of one should not enumerate the
-     * other. Only the path is rewritten -- host, credentials and every option are carried across, because
-     * whatever it took to reach the one database is what it takes to reach the other on the same server.
+     * other. Host, credentials and every option are carried across, because whatever it took to reach the
+     * one database is what it takes to reach the other on the same server.
+     *
+     * <p>Which is why the database is not the only thing the path decides. With no explicit
+     * {@code authSource}, the connection string spec authenticates against the database named in the URI
+     * -- so rewriting the path alone moves the authentication database too, and a deployment whose
+     * credentials live in the control-plane database would derive a URI that authenticates against one
+     * where that user does not exist. The store would be registered and permanently unusable, and the
+     * failure would arrive as a login error against a database nobody configured. The original database
+     * is therefore pinned as {@code authSource} whenever the URI named one and did not already say.
      */
     static String viewsUri(String serverStoreUri) {
         String database = ViewTargetResolver.STATE_STORE_SOURCE_ID;
@@ -79,6 +87,19 @@ final class ViewStoreSeedRunner implements ApplicationRunner {
         String fromQuery = query < 0 ? "" : serverStoreUri.substring(query);
         int path = beforeQuery.indexOf('/', authorityStart);
         String authority = path < 0 ? beforeQuery : beforeQuery.substring(0, path);
-        return authority + "/" + database + fromQuery;
+        String originalDatabase = path < 0 ? "" : beforeQuery.substring(path + 1);
+        return authority + "/" + database + withAuthSource(fromQuery, originalDatabase);
+    }
+
+    /**
+     * The query with {@code authSource} pinned to {@code originalDatabase}, unless there is nothing to
+     * pin or the caller already said. A URI that named no database has no default to preserve -- the spec
+     * falls back to {@code admin} there, and that is as true of the derived URI as of the original.
+     */
+    private static String withAuthSource(String query, String originalDatabase) {
+        if (originalDatabase.isEmpty() || query.contains("authSource=")) {
+            return query;
+        }
+        return query.isEmpty() ? "?authSource=" + originalDatabase : query + "&authSource=" + originalDatabase;
     }
 }
