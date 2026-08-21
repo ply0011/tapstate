@@ -28,9 +28,9 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/zoho-crm-connector/src/main/resources/spec.json",
-    "specContentHash": "9a519b44f78f373b",
+    "specContentHash": "d3eb0ddbfb8add92",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {

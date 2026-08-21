@@ -4,11 +4,17 @@
   "displayName": "PostgreSQL",
   "icon": "icons/postgres.png",
   "group": "database",
-  "modes": [],
+  "modes": [
+    "cdc",
+    "snapshot"
+  ],
   "discovery": "catalog",
   "sink": {
-    "capable": false,
-    "writeSemantics": []
+    "capable": true,
+    "writeSemantics": [
+      "upsert",
+      "append"
+    ]
   },
   "pushOut": false,
   "config": [
@@ -186,6 +192,79 @@
           "value": "walminer",
           "label": {
             "en_US": "WALMINER"
+          }
+        },
+        {
+          "value": "physical",
+          "label": {
+            "en_US": "PHYSICAL"
+          }
+        }
+      ],
+      "visibleWhen": null
+    },
+    {
+      "name": "checkCdcSlave",
+      "type": "boolean",
+      "label": {
+        "en_US": "Check CDC slave"
+      },
+      "required": false,
+      "default": "false",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "walTdeKey",
+      "type": "string",
+      "label": {
+        "en_US": "EDB TDE key file"
+      },
+      "required": false,
+      "default": null,
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "walTdeKeyPassword",
+      "type": "string",
+      "label": {
+        "en_US": "EDB TDE key password"
+      },
+      "required": false,
+      "default": null,
+      "secret": true,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "walTdeKeyWrapAlgorithm",
+      "type": "string",
+      "label": {
+        "en_US": "TDE key wrap algorithm"
+      },
+      "required": false,
+      "default": "auto",
+      "secret": false,
+      "options": [
+        {
+          "value": "auto",
+          "label": {
+            "en_US": "Auto"
+          }
+        },
+        {
+          "value": "aes-256-cbc",
+          "label": {
+            "en_US": "AES-256-CBC"
+          }
+        },
+        {
+          "value": "aes-128-cbc",
+          "label": {
+            "en_US": "AES-128-CBC"
           }
         }
       ],
@@ -452,11 +531,14 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/postgres-connector/src/main/resources/spec_postgres.json",
-    "specContentHash": "e133dddbf329322f",
+    "specContentHash": "6a56d1e1f2cadf30",
     "pdkApiVersion": null,
     "requiredLevel": null,
-    "modeSource": {}
+    "modeSource": {
+      "cdc": "derived",
+      "snapshot": "derived"
+    }
   }
 }

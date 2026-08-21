@@ -303,7 +303,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/snowflake-connector/src/main/resources/spec_snowflake.json",
     "specContentHash": "8a444f27dfaf1390",
     "pdkApiVersion": null,

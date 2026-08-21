@@ -80,6 +80,35 @@ class EnvelopeParserTest {
                         entry("tgt", new DatabaseRequest(DatabaseKind.MONGO)));
     }
 
+    /**
+     * A specification can ask for a second engine, which is the whole of what a cross-source case needs
+     * from this vocabulary: two stores that share nothing, so that assembling one object out of both is
+     * the product's work rather than a join the database could have done.
+     *
+     * <p>Asserted through the word an author writes rather than the constant, because the word is what a
+     * specification carries and the constant is free to be renamed under it.
+     */
+    @Test
+    void parsesASecondEngineAsAStoreKind() {
+        Envelope envelope = EnvelopeParser.parse("""
+                name: a-case-that-needs-two-engines
+                setup:
+                  databases:
+                    orders: { kind: mysql }
+                    shipments: { kind: postgres }
+                    tgt: { kind: mongo }
+                  connectors: [mysql, postgres, mongodb]
+                  apply: [src_mysql.tap.yml, src_postgres.tap.yml, tgt_mongo.tap.yml, pipeline.tap.yml]
+                  discover: [src_mysql, src_postgres]
+                pipeline: pipeline.tap.yml
+                steps:
+                  - start
+                """);
+
+        assertThat(envelope.setup().databases().keySet()).containsExactly("orders", "shipments", "tgt");
+        assertThat(envelope.setup().databases().get("shipments").kind().word()).isEqualTo("postgres");
+    }
+
     /** A store kind nobody can provide is an authoring mistake, and it is cheapest to say so here. */
     @Test
     void refusesAStoreKindTheHarnessCannotProvide() {

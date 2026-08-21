@@ -16,6 +16,7 @@ import java.util.Locale;
 enum DatabaseKind {
 
     MYSQL("mysql"),
+    POSTGRES("postgres"),
     MONGO("mongodb");
 
     private final String connectorId;
