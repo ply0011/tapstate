@@ -342,7 +342,7 @@ done
 exit 0
 DOCK
   chmod +x "$shim/uname" "$shim/docker"
-  RUN_OUT="$(cd "$RUN" && PATH="$shim:$PATH" \
+  RUN_OUT="$(cd "${RUN_CWD:-$RUN}" && PATH="$shim:$PATH" \
     TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$CLI_STUB" \
     TAPSTATE_QUICKSTART_BASE_URL="file://$QS_STUB" TAPSTATE_CONNECTORS_URL="file://$QS_STUB/connectors-preview" \
     FAKE_TARGET_ROWS="${1:-5}" FAKE_SHIPMENT_ROWS="${2:-6}" \
@@ -394,11 +394,43 @@ check_apply_order() {   # $1 = source id
 }
 check_apply_order db_src
 check_apply_order db_shipments
-if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -q 'rm -rf'; then
-  ok "prints teardown on completion (down -v + rm -rf, images noted)"
+if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -qi 'images remain'; then
+  ok "prints teardown on completion (down -v, images noted)"
 else
   bad "no teardown printed: $RUN_OUT"
 fi
+# Run in place -- a saved script executed where it sits -- the directory is the user's and holds their
+# files. Offering `rm -rf` on it is a command that destroys unrelated work, printed to someone who has
+# just been told everything above was safe to copy. This run is exactly that shape.
+if ! printf '%s' "$RUN_OUT" | grep -q 'rm -rf'; then
+  ok "a directory the quickstart did not create is never offered for removal"
+else
+  bad "offered to rm -rf a directory it does not own: $(printf '%s' "$RUN_OUT" | grep 'rm -rf')"
+fi
+if printf '%s' "$RUN_OUT" | grep -q 'this directory is yours'; then
+  ok "and says so, rather than leaving the teardown looking incomplete"
+else
+  bad "silently omitted the removal line instead of saying why: $RUN_OUT"
+fi
+
+# The other half, or the pair proves nothing: a script that never offers removal would pass both
+# assertions above. Run from an empty directory, the quickstart makes tapstate-demo, owns it, and there
+# the whole-directory removal is the correct advice.
+saved_out="$RUN_OUT"; saved_rc="$RUN_RC"
+OWNED="$(mktemp -d)"
+RUN_CWD="$OWNED" run_phase_fakes
+if printf '%s' "$RUN_OUT" | grep -q 'rm -rf tapstate-demo'; then
+  ok "a directory the quickstart created is offered for removal by name"
+else
+  bad "own directory not offered for removal: $RUN_OUT"
+fi
+if [ -d "$OWNED/tapstate-demo" ]; then
+  ok "and that directory is the one it made, not the caller's"
+else
+  bad "the run did not make its own directory under $OWNED"
+fi
+rm -rf "$OWNED"
+RUN_OUT="$saved_out"; RUN_RC="$saved_rc"
 # Telling someone to publish the port is the half of the advice that does not work on its own: the
 # set registers its member under a container-internal name, so a driver that discovers the topology
 # dials the host's own loopback and is refused. The note has to carry directConnection with it.

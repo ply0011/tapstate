@@ -121,8 +121,29 @@ jobs:
           # which is the very failure this lane exists to catch, reintroduced one level up.
           set -euo pipefail
           script="$GITHUB_WORKSPACE/deploy/quickstart/quickstart.sh"
+          # Which compose file the script fetches is the difference between the two legs, and it was
+          # the same for both until now: the script is the checkout's in either case, but the assets it
+          # downloads came from the release in both, so the source-built leg started the checkout's
+          # image against the release's compose. It then proved a combination that exists nowhere -- and
+          # a compose change in the checkout would be validated against the previous release's file.
+          #
+          # published   leave it unset: the release's assets are the point of that leg.
+          # from-source point it at the checkout, so the whole stack is the code under test.
+          if [ "${{ matrix.server }}" = from-source ]; then
+            export TAPSTATE_QUICKSTART_BASE_URL="file://$GITHUB_WORKSPACE"
+          fi
           cd "$RUNNER_TEMP"
           cat "$script" | sh 2>&1 | tee run.log
+          # The image the stack actually started, held to the one this job prepared. Without this the
+          # leg can silently run a different server than the one it built or pulled -- which is the
+          # failure the line above exists to remove, and it would look identical in the log.
+          started="$(sed -n 's|.*image: \(ghcr.io/tapstate/tapstate:[^ ]*\).*|\1|p' \
+            tapstate-demo/docker-compose.yml | head -1)"
+          [ "$started" = '${{ steps.img.outputs.ref }}' ] || {
+            echo "the stack started $started, but this job prepared ${{ steps.img.outputs.ref }}" >&2
+            exit 1
+          }
+          echo "stack ran: $started"
           # Read the count line off the script's own summary. This grep has drifted from that summary
           # twice now, and both times it could only fail on a run that delivered every row: first when
           # the line became "the view now holds" as the demo started declaring a view, then again when a

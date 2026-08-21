@@ -147,6 +147,16 @@ YAML
 # second or two so a change still in flight is never misread as a change that did not happen.
 print_next_steps() {
     demo_dir="$(basename "$PWD")"
+    # Whole-directory removal is only ever offered for a directory this script made. Run in place --
+    # a saved script executed where it sits -- the directory is the user's and holds their files, so
+    # printing `rm -rf` on it puts a command that destroys unrelated work in front of someone who has
+    # been told, correctly, that everything above was safe to copy.
+    if [ "${demo_dir_is_ours:-no}" = yes ]; then
+        removal_line="  cd .. && rm -rf $demo_dir  remove this directory (CLI, jars, workspace, .env)"
+    else
+        removal_line="  this directory is yours, so nothing here removes it. What the quickstart added:
+    tapstate tap versions/ connectors/ *-connector.jar mysql-init/ postgres-init/ work/ .env docker-compose.yml"
+    fi
     uri="mongodb://mongo:27017/views?directConnection=true"
     cat <<EOF
 quickstart: pipeline started. The stack is running.
@@ -194,7 +204,7 @@ Stop, and pick it up later (run in this directory):
 
 Tear down -- this one is not reversible (run in this directory):
   docker compose down -v     stop the stack and delete its data (a re-run re-registers the connectors)
-  cd .. && rm -rf $demo_dir  remove this directory (CLI, jars, workspace, .env)
+$removal_line
 The pulled images remain; remove them with:  docker image rm <image>
 EOF
 }
@@ -204,9 +214,14 @@ main() {
     # everything this script adds must stay inside one removable directory. Either marker file says
     # "work here": the saved script is the download-then-run form, the compose file is a re-run of an
     # earlier one (piped re-runs land back in the same directory rather than nesting a second).
+    # Whether this directory is ours decides what the teardown may offer. Working in place is a
+    # supported form -- a saved script run where it sits -- and there the directory is the user's, with
+    # their files in it.
+    demo_dir_is_ours=no
     if [ ! -f ./quickstart.sh ] && [ ! -f ./docker-compose.yml ]; then
         mkdir -p tapstate-demo
         cd tapstate-demo
+        demo_dir_is_ours=yes
         printf 'quickstart: working in %s\n' "$PWD"
     fi
 

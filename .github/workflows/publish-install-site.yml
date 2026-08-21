@@ -51,6 +51,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # main, deliberately, not the event's tag. On a release event the default checkout is the
+          # tag's tree, and this job runs two things that must not come from there: the routing
+          # fallback, whose whole purpose is to cover a tag that predates the checked-in config, and
+          # the verifier that decides whether the deploy actually took. Both would be missing or stale
+          # exactly on the tags that need them. The release's own payload is read out of the tag by
+          # git show below, so the content still comes from the release.
+          ref: main
           fetch-depth: 0
 
       - name: Refuse without credentials, and say which one is missing
@@ -83,8 +90,8 @@ jobs:
           set -eu
           tag="${INPUT_TAG:-${EVENT_TAG:-}}"
           if [ -z "$tag" ]; then
-            tag="$(gh release list --limit 30 --json tagName,isDraft \
-                     --jq 'map(select(.isDraft | not)) | first | .tagName')"
+            tag="$(gh release list --limit 30 --exclude-drafts --json tagName \
+                     --jq 'first | .tagName')"
           fi
           test -n "$tag" || { echo "no published release to publish" >&2; exit 1; }
           echo "publishing tag: $tag"
