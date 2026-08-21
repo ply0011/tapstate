@@ -41,6 +41,16 @@ final class ConnectorWalker {
     private ConnectorWalker() {
     }
 
+    /**
+     * Whether a module is one the walk sets aside rather than catalogues. Asked here by the drift
+     * scan too: a scan announcing a test harness as a connector nobody catalogued would be right on
+     * the letter and useless in practice, and a second copy of the list would start doing that the
+     * day the two fell out of step.
+     */
+    static boolean isExcludedModule(String moduleName) {
+        return EXCLUDED.contains(moduleName);
+    }
+
     static WalkResult walk(Path connectorsRepoRoot) {
         List<ConnectorSource> sources = new ArrayList<>();
         List<Exemption> exemptions = new ArrayList<>();
@@ -62,7 +72,7 @@ final class ConnectorWalker {
         if (!Files.isDirectory(module.resolve("src").resolve("main"))) {
             return; // not a Maven module (dist/, build/, ...); not a connector by construction
         }
-        if (EXCLUDED.contains(name)) {
+        if (isExcludedModule(name)) {
             exemptions.add(new Exemption(Exemption.Category.EXCLUDED, name, "known non-connector module"));
             return;
         }

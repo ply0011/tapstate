@@ -22,6 +22,13 @@ final class SpecPathEnumerator {
     private SpecPathEnumerator() {
     }
 
+    /** The module directory a path sits in — the second segment of the shape above. */
+    private static String moduleOf(String path) {
+        int firstSlash = path.indexOf('/');
+        int secondSlash = path.indexOf('/', firstSlash + 1);
+        return path.substring(firstSlash + 1, secondSlash);
+    }
+
     /**
      * The specification files the checked-in snapshot claims, each row naming its own. Driven by what
      * the rows record rather than by a directory this side names: connectors live in more than one
@@ -53,11 +60,17 @@ final class SpecPathEnumerator {
      * upstream names its files, and a guess that excludes too much goes unnoticed — the connector it
      * dropped simply never appears, which reads exactly like an upstream that added nothing. So this
      * offers candidates and lets reading the id decide, paying a few extra kilobytes for it.
+     *
+     * <p>Loose about what a specification looks like, not about which modules count: the upstream
+     * carries test harnesses, mocks and demos whose specifications parse like any other, and the walk
+     * that builds the catalog already sets those modules aside. Measured against the real upstream,
+     * skipping them is the difference between four genuinely uncatalogued connectors and thirteen -
+     * nine of which nobody would ever act on, which is how a report stops being read.
      */
     static List<String> specPathsToFetch(List<ConnectorCatalogEntry> snapshot, List<String> upstreamPaths) {
         TreeSet<String> paths = new TreeSet<>(declaredSpecPaths(snapshot));
         for (String path : upstreamPaths) {
-            if (MODULE_RESOURCE_JSON.matcher(path).matches()) {
+            if (MODULE_RESOURCE_JSON.matcher(path).matches() && !ConnectorWalker.isExcludedModule(moduleOf(path))) {
                 paths.add(path);
             }
         }

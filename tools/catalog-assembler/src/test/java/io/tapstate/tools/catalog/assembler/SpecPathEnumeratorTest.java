@@ -38,6 +38,18 @@ class SpecPathEnumeratorTest {
                 .contains("connectors-unpackage/hudi-connector/src/main/resources/spec_hudi.json");
     }
 
+    @Test
+    void leavesOutASpecInAModuleTheWalkSetsAside() {
+        List<ConnectorCatalogEntry> snapshot = List.of(
+                entry("mysql", "connectors/mysql-connector/src/main/resources/spec_mysql.json"));
+        List<String> upstream = List.of(
+                "connectors/tdd-connector/src/main/resources/sourceSpec.json",
+                "connectors-unpackage/hudi-connector/src/main/resources/spec_hudi.json");
+
+        assertThat(SpecPathEnumerator.specPathsToFetch(snapshot, upstream))
+                .doesNotContain("connectors/tdd-connector/src/main/resources/sourceSpec.json");
+    }
+
     private static ConnectorCatalogEntry entry(String id, String specPath) {
         return new ConnectorCatalogEntry(id, id, id, null, null, List.of(), null, null, false, List.of(),
                 new Provenance(null, specPath, null, null, null, null));
