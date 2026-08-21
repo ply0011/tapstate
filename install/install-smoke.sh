@@ -421,21 +421,42 @@ fi
 # Deciding on PATH alone skipped the upgrade there, leaving the shortcut pointing into a version
 # directory this script deletes on the way out -- a dangling command, produced by an installer that
 # reported success.
+#
+# The second install has to be a different release, or the case proves nothing: install the same
+# version twice and the alias matches whether or not it was rewritten, so the skipped-upgrade bug
+# passes. The stub tree already carries 9.9.9 for exactly this.
 idir="$(mktemp -d)/bin"
-TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$STUB" TAPSTATE_INSTALL_DIR="$idir" \
-  sh "$INSTALL_SH" >/dev/null 2>&1
+run_install Darwin arm64 glibc "$idir"
 occupied="$(mktemp -d)"
 printf '#!/bin/sh\necho "not tapstate"\n' > "$occupied/tap"; chmod +x "$occupied/tap"
-OUT="$(PATH="$occupied:$PATH" TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$STUB" \
-       TAPSTATE_INSTALL_DIR="$idir" sh "$INSTALL_SH" 2>&1)"; RC=$?
-if [ "$RC" -eq 0 ] && [ -L "$idir/tap" ] \
-   && [ "$(cd "$idir" && readlink tap)" = "$(cd "$idir" && readlink tapstate)" ] \
-   && ! printf '%s' "$OUT" | grep -q 'already on PATH'; then
-  ok "our own alias is still upgraded when another tap precedes it on PATH"
+FIRST_VERSION="$VERSION"
+VERSION=9.9.9; make_asset darwin-arm64
+PATH="$occupied:$PATH" run_install Darwin arm64 glibc "$idir"
+VERSION="$FIRST_VERSION"
+if [ "$RC" -eq 0 ] && [ "$(readlink "$idir/tap")" = "versions/9.9.9/bin/tapstate" ]; then
+  ok "our own alias is upgraded to the new release even when another tap precedes it on PATH"
 else
-  bad "own alias skipped over a PATH conflict rc=$RC: tap=$(readlink "$idir/tap" 2>/dev/null) said=$(printf '%s' "$OUT" | grep -c 'already on PATH')"
+  bad "own alias not upgraded past a PATH conflict rc=$RC: tap=$(readlink "$idir/tap" 2>/dev/null)"
 fi
 rm -rf "$occupied"
+
+# A crafted link that matches the shape but escapes the directory. The ownership test is a glob, so
+# `..` is the way through it; adopting such a link means replacing a file this installation does not
+# own, which is the same failure the plain foreign case covers, reached by a different road.
+idir="$(mktemp -d)/bin"
+mkdir -p "$idir"
+elsewhere="$(mktemp -d)"
+printf '#!/bin/sh\necho "not tapstate"\n' > "$elsewhere/tapstate"; chmod +x "$elsewhere/tapstate"
+ln -s "versions/../../..$elsewhere/bin/tapstate" "$idir/tap"
+target_before="$(readlink "$idir/tap")"
+run_install Darwin arm64 glibc "$idir"
+if [ "$RC" -eq 0 ] && [ "$(readlink "$idir/tap")" = "$target_before" ] \
+   && printf '%s' "$OUT" | grep -q 'is not ours'; then
+  ok "a link that matches the shape but escapes the directory is not adopted"
+else
+  bad "traversal link adopted rc=$RC: now=$(readlink "$idir/tap" 2>/dev/null) was=$target_before"
+fi
+rm -rf "$elsewhere"
 
 # --- summary ----------------------------------------------------------------------------------------
 echo

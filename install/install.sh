@@ -249,7 +249,13 @@ install_alias() {
     if [ -L "$alias_dir/tap" ]; then
         # Ours by where it points, not by what the target is called: the link is written relative to
         # the install directory, so a target that stays inside it is one this script wrote.
-        case "$(readlink "$alias_dir/tap")" in
+        # A glob is not a path check: `versions/../../other/bin/tapstate` matches the pattern and
+        # resolves outside this directory entirely, so a crafted link would be adopted and replaced.
+        # Anything containing `..` is refused before the shape is even considered -- the links this
+        # script writes never need one.
+        alias_target="$(readlink "$alias_dir/tap")"
+        case "$alias_target" in
+            *..*) ours=no ;;
             versions/*/bin/tapstate | tapstate) ours=yes ;;
         esac
     fi
