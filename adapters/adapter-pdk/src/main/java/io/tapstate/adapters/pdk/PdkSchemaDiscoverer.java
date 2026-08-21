@@ -189,7 +189,15 @@ public final class PdkSchemaDiscoverer implements SchemaDiscoverer {
         List<SourceIndex> indexes = new ArrayList<>();
         if (table.getIndexList() != null) {
             for (TapIndex index : table.getIndexList()) {
-                indexes.add(new SourceIndex(index.getName(), indexFieldNames(index), Boolean.TRUE.equals(index.getUnique())));
+                List<String> named = indexFieldNames(index);
+                // A part that named no column was dropped, so what is reported covers strictly fewer
+                // columns than the database constrains. Uniqueness does not survive that: UNIQUE
+                // (user_id, scene, (expr)) permits duplicate (user_id, scene) pairs, and reporting the
+                // pair as unique would state a guarantee the database does not make - to a reader
+                // choosing an upsert key on the strength of it.
+                boolean whole = named.size() == parts(index);
+                indexes.add(new SourceIndex(
+                        index.getName(), named, whole && Boolean.TRUE.equals(index.getUnique())));
             }
         }
         return indexes;
@@ -206,7 +214,8 @@ public final class PdkSchemaDiscoverer implements SchemaDiscoverer {
      *
      * <p>Skipping is right rather than merely safe: these names exist to say what a write could be
      * keyed by, and an expression is not something a row can be matched on. An index that mixes the two
-     * keeps the columns it does name.
+     * keeps the columns it does name - but not its uniqueness, which the caller drops, since what is
+     * left covers fewer columns than the constraint does.
      */
     private static List<String> indexFieldNames(TapIndex index) {
         List<String> names = new ArrayList<>();
@@ -218,6 +227,11 @@ public final class PdkSchemaDiscoverer implements SchemaDiscoverer {
             }
         }
         return names;
+    }
+
+    /** How many parts an index declares, named or not - what the kept names are measured against. */
+    private static int parts(TapIndex index) {
+        return index.getIndexFields() == null ? 0 : index.getIndexFields().size();
     }
 
     /**

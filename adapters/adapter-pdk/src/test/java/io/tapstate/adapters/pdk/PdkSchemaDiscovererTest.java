@@ -118,7 +118,10 @@ class PdkSchemaDiscovererTest {
         assertThat(indexes.get(0).fields())
                 .as("the named columns survive; the expression part contributes no column name")
                 .containsExactly("amount");
-        assertThat(indexes.get(0).unique()).isTrue();
+        assertThat(indexes.get(0).unique())
+                .as("what survives covers fewer columns than the constraint, so it is not unique: "
+                        + "UNIQUE (amount, (expr)) permits duplicate amounts")
+                .isFalse();
     }
 
     @Test
