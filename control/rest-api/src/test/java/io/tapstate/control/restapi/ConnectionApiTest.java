@@ -162,10 +162,9 @@ class ConnectionApiTest {
     @Test
     void isAuditedToTheAuthenticatedPrincipalNotTheRequestBody() {
         String bearer = token(Scope.WRITE);
-        // The principal the audit must be attributed to is the session's own subject, resolved from the
-        // credential by the same authenticator the guard uses — never anything the request body could forge.
-        String expectedPrincipal =
-                context.getBean(CredentialAuthenticator.class).authenticate(bearer).orElseThrow().subject();
+        // The principal the audit must be attributed to is the machine token's verified subject, never
+        // anything the request body could forge.
+        String expectedPrincipal = context.getBean(TokenService.class).authenticate(bearer).orElseThrow().subject();
 
         client().post().uri("/api/connections:test")
                 .header("Authorization", "Bearer " + bearer)
@@ -307,8 +306,7 @@ class ConnectionApiTest {
     @Test
     void auditsTheDiscoveryToTheAuthenticatedPrincipal() {
         String bearer = token(Scope.WRITE);
-        String expectedPrincipal =
-                context.getBean(CredentialAuthenticator.class).authenticate(bearer).orElseThrow().subject();
+        String expectedPrincipal = context.getBean(TokenService.class).authenticate(bearer).orElseThrow().subject();
 
         client().post().uri("/api/connections:discover-schema")
                 .header("Authorization", "Bearer " + bearer)
@@ -396,14 +394,15 @@ class ConnectionApiTest {
 
     /**
      * A minimal boot config: auto-configures Web MVC + the embedded servlet container, imports the path
-     * prefix + interceptor registration ({@link RestApiConfiguration}), the connection controller and the
-     * coded-error advice, and supplies the {@link AuthInterceptor} bean that engages the guard — so the verb
-     * surface is authenticated exactly as in production. The connection-test service is real, composed over
+     * prefix configuration ({@link RestApiConfiguration}), Spring Security, the connection controller and the
+     * coded-error advice, so the verb surface is authenticated exactly as in production. The connection-test
+     * service is real, composed over
      * an in-memory probe and stores.
      */
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({RestApiConfiguration.class, ConnectionController.class, ApiExceptionHandler.class})
+    @Import({RestApiConfiguration.class, RestApiSecurityConfiguration.class,
+            ConnectionController.class, ApiExceptionHandler.class})
     static class TestApp {
 
         @Bean
@@ -434,16 +433,6 @@ class ConnectionApiTest {
         @Bean
         TokenService tokenService(TokenStore store, TokenSecrets secrets, Clock clock) {
             return new TokenService(store, secrets, clock);
-        }
-
-        @Bean
-        CredentialAuthenticator credentialAuthenticator(TokenService tokens, TokenSigner signer) {
-            return new CredentialAuthenticator(tokens, signer);
-        }
-
-        @Bean
-        AuthInterceptor authInterceptor(OperationRegistry registry, CredentialAuthenticator credentials) {
-            return new AuthInterceptor(registry, credentials);
         }
 
         @Bean

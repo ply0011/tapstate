@@ -5,7 +5,6 @@ import io.tapstate.control.core.SourceDraft;
 import io.tapstate.control.core.SourceError;
 import io.tapstate.control.core.SourceView;
 import io.tapstate.core.common.TapstateException;
-import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,8 +35,8 @@ class SourceController {
 
     @Verb("source.create")
     @PostMapping("/sources")
-    ResponseEntity<SourceView> create(@RequestBody SourceDraft draft, HttpServletRequest request) {
-        SourceView created = sources.create(AuthInterceptor.authenticatedPrincipal(request), draft);
+    ResponseEntity<SourceView> create(@RequestBody SourceDraft draft) {
+        SourceView created = sources.create(AuthenticatedCaller.subject(), draft);
         return ResponseEntity.created(URI.create("/api/sources/" + created.id()))
                 .eTag(created.contentHash())
                 .body(created);
@@ -61,10 +60,9 @@ class SourceController {
     ResponseEntity<SourceView> replace(
             @PathVariable("id") String id,
             @RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch,
-            @RequestBody SourceDraft draft,
-            HttpServletRequest request) {
+            @RequestBody SourceDraft draft) {
         SourceView replaced = sources.replace(
-                AuthInterceptor.authenticatedPrincipal(request), id, expectedHash(id, ifMatch), draft);
+                AuthenticatedCaller.subject(), id, expectedHash(id, ifMatch), draft);
         return ResponseEntity.ok().eTag(replaced.contentHash()).body(replaced);
     }
 
@@ -72,9 +70,8 @@ class SourceController {
     @DeleteMapping("/sources/{id}")
     ResponseEntity<Void> delete(
             @PathVariable("id") String id,
-            @RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch,
-            HttpServletRequest request) {
-        sources.delete(AuthInterceptor.authenticatedPrincipal(request), id, expectedHash(id, ifMatch));
+            @RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+        sources.delete(AuthenticatedCaller.subject(), id, expectedHash(id, ifMatch));
         return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
     }
 

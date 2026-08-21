@@ -366,7 +366,7 @@ class ControlPlaneAssemblyIT {
         properties.addAll(List.of(extraProperties));
         context = new SpringApplicationBuilder(AssemblyApp.class)
                 .properties(properties.toArray(String[]::new))
-                .run();
+                .run("--server.port=0");
         return ((WebServerApplicationContext) context).getWebServer().getPort();
     }
 

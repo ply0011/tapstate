@@ -4,7 +4,6 @@ import io.tapstate.control.core.PipelineLifecycleService;
 import io.tapstate.core.lifecycle.DesiredState;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -14,8 +13,8 @@ import org.springframework.web.bind.annotation.RestController;
  * the verb — and carries no business logic of its own: the state-machine check, the revision-compatibility
  * check, and the audited desired-state write all live in the service.
  *
- * <p>The caller principal is read from the request attribute the {@link AuthInterceptor} stashes after it
- * authenticates the credential, so the audited write records the real caller rather than a placeholder.
+ * <p>The caller principal is read from Spring Security's current context, so the audited write records the
+ * real caller rather than a placeholder.
  * There is deliberately no {@code rewind} verb: a re-dig is the explicit two-step stop then start, composed
  * by the caller.
  */
@@ -30,29 +29,25 @@ class PipelineController {
 
     @Verb("pipeline.start")
     @PostMapping("/pipelines/{id}:start")
-    DesiredState start(@PathVariable("id") String id,
-                       @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) String principal) {
-        return lifecycle.start(principal, id);
+    DesiredState start(@PathVariable("id") String id) {
+        return lifecycle.start(AuthenticatedCaller.subject(), id);
     }
 
     @Verb("pipeline.stop")
     @PostMapping("/pipelines/{id}:stop")
-    DesiredState stop(@PathVariable("id") String id,
-                      @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) String principal) {
-        return lifecycle.stop(principal, id);
+    DesiredState stop(@PathVariable("id") String id) {
+        return lifecycle.stop(AuthenticatedCaller.subject(), id);
     }
 
     @Verb("pipeline.pause")
     @PostMapping("/pipelines/{id}:pause")
-    DesiredState pause(@PathVariable("id") String id,
-                       @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) String principal) {
-        return lifecycle.pause(principal, id);
+    DesiredState pause(@PathVariable("id") String id) {
+        return lifecycle.pause(AuthenticatedCaller.subject(), id);
     }
 
     @Verb("pipeline.resume")
     @PostMapping("/pipelines/{id}:resume")
-    DesiredState resume(@PathVariable("id") String id,
-                        @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) String principal) {
-        return lifecycle.resume(principal, id);
+    DesiredState resume(@PathVariable("id") String id) {
+        return lifecycle.resume(AuthenticatedCaller.subject(), id);
     }
 }

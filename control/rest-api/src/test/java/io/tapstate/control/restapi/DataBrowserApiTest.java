@@ -1,7 +1,6 @@
 package io.tapstate.control.restapi;
 
 import io.tapstate.control.core.ControlOperations;
-import io.tapstate.control.core.CredentialAuthenticator;
 import io.tapstate.control.core.DataBrowserPreviewReport;
 import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.DataBrowserStatsReport;
@@ -595,14 +594,15 @@ class DataBrowserApiTest {
     }
 
     /**
-     * A minimal boot config: the path prefix + interceptor registration, the data-browser controller and the
+     * A minimal boot config: the path prefix + security chains, the data-browser controller and the
      * coded-error advice, with the real control-core service composed over fake probes and an in-memory
      * artifact store. The JSON contract mirrors the production face, so a body carrying a field the request
      * shape has no room for is refused rather than ignored.
      */
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({RestApiConfiguration.class, DataBrowserController.class, ApiExceptionHandler.class})
+    @Import({RestApiConfiguration.class, RestApiSecurityConfiguration.class, DataBrowserController.class,
+            ApiExceptionHandler.class})
     static class TestApp {
 
         @Bean
@@ -641,16 +641,6 @@ class DataBrowserApiTest {
         @Bean
         TokenService tokenService(TokenStore store, TokenSecrets secrets, Clock clock) {
             return new TokenService(store, secrets, clock);
-        }
-
-        @Bean
-        CredentialAuthenticator credentialAuthenticator(TokenService tokens, TokenSigner signer) {
-            return new CredentialAuthenticator(tokens, signer);
-        }
-
-        @Bean
-        AuthInterceptor authInterceptor(OperationRegistry registry, CredentialAuthenticator credentials) {
-            return new AuthInterceptor(registry, credentials);
         }
 
         @Bean

@@ -158,8 +158,7 @@ class ConnectorApiTest {
     @Test
     void isAuditedToTheAuthenticatedPrincipalAgainstTheArtifactContentHash() {
         String bearer = token(Scope.WRITE);
-        String expectedPrincipal =
-                context.getBean(CredentialAuthenticator.class).authenticate(bearer).orElseThrow().subject();
+        String expectedPrincipal = context.getBean(TokenService.class).authenticate(bearer).orElseThrow().subject();
 
         client().post().uri("/api/connectors:register")
                 .header("Authorization", "Bearer " + bearer)
@@ -459,13 +458,14 @@ class ConnectorApiTest {
 
     /**
      * A minimal boot config: auto-configures Web MVC + the embedded servlet container, imports the path
-     * prefix + interceptor registration, the connector controller and the coded-error advice, and supplies
-     * the {@link AuthInterceptor} bean that engages the guard — so the verb surface is authenticated exactly
-     * as in production. The register service is real, composed over an in-memory registrar and audit store.
+     * prefix configuration, Spring Security, the connector controller and the coded-error advice, so the verb
+     * surface is authenticated exactly as in production. The register service is real, composed over an
+     * in-memory registrar and audit store.
      */
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({RestApiConfiguration.class, ConnectorController.class, ApiExceptionHandler.class})
+    @Import({RestApiConfiguration.class, RestApiSecurityConfiguration.class,
+            ConnectorController.class, ApiExceptionHandler.class})
     static class TestApp {
 
         @Bean
@@ -496,16 +496,6 @@ class ConnectorApiTest {
         @Bean
         TokenService tokenService(TokenStore store, TokenSecrets secrets, Clock clock) {
             return new TokenService(store, secrets, clock);
-        }
-
-        @Bean
-        CredentialAuthenticator credentialAuthenticator(TokenService tokens, TokenSigner signer) {
-            return new CredentialAuthenticator(tokens, signer);
-        }
-
-        @Bean
-        AuthInterceptor authInterceptor(OperationRegistry registry, CredentialAuthenticator credentials) {
-            return new AuthInterceptor(registry, credentials);
         }
 
         @Bean
