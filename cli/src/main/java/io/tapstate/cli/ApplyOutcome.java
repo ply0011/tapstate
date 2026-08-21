@@ -1,5 +1,7 @@
 package io.tapstate.cli;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -40,7 +42,13 @@ sealed interface ApplyOutcome {
     record Rejected(String code, String message, Map<String, Object> params) implements ApplyOutcome {
 
         public Rejected {
-            params = params == null ? Map.of() : Map.copyOf(params);
+            // An unmodifiable view rather than Map.copyOf: copyOf rejects a null value, and nothing
+            // between the server and here does - the error's arguments travel through maps that all
+            // permit one. The throw would land outside the catch that turns a bad body into a refusal
+            // and inside the one that reports the server as unreachable, so a refusal the server did
+            // send would be reported as a server nobody could reach. A null-valued parameter is kept
+            // as sent.
+            params = params == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(params));
         }
 
         /** A refusal that carried no parameters, which is every non-coded one. */
@@ -68,7 +76,8 @@ sealed interface ApplyOutcome {
      */
     record Warning(String code, Map<String, Object> params) {
         public Warning {
-            params = params == null ? Map.of() : Map.copyOf(params);
+            // Same reason as the refusal above: a null-valued parameter is carried, not fatal.
+            params = params == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(params));
         }
     }
 }
