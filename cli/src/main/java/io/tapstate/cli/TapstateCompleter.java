@@ -106,7 +106,7 @@ final class TapstateCompleter implements Completer {
         String connector = optionValue(words, "-c", "--connector");
         if (connector != null && catalog.ids().contains(connector)) {
             ConnectorCatalogEntry entry = catalog.byId(connector);
-            if (CapabilityHints.modesAreTrustworthy(entry) && !entry.modes().isEmpty()) {
+            if (entry.modesAreTrustworthy() && !entry.modes().isEmpty()) {
                 return entry.modes().stream().map(SourceMode::yaml).toList();
             }
         }

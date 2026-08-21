@@ -28,4 +28,21 @@ public record ConnectorCatalogEntry(
         modes = modes == null ? List.of() : Collections.unmodifiableList(List.copyOf(modes));
         config = config == null ? List.of() : Collections.unmodifiableList(List.copyOf(config));
     }
+
+    /**
+     * Whether these modes may be treated as the connector's full matrix, rather than a guess to defer
+     * on. Capability derivation only yields {@code snapshot} / {@code cdc}; the unbounded
+     * {@code stream} / {@code api} / {@code file} modes cannot be told apart from capabilities and so
+     * must be declared. Derivation is therefore authoritative only for a database, whose real modes
+     * are exactly the derivable ones; any other connector is trusted only once somebody declared its
+     * modes — wherever that declaration was written.
+     *
+     * <p>Asks {@link ModeSource#isDeclaration()} rather than comparing against one constant: the
+     * question is whether a person declared these modes, and more than one source carries such a
+     * declaration. Naming a single constant here would quietly demote every entry from the others.
+     */
+    public boolean modesAreTrustworthy() {
+        return group() == ConnectorGroup.DATABASE
+                || provenance().modeSource().values().stream().anyMatch(ModeSource::isDeclaration);
+    }
 }
