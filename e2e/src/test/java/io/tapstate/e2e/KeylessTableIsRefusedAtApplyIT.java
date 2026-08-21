@@ -144,7 +144,7 @@ class KeylessTableIsRefusedAtApplyIT {
         try (ServerHandle server = Tiers.IN_PROCESS.launch(SharedMongo.replicaSetUrl("keyless_probe"))) {
             ControlPlane control = NumericSource.connected(server);
 
-            String report = control.testConnection(SOURCE_ID, "mysql", NumericSource.config(mysql));
+            String report = control.testConnectionBody(SOURCE_ID, "mysql", NumericSource.config(mysql));
 
             assertThat(report)
                     .as("the report names the connection it tested and carries the connector's checks")

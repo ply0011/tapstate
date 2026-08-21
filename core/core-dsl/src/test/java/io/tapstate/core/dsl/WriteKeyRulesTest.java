@@ -66,6 +66,58 @@ class WriteKeyRulesTest {
         return Map.of("src_orders", List.of(new DiscoveredTable("orders", columns, primaryKey, null)));
     }
 
+    /**
+     * A keyless table the pipeline does not read cannot refuse the pipeline.
+     *
+     * <p>The discovered model holds every table the source resolves to, and a source selecting several
+     * - or selecting none, which is how the whole database is read - puts them all in the map. Judging
+     * all of them refuses an apply over a table this pipeline never reads and never writes, naming a
+     * table no edit to the pipeline can do anything about. On the database this rule was written for,
+     * that is 225 tables that have nothing to do with the one being synced.
+     *
+     * <p>The tables that reach the serve block are what the write is made of, so those are what is
+     * judged - resolved the same way the row-expression rules resolve theirs.
+     */
+    @Test
+    @DisplayName("a keyless table elsewhere in the source does not refuse a pipeline that reads another")
+    void aKeylessTableThePipelineDoesNotReadIsNotJudged() {
+        Map<String, TapstateType> columns = new LinkedHashMap<>();
+        columns.put("id", TapstateType.INT64);
+        Map<String, List<DiscoveredTable>> discovered = Map.of("src_orders", List.of(
+                new DiscoveredTable("orders", columns, List.of("id"), null),
+                new DiscoveredTable("events", columns, List.of(), null)));
+
+        assertThatCode(() -> WriteKeyRules.validate(
+                batch(pipeline(", write_mode: upsert")), discovered))
+                .doesNotThrowAnyException();
+    }
+
+    /** The same model, read the other way round: the keyless table is the one being served. */
+    @Test
+    @DisplayName("the keyless table is still refused when it is the one the pipeline reads")
+    void theKeylessTableIsStillRefusedWhenItIsTheOneRead() {
+        Map<String, TapstateType> columns = new LinkedHashMap<>();
+        columns.put("id", TapstateType.INT64);
+        Map<String, List<DiscoveredTable>> discovered = Map.of("src_orders", List.of(
+                new DiscoveredTable("orders", columns, List.of("id"), null),
+                new DiscoveredTable("events", columns, List.of(), null)));
+        String servesEvents = """
+                version: tapstate/v1
+                kind: pipeline
+                id: events_out
+                source: src_orders
+                serve:
+                  from: events
+                  sync: [ { id: out, source: src_orders, write_mode: upsert } ]
+                """;
+
+        DslException thrown = catchThrowableOfType(DslException.class,
+                () -> WriteKeyRules.validate(batch(servesEvents), discovered));
+
+        assertThat(thrown).isNotNull();
+        assertThat(thrown.args()).containsEntry("table", "events");
+    }
+
     @Test
     @DisplayName("upsert into a table whose source declares no key is refused, naming the table")
     void upsertWithoutAKeyIsRefused() {

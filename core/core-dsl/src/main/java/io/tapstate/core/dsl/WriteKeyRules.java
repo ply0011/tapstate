@@ -11,6 +11,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Judging a batch's writes against the keys their sources were discovered to hold. An upsert matches
@@ -20,9 +21,10 @@ import java.util.Map;
  * that what it holds is wrong - so it is refused here, before anything runs.
  *
  * <p>Like the row-expression type rules this runs only where a discovered model exists, never in the
- * offline check, which has none. The key it reads is the one the upstream source declared: the key an
- * upsert matches on comes from the model discovered for the source being read, not from the target
- * being written, and not from the rows in flight.
+ * offline check, which has none, and it judges the tables that actually reach the serve block rather
+ * than every table the source was discovered to hold. The key it reads is the one the upstream source
+ * declared: the key an upsert matches on comes from the model discovered for the source being read,
+ * not from the target being written, and not from the rows in flight.
  *
  * <p>Append is not judged. It never matches a write to an existing row, so it has no use for a key,
  * and a keyless table is an ordinary thing to append to.
@@ -53,21 +55,47 @@ public final class WriteKeyRules {
     }
 
     private void validatePipeline(PipelineResource p) {
+        boolean matchesOnAKey = false;
         for (SyncElement sync : syncElements(p.serve())) {
-            if (!matchesOnAKey(sync)) {
+            matchesOnAKey |= matchesOnAKey(sync);
+        }
+        if (!matchesOnAKey) {
+            return;
+        }
+        for (Upstream up : servedTables(p)) {
+            // A table the wiring could not name is not judged. Every other rule here widens to the
+            // whole source when it cannot resolve one, which is safe where widening only lets more
+            // through - and this rule is the other way round, where widening refuses more. Refusing
+            // on a table nobody established the write even reaches would blame the wrong one.
+            if (up.table() == null) {
                 continue;
             }
-            for (String sourceId : p.sources()) {
-                // A source nobody discovered contributes no tables. Saying a table it might hold has
-                // no key would be inventing a fact about something never seen; the obligation to
-                // discover before applying is a separate rule's to enforce.
-                for (DiscoveredTable table : tablesBySource.getOrDefault(sourceId, List.of())) {
-                    if (table.primaryKey().isEmpty()) {
-                        throw noKey(table.name(), sourceId);
-                    }
+            // A source nobody discovered contributes no tables. Saying a table it might hold has
+            // no key would be inventing a fact about something never seen; the obligation to
+            // discover before applying is a separate rule's to enforce.
+            for (DiscoveredTable table : tablesBySource.getOrDefault(up.source(), List.of())) {
+                if (table.name().equals(up.table()) && table.primaryKey().isEmpty()) {
+                    throw noKey(table.name(), up.source());
                 }
             }
         }
+    }
+
+    /**
+     * The tables the serve block reads, which are the tables the write is made of.
+     *
+     * <p>Resolved through the same wiring the row-expression rules resolve theirs through, rather
+     * than by taking every table the source was discovered to hold. Those two differ by the whole
+     * database: a source with no {@code tables:} selector resolves to all of it, and a selector that
+     * matches nothing deliberately falls back to all of it as well.
+     */
+    private Set<Upstream> servedTables(PipelineResource p) {
+        Wiring wiring = new Wiring(p, byId);
+        return switch (p.serve()) {
+            case null -> Set.of();
+            case ServeBlock.Inline inline -> wiring.reaching(inline.from());
+            case ServeBlock.Use use -> wiring.reaching(use.from());
+        };
     }
 
     /**

@@ -384,11 +384,16 @@ final class ControlPlane {
     }
 
     /**
-     * Drives a connection test and returns the report body. The verb probes the connection for real -
-     * it inits the connector, discovers, and reads a small sample - so it exercises paths no other
-     * verb reaches, which is why a witness that only applies and discovers cannot stand in for it.
+     * Drives a connection test and returns the report body verbatim. The verb probes the connection
+     * for real - it inits the connector, discovers, and reads a small sample - so it exercises paths
+     * no other verb reaches, which is why a witness that only applies and discovers cannot stand in
+     * for it.
+     *
+     * <p>The body rather than the parsed form of {@link #testConnection}, because what a caller wants
+     * here is what the report does <em>not</em> say: a connector fault laundered into a message is
+     * invisible once the report is reduced to a status per check.
      */
-    String testConnection(String resourceId, String connectorId, Map<String, Object> settings) {
+    String testConnectionBody(String resourceId, String connectorId, Map<String, Object> settings) {
         String body = JsonWriter.write(
                 Map.of("id", resourceId, "connectorId", connectorId, "settings", settings));
         HttpResponse<String> response = send(authed("/api/connections:test", body));
