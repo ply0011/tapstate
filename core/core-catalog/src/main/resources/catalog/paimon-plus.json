@@ -1,7 +1,7 @@
 {
-  "id": "paimon",
-  "name": "Paimon",
-  "displayName": "Apache Paimon",
+  "id": "paimon-plus",
+  "name": "Paimon Plus",
+  "displayName": "Apache Paimon Plus",
   "icon": "icons/paimon.png",
   "group": "database",
   "modes": [
@@ -268,9 +268,9 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
-    "specPath": "connectors/paimon-connector/src/main/resources/spec.json",
-    "specContentHash": "2d1fbb37c3db5723",
+    "connectorRepoSha": "d889798e",
+    "specPath": "connectors/paimon-plus-connector/src/main/resources/spec.json",
+    "specContentHash": "356d95c29ef78ecb",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {

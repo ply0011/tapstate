@@ -1,0 +1,33 @@
+# The witness that PostgreSQL's change stream carries rows written after the pipeline started.
+#
+# Its MySQL sibling proves the same thing on a binary log; this one proves it on logical decoding, which
+# is a different mechanism with a different failure. PostgreSQL images ship wal_level=replica, which
+# serves physical replication and not logical decoding, and the resulting failure is not where it is
+# configured - the snapshot half works and only the streaming half fails. So a run that admitted only
+# op=r would pass against a server that can never do change data capture at all. The transition is what
+# is worth a witness here.
+#
+# The filter admits a snapshot read (op=r) and a change insert (op=i), so the count crosses from the
+# seeded five to eight only if the tail delivers. The first await is load-bearing twice over: it proves
+# the snapshot half before any change is made, and it anchors what the second await witnesses - rows six
+# to eight can only have crossed as changes, because the snapshot was already complete and counted when
+# they were written.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips this
+# example, naming a directory whose jars do not resolve fails it.
+name: a-postgres-change-stream-carries-rows-written-after-start
+setup:
+  databases:
+    src: { kind: postgres }
+    tgt: { kind: mongo }
+  connectors: [postgres, mongodb]
+  apply: [src_postgres.tap.yml, tgt_mongo.tap.yml, pipeline.tap.yml]
+  discover: [src_postgres]
+pipeline: pipeline.tap.yml
+seed:
+  src_postgres.orders: { rows: 5 }
+steps:
+  - start
+  - await: { count: { tgt_mongo.orders: 5 } }
+  - cdc: { src_postgres.orders: insert 3 }
+  - await: { count: { tgt_mongo.orders: 8 } }

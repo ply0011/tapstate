@@ -48,6 +48,14 @@ final class ControlPlane {
     private static final Duration POLL = Duration.ofMillis(100);
 
     /**
+     * The bound for uploading a connector, which is the one request whose body is tens of megabytes -
+     * base64 of a shaded jar. The ordinary bound is about a server that has stopped answering; this one
+     * is about how long bytes take to move, and the largest connector this harness registers takes
+     * longer than that on a busy machine.
+     */
+    private static final Duration UPLOAD_TIMEOUT = Duration.ofMinutes(3);
+
+    /**
      * What every per-namespace count of unassemblable changes is named with, before the namespace itself.
      * Written here rather than shared with the runtime that publishes it: this side is a reader of the
      * product's metrics face, and a name it imported from the publisher would agree with the publisher by
@@ -295,7 +303,8 @@ final class ControlPlane {
     /** Registers a connector's runtime jar; the product makes this idempotent by content hash. */
     void registerConnector(String connectorId, byte[] jar) {
         String body = JsonWriter.write(Map.of("artifact", Base64.getEncoder().encodeToString(jar)));
-        expect(send(authed("/api/connectors:register", body)), 200, "register the " + connectorId + " connector");
+        expect(send(authed("/api/connectors:register", body, UPLOAD_TIMEOUT)), 200,
+                "register the " + connectorId + " connector");
     }
 
     /**
@@ -712,6 +721,36 @@ final class ControlPlane {
         return response.statusCode() + " " + response.body();
     }
 
+    /**
+     * Runs the product's own connection test and answers the overall outcome with each check's status.
+     *
+     * <p>Both halves are returned because the interesting question about this verb is the relationship
+     * between them: a check can report a warning while the overall outcome still passes, and a caller
+     * that saw only one of the two could not tell that had happened.
+     */
+    ConnectionTest testConnection(String connectionId, String connectorId, Map<String, Object> settings) {
+        String body = JsonWriter.write(
+                Map.of("id", connectionId, "connectorId", connectorId, "settings", settings));
+        HttpResponse<String> response = send(authed("/api/connections:test", body));
+        expect(response, 200, "test the connection " + connectionId);
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> report)) {
+            throw new AssertionError("the connection test answered no report: " + response.body());
+        }
+        Map<String, String> statusByCheck = new LinkedHashMap<>();
+        if (report.get("checks") instanceof List<?> checks) {
+            for (Object each : checks) {
+                if (each instanceof Map<?, ?> check) {
+                    statusByCheck.put(String.valueOf(check.get("name")), String.valueOf(check.get("status")));
+                }
+            }
+        }
+        return new ConnectionTest(String.valueOf(report.get("outcome")), statusByCheck);
+    }
+
+    /** A connection test's overall outcome, and the status each individual check reported. */
+    record ConnectionTest(String outcome, Map<String, String> statusByCheck) {
+    }
+
     /** The published metrics body verbatim, for the same diagnostic use and on the same terms as {@link #logs}. */
     String metrics(String pipelineId) {
         HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/metrics"));
@@ -1028,8 +1067,13 @@ final class ControlPlane {
     }
 
     private HttpRequest authed(String path, String body) {
+        return authed(path, body, TIMEOUT);
+    }
+
+    /** The same request with a bound of the caller's own, for a body large enough to need one. */
+    private HttpRequest authed(String path, String body, Duration timeout) {
         return HttpRequest.newBuilder(baseUrl.resolve(path))
-                .timeout(TIMEOUT)
+                .timeout(timeout)
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + requireCredential())
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))

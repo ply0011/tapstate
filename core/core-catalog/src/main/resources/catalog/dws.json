@@ -278,7 +278,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/dws-connector/src/main/resources/spec_dws.json",
     "specContentHash": "4fe067208dfa2264",
     "pdkApiVersion": null,

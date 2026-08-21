@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -62,6 +63,53 @@ class UnofficialConnectorIsRefusedIT {
             assertThat(refusal.code()).isEqualTo("connector.not-official");
             assertThat(refusal.status()).isEqualTo(400);
             assertThat(control.connectorIds()).doesNotContain(UNOFFICIAL_ID);
+        }
+    }
+
+    /**
+     * The boundary the supported set is drawn at: a managed variant of a supported engine is accepted,
+     * an independent database product is not - however similar its wire protocol, its change capture is
+     * its own mechanism and nothing here has been run against it.
+     *
+     * <p>These ids are the confusable ones, which is the whole reason they are named through the real
+     * control plane rather than left to the unit that already sweeps the full list. {@code mariadb}
+     * ends in a supported id, {@code tidb} speaks the same protocol as one, and {@code open-gauss} is a
+     * fork of another. A guard implemented as a prefix or substring test refuses the harness's own
+     * obviously-foreign id above while admitting all three of these, so this is the case that separates
+     * "the set is checked" from "the set is a set".
+     *
+     * <p>One tier, unlike the case above. What differs per tier is where the widening arrives from, and
+     * that is already pinned; what differs per id is the guard's own reading of the id, which does not
+     * depend on how the server was launched. Sweeping both axes at once would multiply container runs
+     * for no assertion neither one already makes.
+     *
+     * <p>No "nothing is filed under it" assertion here, and the reason is worth writing down because the
+     * obvious version of it passes for the wrong reason. The catalog listing answers with registered
+     * rows and bundled ones alike, and every id named here is bundled - the product knows these
+     * connectors exist, it simply will not accept an artifact for one. So asserting the id is absent
+     * from that listing fails against a correct server, and asserting it is present would witness
+     * nothing. The clean-refusal half is carried by the case above, whose id is bundled nowhere.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"mariadb", "tidb", "open-gauss"})
+    void anIndependentDatabaseProductIsRefusedByItsOwnId(String connectorId, @TempDir Path directory)
+            throws Exception {
+        byte[] artifact = Files.readAllBytes(E2eConnectorJar.buildInto(directory, connectorId));
+        String storeUri = SharedMongo.replicaSetUrl(
+                "unofficial_refused_" + connectorId.replace('-', '_'));
+
+        try (ServerHandle server = Tiers.IN_PROCESS.launch(storeUri)) {
+            ControlPlane control = new ControlPlane(server.baseUrl());
+            control.bootstrapAndLogin("e2e", "e2e-password");
+
+            ControlPlane.Refusal refusal = control.registerConnectorExpectingRefusal(artifact);
+
+            // The code, not the message: a refusal that reads right and codes wrong is the failure this
+            // discriminates against, and the id is carried as a parameter so the code alone is not
+            // asked to say which connector was refused.
+            assertThat(refusal.code()).isEqualTo("connector.not-official");
+            assertThat(refusal.status()).isEqualTo(400);
+            assertThat(refusal.params()).containsEntry("connector", connectorId);
         }
     }
 }

@@ -319,7 +319,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/mysql-connector/src/main/resources/mysql-spec.json",
     "specContentHash": "e4b9e9f4b531aedc",
     "pdkApiVersion": null,

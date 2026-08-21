@@ -141,6 +141,34 @@ final class Synthetic {
         return SyntheticJar.compileToJar(dir, "synthetic.TableAware", source("TableAware", "", register));
     }
 
+    /**
+     * A source whose streamRead reads what it was asked to watch by walking the context's table map
+     * rather than asking for one name at a time, emitting one row per entry carrying that entry's name
+     * and column count. A connector expands a partitioned table into its children this way, at the start
+     * of the stream and before any change is decoded. A table map that answers only lookup cannot be
+     * walked at all, so a drive through one fails outright rather than yielding fewer rows.
+     */
+    static Path tableMapIteratingStreamSource(Path dir) {
+        String register = ""
+                + "functions.supportStreamRead((context, tables, offset, size, consumer) -> {"
+                + "  consumer.streamReadStarted();"
+                + "  io.tapdata.entity.utils.cache.Iterator<io.tapdata.entity.utils.cache.Entry<TapTable>>"
+                + "      entries = context.getTableMap().iterator();"
+                + "  List<TapEvent> evs = new ArrayList<>();"
+                + "  while (entries.hasNext()) {"
+                + "    io.tapdata.entity.utils.cache.Entry<TapTable> entry = entries.next();"
+                + "    Map<String,Object> r = new LinkedHashMap<>();"
+                + "    r.put(\"name\", entry.getKey());"
+                + "    r.put(\"columns\", entry.getValue().getNameFieldMap().size());"
+                + "    evs.add(TapInsertRecordEvent.create().table(\"t1\").referenceTime(1L).after(r));"
+                + "  }"
+                + "  consumer.accept(evs, null);"
+                + "  consumer.streamReadEnded();"
+                + "});";
+        return SyntheticJar.compileToJar(dir, "synthetic.TableMapIteratingStream",
+                source("TableMapIteratingStream", "", register));
+    }
+
     /** A connector whose constructor throws — instantiation fails, a load failure. */
     static Path ctorThrowsSource(Path dir) {
         return SyntheticJar.compileToJar(dir, "synthetic.CtorThrows",
@@ -717,6 +745,24 @@ final class Synthetic {
                 + "public class OtherOrders implements TapConnector {" + INERT_CONNECTOR_BODY + "}";
         return SyntheticJar.compileToJar(dir, "synthetic.OtherOrders", src,
                 Map.of("orders-spec.json", "{\"properties\":{\"id\":\"orders\"}}"),
+                Map.of("PDK-API-Version", "1.3.5"));
+    }
+
+    /**
+     * A registrable connector declaring whichever id the caller names — for driving the acceptance
+     * guard across a set of ids rather than one representative.
+     *
+     * <p>The entry class name is the id with everything that cannot appear in a Java identifier removed,
+     * so that ids carrying dashes still compile. That mangling is invisible to the guard, which reads
+     * the id from the spec and never from the class.
+     */
+    static Path seedableConnector(Path dir, String connectorId) {
+        String type = "Seed" + connectorId.replaceAll("[^A-Za-z0-9]", "");
+        String src = SELF_SCAN_IMPORTS
+                + "@TapConnectorClass(\"" + connectorId + "-spec.json\")"
+                + "public class " + type + " implements TapConnector {" + INERT_CONNECTOR_BODY + "}";
+        return SyntheticJar.compileToJar(dir, "synthetic." + type, src,
+                Map.of(connectorId + "-spec.json", "{\"properties\":{\"id\":\"" + connectorId + "\"}}"),
                 Map.of("PDK-API-Version", "1.3.5"));
     }
 
