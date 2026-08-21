@@ -2296,71 +2296,37 @@ final class Repl {
     }
 
     /**
-     * The diagnostic to show a person, or null when there is none worth showing.
+     * The diagnostic to show a person, or null when there is none at all.
      *
      * <p>The connector API's typed test exceptions are constructed with translation keys rather than
-     * sentences — a privilege check carries {@code check.cdc.privilege.reason} — and nothing resolves
+     * sentences - a privilege check carries {@code check.cdc.privilege.reason} - and nothing resolves
      * them on the way here: they are plain string fields, no connector sets them to text, and the
-     * bundle that would translate them belongs to the platform those connectors were written for. A
-     * key is recognised by its shape: dotted lowercase segments with no whitespace, which no sentence
-     * has.
+     * bundle that would translate them belongs to the platform those connectors were written for. So
+     * this repository supplies the wording, under a reserved prefix that cannot collide with a
+     * first-party code.
      *
-     * <p>For the keys the connector API defines, the catalog supplies the wording, under a reserved
-     * prefix that cannot collide with a first-party code. A key with no entry is dropped rather than
-     * printed: it would put a line that reads like a defect exactly where a person is looking for
-     * guidance, which is worse than printing nothing. Anything already a sentence is shown as it is.
+     * <p><b>The catalog decides, not the shape.</b> Judging by shape - dotted lowercase segments -
+     * cannot tell a key from the many ordinary values that look exactly like one: {@code 10.10.0.5},
+     * {@code db.internal}, {@code 8.0.13}. Those are precisely what a host or version check reports,
+     * and dropping them left the reader a check with no message, no reason and no solution, which is
+     * less than they had before any of this. The set of keys the connector API defines is closed and
+     * held closed by a gate, so membership of the catalog answers the question exactly. Anything the
+     * catalog does not know is shown as it arrived.
      */
     private static String readable(String value) {
         if (!present(value)) {
             return null;
         }
         String trimmed = value.trim();
-        if (!isDiagnosticKey(trimmed)) {
-            return trimmed;
-        }
         String key = PDK_TEST_ITEM_PREFIX + trimmed;
         String rendered = MessageCatalog.bundled().render(key, Map.of()).message();
-        return rendered.equals(key) ? null : rendered;
+        // The catalog answers an unknown code with the code itself. The original is returned in that
+        // case rather than the lookup's answer, so a value carrying braces cannot come back mangled.
+        return rendered.equals(key) ? trimmed : rendered;
     }
 
     /** The reserved catalog namespace the connector API's test-item keys are given wording under. */
     private static final String PDK_TEST_ITEM_PREFIX = "pdk.testitem.";
-
-    /**
-     * Whether {@code value} is a dotted lowercase identifier and nothing else: two or more segments of
-     * {@code [a-z0-9-]}, separated by single dots, with nothing before, between or after them.
-     *
-     * <p>Read character by character rather than matched, because the string is a connector's own and
-     * its length is bounded by nothing here. Expressing this shape as a regular expression needs a
-     * repeated group - one segment, repeated - and this platform's engine matches a repeated group by
-     * recursing once per repetition, so a few thousand segments exhaust the stack. The failure is not
-     * a refusal but a StackOverflowError thrown out of printing a connection report: not coded, not
-     * actionable, and nowhere near the input that caused it. A single pass has no such ceiling, and
-     * decides the same shape.
-     */
-    private static boolean isDiagnosticKey(String value) {
-        int segment = 0;
-        int separators = 0;
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            if (c == '.') {
-                // A dot closes a segment, so one arriving with no segment open means an empty one:
-                // a leading dot, or two dots in a row.
-                if (segment == 0) {
-                    return false;
-                }
-                separators++;
-                segment = 0;
-            } else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
-                segment++;
-            } else {
-                return false;
-            }
-        }
-        // A segment must be open at the end (no trailing dot), and at least one dot must have closed
-        // one before it - a single bare word is a word, not a key.
-        return segment > 0 && separators > 0;
-    }
 
     /** The report as an ordered tree for the machine surfaces, omitting the optional check fields left null. */
     private static Map<String, Object> reportMap(ConnectionReport report) {

@@ -1820,24 +1820,23 @@ class ReplTest {
     }
 
     /**
-     * The PDK's typed test exceptions are built with i18n keys rather than sentences -
-     * TapTestCDCPrivilegeEx passes "check.cdc.privilege.reason" and "check.cdc.privilege.solution" -
-     * and nothing in the chain resolves them: the fields are plain strings, and the bundle that would
-     * translate them ships with the platform those connectors were written for, not with tapstate. So
-     * the reason a check carries is often a key, and printing it puts a line that reads like a defect
-     * where guidance should be. A key is not shown; the message, which is the driver's own sentence,
-     * still is, and so is the connector's code, which is a handle by design.
+     * A diagnostic the catalog does not know is shown as it arrived, not dropped.
+     *
+     * <p>This used to be decided by shape - dotted lowercase segments were taken for an unresolvable
+     * key and suppressed. The shape does not separate the two: {@code 10.10.0.5}, {@code db.internal}
+     * and {@code 8.0.13} all match it, and all three are exactly what a host or version check reports.
+     * Suppressing them left a failed check with nothing on it at all, which is less than the reader
+     * had before the wording feature existed. The keys the connector API defines are a closed set the
+     * catalog holds in full, so anything absent from it is treated as a value and printed.
      */
     @Test
-    void testDoesNotPrintADiagnosticThatIsAnUnresolvedTranslationKey() {
+    void testPrintsADiagnosticTheCatalogDoesNotKnowRatherThanDroppingIt() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
         client.getOutcome = storedConnection();
         client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
-                "my-mongo", "mongodb", "PASSED",
-                List.of(new ConnectionReport.Check("read log", "WARNING",
-                        "Access denied for user 'cdc'@'%'",
-                        "some.connector.invented.reason", "some.connector.invented.solution",
-                        "CDC_PRIVILEGE")),
+                "my-mongo", "mongodb", "FAILED",
+                List.of(new ConnectionReport.Check("Check host port is valid", "FAILED",
+                        "10.10.0.5", "db.internal", "8.0.13", "CONN_REFUSED")),
                 1752000000000L));
         Harness h = onlineSession(Path.of("tap-work"), client);
         int mark = h.sink().toString().length();
@@ -1845,27 +1844,24 @@ class ReplTest {
         assertThat(h.repl().dispatch("test my-mongo")).isTrue();
 
         String out = h.sink().toString().substring(mark);
-        assertThat(out).contains("Access denied for user").contains("CDC_PRIVILEGE");
-        assertThat(out).doesNotContain("some.connector.invented");
+        assertThat(out)
+                .as("a host, a hostname and a version all look like keys and are none of them")
+                .contains("10.10.0.5").contains("db.internal").contains("8.0.13");
+        assertThat(out).contains("CONN_REFUSED");
     }
 
     /**
-     * A diagnostic long enough to be worth refusing is refused, not crashed on.
+     * A diagnostic far longer than anything a pattern should be run over is carried, not crashed on.
      *
-     * <p>Deciding whether a string is a key was a regular expression, and matching a repeated group is
-     * recursive in this platform's engine - one frame per repetition, so a few thousand dotted segments
-     * exhausted the stack. What arrives here is a connector's own text: it crosses the wire from a
-     * database nobody here configured, its length is bounded by nothing this repository controls, and
-     * the failure would be a StackOverflowError thrown out of printing a report, which is neither a
-     * coded error nor anything the reader could act on. Reading the string once, character by
-     * character, has no such ceiling.
-     *
-     * <p>The size is chosen to overflow well past any stack a runner might be given, not to sit just
-     * over the edge of the default one - a test that only fails at 1 MB would pass on a JVM configured
-     * with more and quietly stop guarding anything.
+     * <p>Deciding whether a string was a key by matching a repeated group is recursive in this
+     * platform's engine - one frame per repetition, so a few thousand dotted segments exhausted the
+     * stack, and the failure was a StackOverflowError thrown out of printing a connection report. The
+     * string is a connector's own, arriving from a database nobody here configured, and nothing in
+     * this repository bounds its length. Nothing matches it now - the catalog is asked instead - and
+     * this case is what keeps a matcher from coming back.
      */
     @Test
-    void testSurvivesADiagnosticFarTooLongToMatchByRecursion() {
+    void testCarriesADiagnosticFarTooLongToMatchAgainst() {
         String enormous = "a" + ".a".repeat(100_000);
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
         client.getOutcome = storedConnection();
@@ -1880,10 +1876,8 @@ class ReplTest {
         assertThat(h.repl().dispatch("test my-mongo")).isTrue();
 
         String out = h.sink().toString().substring(mark);
-        assertThat(out)
-                .as("it is a key by shape and the catalog has no wording for it, so it is dropped")
-                .doesNotContain(enormous);
         assertThat(out).contains("Access denied").contains("CDC_PRIVILEGE");
+        assertThat(out).as("the catalog does not know it, so it is shown as it arrived").contains(enormous);
     }
 
     /**
