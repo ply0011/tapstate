@@ -38,7 +38,9 @@ on:
 # other. Serialize them; do not cancel in progress, since a half-finished analysis is worse
 # than a queued one.
 concurrency:
-  group: sonarqube
+  # Keep the Community Edition project serialized within each PR, but do not let one PR
+  # consume or cancel another PR's required SonarQube check while it is waiting in the queue.
+  group: sonarqube-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 permissions:
