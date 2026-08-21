@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
+import io.tapstate.core.catalog.ModeSource;
 import io.tapstate.core.catalog.OfficialConnectors;
 import io.tapstate.core.common.Severity;
 import io.tapstate.core.common.TapstateErrorCode;
@@ -558,5 +559,36 @@ class ConnectorArtifactRegistrarTest {
             InMemoryConnectorRegistry registry, InMemoryConnectorCatalogStore rows, InMemoryConnectorSpecStore specs) {
         return new ConnectorArtifactRegistrar(registry, new ConnectorIntrospector(),
                 id -> new ConnectorCapabilities(Set.of("batch_read_function")), rows, specs);
+    }
+
+    @Test
+    void aRuntimeRegisteredRowCarriesOurOwnDeclaration(@TempDir Path dir) {
+        // The runtime half of the merge. The build-time path has its own twin in the assembler's tests;
+        // this is the one the checked-in snapshot cannot speak for, because the snapshot is produced by
+        // the other path entirely. Wire the overlay into one entry and not the other and the offline
+        // catalog and the registered row describe the same connector differently.
+        //
+        // Driven against the real bundled overlay rather than a fixture, so it also proves the shipped
+        // resource is reachable from this module. kafka is not in the official set, so the deployment
+        // has to name it - which is exactly the seam that exists for a deployment supplying its own
+        // connector.
+        Path jar = Synthetic.seedableConnector(dir, "kafka");
+        InMemoryConnectorCatalogStore rows = new InMemoryConnectorCatalogStore();
+        ConnectorArtifactRegistrar registrar = new ConnectorArtifactRegistrar(
+                new InMemoryConnectorRegistry(), new ConnectorIntrospector(),
+                id -> new ConnectorCapabilities(Set.of("stream_read_function")), rows,
+                new InMemoryConnectorSpecStore(), List.of("kafka"));
+
+        registrar.register(jar, RegistrationSource.REGISTER);
+
+        ConnectorCatalogEntry row = rows.get("kafka").orElseThrow();
+        assertThat(row.modes())
+                .as("our declaration says stream; without it the stream_read capability derives cdc")
+                .containsExactly(SourceMode.STREAM);
+        assertThat(row.provenance().modeSource().values()).containsOnly(ModeSource.OVERLAY);
+        assertThat(row.modesAreTrustworthy())
+                .as("an overlay declaration has to count as a declaration, or validation quietly "
+                        + "defers for every connector we declare")
+                .isTrue();
     }
 }
