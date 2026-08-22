@@ -18,6 +18,12 @@ making a claim about how long this takes that nobody could reproduce. So: pull t
 and say it here and beside the recording. **Your first run includes a download the recording does
 not.**
 
+**One setting on the PostgreSQL side is load-bearing and easy to miss.** A table whose rows are embedded
+somewhere needs `REPLICA IDENTITY FULL`; PostgreSQL otherwise publishes only the primary key on an update
+or a delete, and a key alone does not say which parent the row was under. The demo's seed sets it. Shot 8's
+"remove that shipment again" is the shot that fails without it — and it fails quietly, with every other
+reading healthy.
+
 Fixed before the first take, because changing any of them afterwards means recording again:
 
 | Setting | Value | Why this one |

@@ -290,6 +290,17 @@ Reading the `nest` step:
 | `embed[].as` / `path` | placed as an array, at the field `shipments` on the order |
 | `embed[].arrayKey` | what identifies an element already in that array, so a changed shipment moves the element it belongs to instead of appending a second copy |
 
+> **A PostgreSQL table you embed needs `REPLICA IDENTITY FULL`.** By default PostgreSQL publishes only
+> the primary key when a row is updated or deleted, and a key alone does not say which parent the row was
+> hanging under — so a deleted shipment would leave the array it was in unchanged, with every other
+> reading healthy. The demo's seed sets it; do the same on your own tables:
+>
+> ```sql
+> ALTER TABLE shipments REPLICA IDENTITY FULL;
+> ```
+>
+> MySQL needs nothing here: its binary log carries the whole previous row already.
+
 Two settings outside the step matter as much:
 
 - **`mode: cdc` on both sources.** A source left on a snapshot contributes its seeded
