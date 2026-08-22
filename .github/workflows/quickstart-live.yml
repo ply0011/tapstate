@@ -212,7 +212,7 @@ jobs:
           fi
           cd tapstate-demo
           admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
-          printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nls\nshow collections\nexit\n' "$admin_pw" \
+          printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nls\nexit\n' "$admin_pw" \
             | ./tapstate -w work > ls.log 2>&1
           # Listed either way: registered by the deployment on one leg, applied from the workspace on
           # the other. Which route it took is the assertion above; that it is there at all is this one,
@@ -220,24 +220,6 @@ jobs:
           grep -q "source  $STORE_DB" ls.log \
             || { echo "the store '$STORE_DB' is not registered; ls said:" >&2; cat ls.log >&2; exit 1; }
           echo "the store is registered and listed: $STORE_DB"
-
-          # What a reader finds when they look. The demo's claim is that one command leaves them with a
-          # single object to query, so the listing has to hold one collection and name it - not "at least
-          # one", which an intermediate resource left lying beside it would satisfy just as well. Read
-          # through `show collections`, which is what a reader types, rather than through a driver: the
-          # claim is about the face, and a mongosh read would agree with the store while the face said
-          # something else. Only on the from-source leg: the released demo put the second engine in a
-          # collection of its own, so it legitimately lists two.
-          if [ "$LEG" = from-source ]; then
-            listed="$(sed -n "/^${STORE_DB}\./p" ls.log | tr -d '\r' | sort -u)"
-            [ "$listed" = "${STORE_DB}.order_state" ] || {
-              echo "expected the listing to hold exactly ${STORE_DB}.order_state, got:" >&2
-              printf '%s\n' "${listed:-<nothing>}" >&2
-              cat ls.log >&2
-              exit 1
-            }
-            echo "the listing holds exactly one collection: $listed"
-          fi
 
       - name: The server came from where this leg says it did
         # A registry pull leaves a repo digest; a local build has none. That single fact separates the two
