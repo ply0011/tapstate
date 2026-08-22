@@ -20,6 +20,14 @@ enum CliError implements TapstateErrorCode {
     ARTIFACT_EXISTS("cli.artifact-exists", Set.of("path")),
 
     /**
+     * The workspace already holds a demo resource and {@code --force} was not given; {@code path} is
+     * the first one found. Refused rather than overwritten: the moment somebody has edited one of these
+     * files it is theirs, and a command whose whole purpose is to save typing must not be the thing
+     * that discards an afternoon of it.
+     */
+    DEMO_WORKSPACE_EXISTS("cli.demo-workspace-exists", Set.of("path")),
+
+    /**
      * The optional {@code tap} shortcut cannot be managed because that name belongs to something else;
      * {@code path} is where it sits. Refused rather than replaced or deleted: the name is a working
      * command on that machine, and a convenience shortcut does not get to remove one.

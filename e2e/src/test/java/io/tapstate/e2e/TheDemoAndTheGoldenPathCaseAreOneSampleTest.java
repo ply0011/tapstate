@@ -36,6 +36,9 @@ class TheDemoAndTheGoldenPathCaseAreOneSampleTest {
 
     private static final Path EXAMPLES = Path.of("examples");
 
+    /** What {@code tapstate demo} writes, carried beside the command as classpath resources. */
+    private static final Path CLI_BUNDLE = Path.of("..", "cli", "src", "main", "resources", "demo");
+
     private static final Path CASE = EXAMPLES.resolve("the-golden-path-two-engines-become-one-object");
 
     /** The settings line, which is the one thing the two are allowed to disagree on. */
@@ -97,6 +100,27 @@ class TheDemoAndTheGoldenPathCaseAreOneSampleTest {
                     .as("%s carries the demo's pipeline, so it has to carry the demo's pipeline", copy)
                     .isEqualTo(demo);
         }
+    }
+
+    /**
+     * And the third copy: what {@code tapstate demo} writes.
+     *
+     * <p>All three, byte for byte, with no address exemption - unlike the case, this one targets the
+     * same compose stack the quickstart does, so there is nothing it could legitimately spell
+     * differently. The command exists to save a stranger from transcribing these files; a command that
+     * wrote its own variant of them would have re-created, in the same release, the drift the other two
+     * were just wired together to prevent.
+     */
+    @Test
+    void theCommandWritesWhatTheQuickstartWrites() throws IOException {
+        for (String resource : List.of("orders_db.tap.yml", "fulfillment_db.tap.yml")) {
+            assertThat(Files.readString(CLI_BUNDLE.resolve(resource)))
+                    .as("%s: `tapstate demo` and the quickstart write the same file", resource)
+                    .isEqualTo(heredoc("work/source/" + resource));
+        }
+        assertThat(Files.readString(CLI_BUNDLE.resolve("order_pipeline.tap.yml")))
+                .as("the pipeline especially: it is the sample")
+                .isEqualTo(heredoc("work/pipeline/order_pipeline.tap.yml"));
     }
 
     /**
