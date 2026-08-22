@@ -82,8 +82,8 @@ if [ -n "$bitmap_out" ]; then                     # step 2: derive the capabilit
   report "$DERIVE_REPORT" 0
   exit 0
 fi
-if [ -n "$agreement" ]; then                       # step 2b: the two derivations agree
-  if [ "${SMOKE_STEP2B_SKIP:-no}" = yes ]; then report "$HARNESS_REPORT" 1; exit 0; fi
+if [ -n "$agreement" ]; then                       # step 4: the two derivations agree
+  if [ "${SMOKE_STEP4_SKIP:-no}" = yes ]; then report "$HARNESS_REPORT" 1; exit 0; fi
   report "$HARNESS_REPORT" 0
   exit 0
 fi
@@ -206,12 +206,12 @@ expect "step 2 skipped rather than run" 1 "step 2 (capability bitmap) did not ru
   SMOKE_STEP2_SKIP=yes --connectors "$scratch/connectors"
 
 fresh_tree
-expect "step 2b skipped rather than run" 1 "step 2b (derivation agreement) did not run" \
-  SMOKE_STEP2B_SKIP=yes --connectors "$scratch/connectors"
-
-fresh_tree
 expect "step 3 skipped rather than run" 1 "step 3 (regenerate) did not run" \
   SMOKE_STEP3_SKIP=yes --connectors "$scratch/connectors"
+
+fresh_tree
+expect "step 4 skipped rather than run" 1 "step 4 (derivation agreement) did not run" \
+  SMOKE_STEP4_SKIP=yes --connectors "$scratch/connectors"
 
 # A report left behind by an earlier refresh says that run's step succeeded, and reads exactly like
 # this run's evidence. The driver has to clear it before it looks.
@@ -301,6 +301,24 @@ if [ "$with_am" = 2 ] && [ "$without_am" = 0 ]; then
 else
   printf '  FAIL  %s: wanted 2 runs with -am and 0 without, got %s with and %s without\n' \
     "both assembler steps build the reactor" "$with_am" "$without_am"
+  failed=$((failed + 1))
+fi
+
+# The agreement step reconciles the two derivations against the catalog row, so it has to run after
+# the row is rewritten. Before it, the freshly derived capability is compared against the row from the
+# previous refresh, and every genuine upstream change fails the refresh that exists to absorb it -
+# a refusal that looks exactly like the disagreement the step is there to report.
+fresh_tree
+expect "the agreement step reconciles against the row this run wrote" 0 "step 4 (derivation agreement) ok" \
+  --connectors "$scratch/connectors"
+regenerate_at="$(grep -n -- '-Dtapstate.catalog.update' "$scratch/tree/.mvn-args" | head -1 | cut -d: -f1)"
+agreement_at="$(grep -n -- '-Dtapstate.pdk.it.bitmap' "$scratch/tree/.mvn-args" | head -1 | cut -d: -f1)"
+if [ -n "$regenerate_at" ] && [ -n "$agreement_at" ] && [ "$agreement_at" -gt "$regenerate_at" ]; then
+  printf '  ok    %s\n' "the agreement step runs after the regeneration"
+  passed=$((passed + 1))
+else
+  printf '  FAIL  %s: regenerate ran at line %s and the agreement at %s\n' \
+    "the agreement step runs after the regeneration" "${regenerate_at:-none}" "${agreement_at:-none}"
   failed=$((failed + 1))
 fi
 

@@ -8,11 +8,11 @@
 #      connectors to classload);
 #   2. catalog-derive reads that manifest, classloads each connector's built jar and writes the
 #      capability bitmap;
-#   2b. adapter-pdk reads the same three artifacts back and reconciles the bitmap against the other
-#      implementation of the same derivation - the live one - and against the catalog row; skipped
-#      by a spec-only refresh, which builds no jars to reconcile;
 #   3. catalog-assembler merges spec, overlay and bitmap and rewrites the checked-in catalog and
-#      ingest report.
+#      ingest report;
+#   4. adapter-pdk reads those same artifacts back and reconciles the bitmap against the other
+#      implementation of the same derivation - the live one - and against the row just written;
+#      skipped by a spec-only refresh, which builds no jars to reconcile.
 #
 # Driving that by hand is three long command lines whose property names live in three different
 # files, and getting one wrong does not fail. Every one of these runs is a JUnit test that *skips*
@@ -229,30 +229,6 @@ else
   # things that say so are this count and the list at the end - the diff shows what changed, which for
   # a gutted entry looks like any other edit.
   echo "  derived $derived_count of $manifest_count connectors; $skipped_count produced no capability bits"
-
-  # --- step 2b: the two derivations agree ---------------------------------------------------------
-  #
-  # The capabilities just derived are read a second time, by the other implementation - the one the
-  # server runs when a connector is registered - and the two answers are reconciled against each other
-  # and against the catalog row. They share no code and classload differently, and nothing downstream
-  # would notice them drifting apart: the offline answer is what gets committed here, the live one is
-  # what a registered connector actually gets, and a connector whose two answers differ is one whose
-  # bundled row describes a connector the server does not see.
-  #
-  # Here rather than in a lane of its own because here is the only place all three inputs exist at
-  # once - the worklist, the jars, and the bitmap just derived from them. Running it later against a
-  # bitmap from a different build compares answers read out of jars that are gone.
-  #
-  # It refuses a dist too small to be a cross-check, which is also a refusal a deliberately partial
-  # --dist run will meet. That is the same incomplete-dist run that regenerates a complete-looking
-  # catalog with everything else emptied out, so it is not a shape worth passing quietly.
-  run_step "step 2b (derivation agreement)" "$HARNESS_REPORT" "$workspace/step2b.log" \
-    -B -pl adapters/adapter-pdk -am test \
-    -Dtest=CapabilityHarnessRealJarTest \
-    -Dsurefire.failIfNoSpecifiedTests=false \
-    -Dtapstate.pdk.it.manifest="$manifest" \
-    -Dtapstate.pdk.it.dist="$dist" \
-    -Dtapstate.pdk.it.bitmap="$bitmap"
 fi
 
 # --- step 3: regenerate ---------------------------------------------------------------------------
@@ -268,6 +244,38 @@ run_step "step 3 (regenerate)" "$ASSEMBLER_REPORT" "$workspace/step3.log" \
   -Dtapstate.catalog.update=true \
   -Dtapstate.catalog.bitmap="$bitmap" \
   -Dtapstate.catalog.sha="$sha"
+
+# --- step 4: the two derivations agree --------------------------------------------------------------
+#
+# The capabilities just derived are read a second time, by the other implementation - the one the
+# server runs when a connector is registered - and the two answers are reconciled against each other
+# and against the row step 3 just wrote from them. The two share no code and classload differently,
+# and nothing downstream would notice them drifting apart: the offline answer is what gets committed
+# here, the live one is what a registered connector actually gets, and a connector whose two answers
+# differ is one whose bundled row describes a connector the server does not see.
+#
+# After step 3 rather than before it, and that ordering is the whole of its correctness: run earlier
+# it would compare a freshly derived capability against the row from the *previous* refresh, so every
+# genuine upstream change would fail the refresh that exists to absorb it. Run here, all three answers
+# come from this revision, and step 3 having merged them wrong is caught too.
+#
+# In the refresh at all because this is the only place its three inputs exist together - the worklist,
+# the jars, and the bitmap derived from them. Run later against a bitmap from a different build it
+# would compare answers read out of jars that are gone. A spec-only refresh builds no jars, so there
+# is nothing to reconcile and this does not run.
+#
+# It refuses a dist too small to be a cross-check, which a deliberately partial --dist run will also
+# meet. That is the same incomplete-dist run that regenerates a complete-looking catalog with
+# everything else emptied out, so it is not a shape worth passing quietly.
+if [ "$spec_only" = no ]; then
+  run_step "step 4 (derivation agreement)" "$HARNESS_REPORT" "$workspace/step4.log" \
+    -B -pl adapters/adapter-pdk -am test \
+    -Dtest=CapabilityHarnessRealJarTest \
+    -Dsurefire.failIfNoSpecifiedTests=false \
+    -Dtapstate.pdk.it.manifest="$manifest" \
+    -Dtapstate.pdk.it.dist="$dist" \
+    -Dtapstate.pdk.it.bitmap="$bitmap"
+fi
 
 # --- what changed ---------------------------------------------------------------------------------
 
