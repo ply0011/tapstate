@@ -2,12 +2,15 @@
 #
 # Regenerates the bundled connector catalog from a connectors checkout, in one command.
 #
-# The refresh is three Maven runs across two modules, each gated on its own system properties:
+# The refresh is four Maven runs across three modules, each gated on its own system properties:
 #
 #   1. catalog-assembler walks the checkout and writes the probe manifest (the worklist of Java
 #      connectors to classload);
 #   2. catalog-derive reads that manifest, classloads each connector's built jar and writes the
 #      capability bitmap;
+#   2b. adapter-pdk reads the same three artifacts back and reconciles the bitmap against the other
+#      implementation of the same derivation - the live one - and against the catalog row; skipped
+#      by a spec-only refresh, which builds no jars to reconcile;
 #   3. catalog-assembler merges spec, overlay and bitmap and rewrites the checked-in catalog and
 #      ingest report.
 #
@@ -45,6 +48,7 @@ set -uo pipefail
 readonly ASSEMBLER_MODULE="tools/catalog-assembler"
 readonly ASSEMBLER_REPORT="$ASSEMBLER_MODULE/target/surefire-reports/TEST-io.tapstate.tools.catalog.assembler.CatalogArtifactTest.xml"
 readonly DERIVE_REPORT="tools/catalog-derive/target/surefire-reports/TEST-io.tapstate.tools.catalog.derive.CatalogDeriveRealRunTest.xml"
+readonly HARNESS_REPORT="adapters/adapter-pdk/target/surefire-reports/TEST-io.tapstate.adapters.pdk.CapabilityHarnessRealJarTest.xml"
 readonly CATALOG_DIR="core/core-catalog/src/main/resources/catalog"
 readonly INGEST_REPORT="$ASSEMBLER_MODULE/ingest-report.md"
 # Where the derived bitmap is checked in, so a spec-only refresh has a capability face to merge
@@ -225,6 +229,30 @@ else
   # things that say so are this count and the list at the end - the diff shows what changed, which for
   # a gutted entry looks like any other edit.
   echo "  derived $derived_count of $manifest_count connectors; $skipped_count produced no capability bits"
+
+  # --- step 2b: the two derivations agree ---------------------------------------------------------
+  #
+  # The capabilities just derived are read a second time, by the other implementation - the one the
+  # server runs when a connector is registered - and the two answers are reconciled against each other
+  # and against the catalog row. They share no code and classload differently, and nothing downstream
+  # would notice them drifting apart: the offline answer is what gets committed here, the live one is
+  # what a registered connector actually gets, and a connector whose two answers differ is one whose
+  # bundled row describes a connector the server does not see.
+  #
+  # Here rather than in a lane of its own because here is the only place all three inputs exist at
+  # once - the worklist, the jars, and the bitmap just derived from them. Running it later against a
+  # bitmap from a different build compares answers read out of jars that are gone.
+  #
+  # It refuses a dist too small to be a cross-check, which is also a refusal a deliberately partial
+  # --dist run will meet. That is the same incomplete-dist run that regenerates a complete-looking
+  # catalog with everything else emptied out, so it is not a shape worth passing quietly.
+  run_step "step 2b (derivation agreement)" "$HARNESS_REPORT" "$workspace/step2b.log" \
+    -B -pl adapters/adapter-pdk -am test \
+    -Dtest=CapabilityHarnessRealJarTest \
+    -Dsurefire.failIfNoSpecifiedTests=false \
+    -Dtapstate.pdk.it.manifest="$manifest" \
+    -Dtapstate.pdk.it.dist="$dist" \
+    -Dtapstate.pdk.it.bitmap="$bitmap"
 fi
 
 # --- step 3: regenerate ---------------------------------------------------------------------------

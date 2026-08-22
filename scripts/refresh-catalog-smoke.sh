@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cases for the catalog refresh driver, run against a scratch tree with a stub Maven on PATH.
 #
-# The refresh is three property-gated Maven runs, and every one of them is written to *skip* when its
+# The refresh is four property-gated Maven runs, and every one of them is written to *skip* when its
 # properties or inputs are absent: an absent connectors checkout, an absent bitmap, a property name
 # typed wrong. A skipped JUnit test is not a failure - surefire reports it as skipped and Maven exits
 # 0 - so the whole refresh can report success having regenerated nothing. That is the failure this
@@ -25,6 +25,7 @@ failed=0
 
 assembler_report="tools/catalog-assembler/target/surefire-reports/TEST-io.tapstate.tools.catalog.assembler.CatalogArtifactTest.xml"
 derive_report="tools/catalog-derive/target/surefire-reports/TEST-io.tapstate.tools.catalog.derive.CatalogDeriveRealRunTest.xml"
+harness_report="adapters/adapter-pdk/target/surefire-reports/TEST-io.tapstate.adapters.pdk.CapabilityHarnessRealJarTest.xml"
 
 # --- the stub Maven -----------------------------------------------------------------------------
 #
@@ -40,12 +41,13 @@ make_mvn_stub() {
 set -u
 tree="$SMOKE_TREE"
 echo "$*" >> "$tree/.mvn-args"
-manifest=""; bitmap_out=""; bitmap_in=""; update=no
+manifest=""; bitmap_out=""; bitmap_in=""; agreement=""; update=no
 for arg in "$@"; do
   case "$arg" in
     -Dtapstate.catalog.manifest=*) manifest="${arg#*=}" ;;
     -Dtapstate.derive.out=*)       bitmap_out="${arg#*=}" ;;
     -Dtapstate.catalog.bitmap=*)   bitmap_in="${arg#*=}" ;;
+    -Dtapstate.pdk.it.bitmap=*)    agreement="${arg#*=}" ;;
     -Dtapstate.catalog.update*)    update=yes ;;
   esac
 done
@@ -78,6 +80,11 @@ if [ -n "$bitmap_out" ]; then                     # step 2: derive the capabilit
   printf 'mysql\tBATCH_READ\tSTREAM_READ\n' > "$bitmap_out"
   [ "${SMOKE_NO_SKIPLIST:-no}" = yes ] || printf 'hazelcast\tno dist jar\n' > "$bitmap_out.skipped"
   report "$DERIVE_REPORT" 0
+  exit 0
+fi
+if [ -n "$agreement" ]; then                       # step 2b: the two derivations agree
+  if [ "${SMOKE_STEP2B_SKIP:-no}" = yes ]; then report "$HARNESS_REPORT" 1; exit 0; fi
+  report "$HARNESS_REPORT" 0
   exit 0
 fi
 if [ "$update" = yes ]; then                      # step 3: regenerate the checked-in catalog
@@ -134,6 +141,7 @@ expect() {
   shim="$(make_mvn_stub)"
   out="$(cd "$scratch/tree" && env PATH="$shim:$PATH" SMOKE_TREE="$scratch/tree" \
       ASSEMBLER_REPORT="$assembler_report" DERIVE_REPORT="$derive_report" \
+      HARNESS_REPORT="$harness_report" \
       TAPSTATE_CONNECTOR_BUILD="$shim/build-real-connectors-stub.sh" \
       "${env_pairs[@]}" bash "$scratch/tree/scripts/refresh-catalog.sh" "$@" 2>&1)"
   code=$?
@@ -198,6 +206,10 @@ expect "step 2 skipped rather than run" 1 "step 2 (capability bitmap) did not ru
   SMOKE_STEP2_SKIP=yes --connectors "$scratch/connectors"
 
 fresh_tree
+expect "step 2b skipped rather than run" 1 "step 2b (derivation agreement) did not run" \
+  SMOKE_STEP2B_SKIP=yes --connectors "$scratch/connectors"
+
+fresh_tree
 expect "step 3 skipped rather than run" 1 "step 3 (regenerate) did not run" \
   SMOKE_STEP3_SKIP=yes --connectors "$scratch/connectors"
 
@@ -238,7 +250,7 @@ expect "spec-only builds no jars" 0 "skipping the connector build" \
 # --- the full run ---------------------------------------------------------------------------------
 
 fresh_tree
-expect "a full refresh reports all three steps" 0 "step 3 (regenerate) ok" \
+expect "a full refresh reaches its last step" 0 "step 3 (regenerate) ok" \
   --connectors "$scratch/connectors"
 
 fresh_tree
