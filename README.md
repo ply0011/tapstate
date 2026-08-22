@@ -102,6 +102,11 @@ Everything it installs stays inside that one directory; tearing down is
 See [docs/quickstart-online.md](docs/quickstart-online.md) for the full walkthrough
 and the manual `docker compose` steps behind it.
 
+The recording of this demo, and what each shot is evidence for, is written down shot
+by shot in [docs/demo.md](docs/demo.md) — including what the recording does *not*
+prove, and the fact that its images were pulled beforehand so your first run includes
+a download it does not.
+
 Already have the stack up and just want the workspace back? `tapstate demo` writes
 the same three resources the quickstart generates, and `tapstate demo --print-steps`
 prints the walkthrough they belong to:
