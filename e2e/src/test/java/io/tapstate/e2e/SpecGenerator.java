@@ -175,6 +175,14 @@ final class SpecGenerator {
                         case ASSERT -> keyed(keyword.word(), Map.of("$ref", "#/$defs/matcher"));
                     });
         }
+        // The same two words again, this time carrying a source: one lifecycle word means the whole
+        // pipeline when written on its own and that source's stream alone when it names one. Exhaustive
+        // over the enum, so a word added to it does not compile until its shape is here.
+        for (StreamVerb verb : StreamVerb.values()) {
+            forms.add(keyed(verb.word(), scalar("string",
+                    "The id of the source whose stream this holds or releases, leaving every other "
+                            + "stream of the same pipeline running.")));
+        }
         Map<String, Object> step = new LinkedHashMap<>();
         step.put("description", "One stage. Steps run in declaration order; the order is the scenario.");
         step.put("oneOf", forms);
@@ -401,7 +409,10 @@ final class SpecGenerator {
     private static List<Object> stepListing() {
         List<Object> steps = new ArrayList<>();
         for (String verb : Vocabulary.LIFECYCLE_STEPS) {
-            steps.add(word(verb, "A lifecycle verb, driven on the pipeline. Written on its own."));
+            steps.add(word(verb, Vocabulary.STREAM_SCOPED_STEPS.contains(verb)
+                    ? "A lifecycle verb. Written on its own it drives the pipeline; written with one "
+                            + "source id it holds or releases that stream alone."
+                    : "A lifecycle verb, driven on the pipeline. Written on its own."));
         }
         for (String keyword : Vocabulary.BODIED_STEPS) {
             steps.add(word(keyword, bodiedStepDescription(keyword)));

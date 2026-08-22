@@ -36,6 +36,13 @@ final class Vocabulary {
     /** Steps that carry a body. */
     static final SortedSet<String> BODIED_STEPS = sorted(StepKeyword.values(), StepKeyword::word);
 
+    /**
+     * Lifecycle steps that may instead carry one source id, meaning that stream alone. A subset of
+     * {@link #LIFECYCLE_STEPS} and spelled from the same product verbs - what the harness decides is
+     * which of them a source may be named under, not what any of them is called.
+     */
+    static final SortedSet<String> STREAM_SCOPED_STEPS = sorted(StreamVerb.values(), StreamVerb::word);
+
     /** Matcher words, shared by {@code await} and {@code assert} - two timings, one vocabulary. */
     static final SortedSet<String> MATCHERS = sorted(MatcherWord.values(), MatcherWord::word);
 

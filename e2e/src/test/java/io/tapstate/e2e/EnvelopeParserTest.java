@@ -153,6 +153,40 @@ class EnvelopeParserTest {
     }
 
     @Test
+    void readsPauseAndResumeCarryingASourceIdAsHoldingThatOneStream() {
+        Envelope envelope = EnvelopeParser.parse(
+                minimal("steps:\n  - pause: src_shipments\n  - resume: src_shipments\n"));
+
+        assertThat(envelope.steps())
+                .containsExactly(
+                        new Step.StreamLifecycle(StreamVerb.PAUSE, "src_shipments"),
+                        new Step.StreamLifecycle(StreamVerb.RESUME, "src_shipments"));
+    }
+
+    @Test
+    void keepsTheBareFormMeaningTheWholePipelineWhenTheSameWordCarriesNoSource() {
+        Envelope envelope = EnvelopeParser.parse(minimal("steps:\n  - pause\n  - resume\n"));
+
+        assertThat(envelope.steps())
+                .containsExactly(
+                        new Step.Lifecycle(LifecycleVerb.PAUSE), new Step.Lifecycle(LifecycleVerb.RESUME));
+    }
+
+    @Test
+    void refusesToScopeStartOrStopToOneStream() {
+        assertThatThrownBy(() -> EnvelopeParser.parse(minimal("steps:\n  - stop: src_shipments\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("stop");
+    }
+
+    @Test
+    void refusesAStreamScopedStepThatNamesNoSource() {
+        assertThatThrownBy(() -> EnvelopeParser.parse(minimal("steps:\n  - pause: {}\n")))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("pause");
+    }
+
+    @Test
     void rejectsRunBecauseTheProductReservesItForApplyThenStart() {
         assertThatThrownBy(() -> EnvelopeParser.parse(minimal("steps:\n  - run\n")))
                 .isInstanceOf(EnvelopeException.class)
