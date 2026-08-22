@@ -149,6 +149,10 @@ enough to reach the end of this page. You need the jars for any tutorial that mo
 `scripts/build-real-connectors.sh /tmp/connectors` builds them from the connector sources. This release
 accepts `mysql` and `mongodb`; another id is refused with `connector.not-official`.
 
+That build wants a JDK 17, not the 21 the rest of this page uses: some connectors pin a Lombok that
+JDK 21 breaks. Point `TAPSTATE_CONNECTOR_JAVA_HOME` at one - the script refuses up front rather than
+failing deep in a long build, and says the same thing.
+
 ### If 8080 is already taken
 
 Add `SERVER_PORT=8081` to the same Environment variables field. The two ports behave differently and

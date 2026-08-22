@@ -41,6 +41,7 @@ for arg in "$@"; do
   case "$arg" in -f) next=f ;; -pl) next=pl ;; esac
 done
 echo "$modules" > "$SMOKE_MODULES_SEEN"
+echo "${JAVA_HOME:-}" > "$SMOKE_JAVA_HOME_SEEN"
 IFS=',' read -r -a mods <<< "$modules"
 for module in "${mods[@]}"; do
   artifact="$(basename "$module")"
@@ -83,7 +84,9 @@ expect() {
   local shim out code
   shim="$(make_shim)"
   : > "$scratch/modules-seen"
+  : > "$scratch/java-home-seen"
   out="$(env PATH="$shim:$PATH" SMOKE_MODULES_SEEN="$scratch/modules-seen" \
+      SMOKE_JAVA_HOME_SEEN="$scratch/java-home-seen" \
       "${env_pairs[@]}" bash "$builder" "$@" 2>&1)"
   code=$?
   if [ "$code" = "$want_code" ] && printf '%s' "$out" | grep -qF -- "$want_text"; then
@@ -106,6 +109,32 @@ expect_modules() {
     passed=$((passed + 1))
   else
     printf '  FAIL  %s: wanted modules "%s", got "%s"\n' "$name" "$want" "$seen"
+    failed=$((failed + 1))
+  fi
+}
+
+# A JDK that answers -version and nothing else. The guard reads a major version and compares it; it
+# never runs one, so a real installation would only make the cases depend on what this host happens
+# to have.
+make_jdk() {
+  local dir="$scratch/$1"
+  rm -rf "$dir"; mkdir -p "$dir/bin"
+  printf '#!/usr/bin/env bash\necho "javac %s"\n' "$2" > "$dir/bin/javac"
+  chmod +x "$dir/bin/javac"
+  printf '%s' "$dir"
+}
+
+# Pins which JDK the build was actually handed, which no message on stdout reports either. The whole
+# point of the guard is that the connector build runs on a different JDK from the one this repository
+# builds under, and an inherited JAVA_HOME looks identical to a chosen one from the outside.
+expect_java_home() {
+  local name="$1" want="$2"
+  local seen; seen="$(cat "$scratch/java-home-seen" 2>/dev/null)"
+  if [ "$seen" = "$want" ]; then
+    printf '  ok    %s\n' "$name"
+    passed=$((passed + 1))
+  else
+    printf '  FAIL  %s: wanted JAVA_HOME "%s", got "%s"\n' "$name" "$want" "$seen"
     failed=$((failed + 1))
   fi
 }
@@ -169,6 +198,7 @@ expect "two shaded jars for one module" 1 "found 2" \
 # the destination ambiguous, which the witnesses refuse - so only the shaded one may land.
 fresh_checkout
 if out="$(env PATH="$(make_shim):$PATH" SMOKE_MODULES_SEEN="$scratch/modules-seen" \
+    SMOKE_JAVA_HOME_SEEN="$scratch/java-home-seen" \
     bash "$builder" --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" \
     "$scratch/dest" 2>&1)"; then
   staged="$(find "$scratch/dest" -name '*.jar' -type f | wc -l | tr -d ' ')"
@@ -185,6 +215,31 @@ else
   printf '%s\n' "$out" | sed 's/^/        /'
   failed=$((failed + 1))
 fi
+
+# The JDK the connector build compiles with. Several connectors pin a Lombok that JDK 21 breaks, and
+# the failure lands 37 modules into a 93-module reactor as a javac NoSuchFieldError - so what is
+# pinned here is that the choice happens at all, before anything is built.
+jdk17="$(make_jdk jdk17 17.0.12)"
+jdk21="$(make_jdk jdk21 21.0.11)"
+
+fresh_checkout
+expect "an explicitly named JDK is used" 0 "Connector jars staged" \
+  TAPSTATE_CONNECTOR_JAVA_HOME="$jdk17" JAVA_HOME="$jdk21" \
+  --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest"
+expect_java_home "the named JDK, not the ambient one" "$jdk17"
+
+# The ambient JDK is fine when it is old enough, and this is the case that keeps the nightly lane and
+# the tutorial working unchanged: they name no JDK and never will.
+fresh_checkout
+expect "an ambient JDK old enough is left alone" 0 "Connector jars staged" \
+  JAVA_HOME="$jdk17" JAVA_HOME_17_X64= JAVA_HOME_17_ARM64= \
+  --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest"
+expect_java_home "the ambient JDK" "$jdk17"
+
+fresh_checkout
+expect "a JDK too new for the pinned Lombok is refused" 2 "Lombok" \
+  JAVA_HOME="$jdk21" JAVA_HOME_17_X64= JAVA_HOME_17_ARM64= \
+  --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest"
 
 help_prints_no_shell "--help prints documentation, not source" bash "$builder"
 

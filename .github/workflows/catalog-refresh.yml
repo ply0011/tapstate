@@ -59,6 +59,16 @@ jobs:
           # can never merge.
           token: ${{ steps.token.outputs.token }}
 
+      - name: A JDK 17 for the connectors, whose pinned Lombok predates JDK 21
+        # Their build dies mid-reactor under a newer JDK, on a javac internal that names nothing about
+        # Lombok. Installed first so its JAVA_HOME can be captured while it is the current one; the
+        # product's own JDK is set up after this and takes JAVA_HOME back.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: echo "TAPSTATE_CONNECTOR_JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

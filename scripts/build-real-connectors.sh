@@ -37,6 +37,10 @@
 #   --checkout <path>                   build from an existing checkout instead of cloning; a refresh
 #                                       already has one, and cloning a second copy of a 469MB
 #                                       repository to build the same commit is pure cost
+#   TAPSTATE_CONNECTOR_JAVA_HOME        env var: the JDK to compile the connectors with. They pin a
+#                                       Lombok that JDK 21 breaks, so this falls back to the ambient
+#                                       JDK when that is old enough, and refuses rather than failing
+#                                       deep in the reactor.
 
 set -euo pipefail
 
@@ -75,6 +79,52 @@ for entry in "${requested[@]}"; do
 done
 if [ "${#CONNECTOR_IDS[@]}" -eq 0 ]; then
     echo "--modules named nothing to build" >&2
+    exit 2
+fi
+
+# The JDK this build compiles with, which is not the one the rest of the repository builds under.
+#
+# Several connectors pin a Lombok old enough to reach into javac internals that JDK 21 moved -
+# doris, starrocks and zoho-desk at 1.18.24, yashandb at 1.18.20, and Lombok only learned JDK 21 in
+# 1.18.30. Compiling one of those under a newer JDK dies with "NoSuchFieldError: ... JCTree$JCImport
+# ... qualid", which names javac rather than the dependency that is actually too old, and it lands
+# 37 modules into a 93-module reactor - so the cost of finding out is a long build, and what it
+# points at is the wrong thing. Every module here targets Java 8, so nothing in this build wants a
+# newer JDK anyway; the repository around it does, and that is whose JAVA_HOME would otherwise be
+# inherited.
+#
+# Two sources: named outright, or the ambient one when it is already old enough - which is what a
+# developer following the tutorial has, and why this stays quiet for them. A workflow whose runner
+# builds this repository under a newer JDK installs a 17 as well and names it; nothing is guessed
+# from the environment, because a guess that misses falls through to the ambient JDK and turns a
+# lane that used to work into a refusal.
+readonly LOMBOK_CEILING=17
+
+java_major() {
+    [ -x "$1/bin/javac" ] || return 1
+    "$1/bin/javac" -version 2>&1 | sed -n 's/^javac \([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+connector_java_home="${TAPSTATE_CONNECTOR_JAVA_HOME:-}"
+if [ -z "$connector_java_home" ]; then
+    connector_java_home="${JAVA_HOME:-}"
+    if [ -z "$connector_java_home" ]; then
+        javac_on_path="$(command -v javac || true)"
+        [ -n "$javac_on_path" ] || { echo "no JDK found: neither JAVA_HOME nor javac on PATH" >&2; exit 2; }
+        connector_java_home="$(dirname "$(dirname "$javac_on_path")")"
+    fi
+fi
+
+major="$(java_major "$connector_java_home" || true)"
+if [ -z "$major" ]; then
+    echo "cannot read a version out of the JDK at $connector_java_home" >&2
+    exit 2
+fi
+if [ "$major" -gt "$LOMBOK_CEILING" ]; then
+    echo "the connectors need a JDK $LOMBOK_CEILING or older to build; $connector_java_home is $major" >&2
+    echo "their pinned Lombok predates JDK 21 and dies mid-reactor on a javac internal, not on a" >&2
+    echo "message naming Lombok - so this refuses here instead. Point TAPSTATE_CONNECTOR_JAVA_HOME" >&2
+    echo "at a JDK $LOMBOK_CEILING, or install one alongside the newer JDK on a runner." >&2
     exit 2
 fi
 
@@ -135,7 +185,7 @@ if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
 fi
 
 modules="$(IFS=,; echo "${CONNECTOR_MODULES[*]}")"
-echo "Building $modules"
+echo "Building $modules with the JDK at $connector_java_home (Java $major)"
 # No exec.skip here, and that is load-bearing rather than an omission: the postgres connector used to
 # run an encryptor over its own shaded jar at package time, and the result was not a zip - no
 # end-of-central-directory record - while this product opens a connector artifact with
@@ -144,7 +194,8 @@ echo "Building $modules"
 # A checkout old enough to still carry it fails here in a way that points somewhere else entirely:
 # the jar stages fine and the failure lands much later, at the first read of the artifact.
 # The odd expansion keeps an empty array from tripping set -u on the bash a Mac ships.
-mvn -B -f "$checkout/pom.xml" -pl "$modules" -am -DskipTests \
+JAVA_HOME="$connector_java_home" \
+    mvn -B -f "$checkout/pom.xml" -pl "$modules" -am -DskipTests \
     ${protoc_flags[@]+"${protoc_flags[@]}"} package
 
 # Stage one jar per connector, and insist on exactly one.
