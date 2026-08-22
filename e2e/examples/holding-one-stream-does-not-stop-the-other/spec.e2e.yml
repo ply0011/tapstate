@@ -1,0 +1,87 @@
+# One source stream held while the other keeps running, and everything written meanwhile arriving when
+# it is let go.
+#
+# READ THIS BEFORE ADDING AN ORDERING ASSERTION HERE. This case deliberately does not claim that the
+# result is ordered by source position rather than by arrival. That claim cannot be discriminated by any
+# specification: within one chain, arrival order is identical to source position order by construction -
+# one reader per table, a sequence assigned by the ring on append, snapshot rows emitted before changes -
+# and across chains nothing is ever compared, because an assembly only ever weighs an order against
+# another order for the same root row or the same array element. Two implementations, one ordering by
+# position and one by arrival, produce the same document here. An assertion about ordering would
+# therefore hold for every implementation, which is another way of saying it tests nothing.
+#
+# What is left is what the word exists for, and it is worth having on its own:
+#
+# - **Only one stream is held.** The whole pipeline is a single job, and a job suspends whole - so an
+#   implementation that reads "pause" and stops everything would satisfy any assertion taken after both
+#   sides are fed. The witness is a change made in the *other* engine while this one is held, and read
+#   back before it is released. Nothing else discriminates a scoped hold from a whole-pipeline one.
+# - **Nothing written during the hold is lost.** The row is inserted into a database whose stream is
+#   held, so it exists upstream and cannot cross; releasing has to deliver it, into the document it
+#   belongs to, rather than dropping it or attaching it to whichever root came first.
+#
+# The absence assertion in the middle is ordered by construction rather than by waiting. It is taken
+# only after a change made *later*, in the other engine, has been positively observed to arrive - so an
+# unheld stream had at least that long to deliver. That is the same instrument the late-arrival cases in
+# this module use, and the same caveat applies: it is the strongest form available, not a proof.
+#
+# Deliberately not covered here: the shape of the object under assembly, which is the golden path case's
+# job. This one changes as little as possible so a failure names the hold.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips this
+# example, naming a directory whose jars do not resolve fails it.
+name: holding-one-stream-does-not-stop-the-other
+setup:
+  databases:
+    orders: { kind: mysql }
+    fulfillment: { kind: postgres }
+    store: { kind: mongo }
+  connectors: [mysql, postgres, mongodb]
+  apply: [orders_db.tap.yml, fulfillment_db.tap.yml, views.tap.yml, order_pipeline.tap.yml]
+  discover: [orders_db, fulfillment_db]
+pipeline: order_pipeline.tap.yml
+seed:
+  orders_db.orders:
+    values:
+      - { id: 1, customer: alice }
+      - { id: 2, customer: bob }
+      - { id: 3, customer: carol }
+      - { id: 4, customer: dave }
+      - { id: 5, customer: erin }
+  fulfillment_db.shipments:
+    values:
+      - { id: 1, order_id: 1, carrier: dhl,   status: delivered }
+      - { id: 2, order_id: 1, carrier: ups,   status: in_transit }
+      - { id: 3, order_id: 2, carrier: fedex, status: delivered }
+      - { id: 4, order_id: 2, carrier: dhl,   status: pending }
+      - { id: 5, order_id: 3, carrier: ups,   status: delivered }
+      - { id: 6, order_id: 4, carrier: fedex, status: in_transit }
+steps:
+  - start
+  - await: { count: { views.order_state: 5 } }
+  - await: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alice }, size: { shipments: 2 } } } }
+  - assert: { doc: { views.order_state: { where: { id: 2 }, expect: { customer: bob }, size: { shipments: 2 } } } }
+
+  # Hold the second engine's stream. The database keeps accepting writes; they just cannot cross.
+  - pause: fulfillment_db
+
+  # Written into the held engine. It is in PostgreSQL from this moment on.
+  - cdc: { fulfillment_db.shipments: { insert: { values: [ { id: 7, order_id: 1, carrier: ups, status: pending } ] } } }
+
+  # Written into the engine that is NOT held, afterwards, and awaited. This is the discriminating step:
+  # an implementation that stopped the whole pipeline instead of one stream never satisfies it.
+  - cdc: { orders_db.orders: { update: { where: { id: 2 }, set: { customer: hopper } } } }
+  - await: { doc: { views.order_state: { where: { id: 2 }, expect: { customer: hopper }, size: { shipments: 2 } } } }
+
+  # And the held stream really is held: the shipment written before that change has still not arrived,
+  # read after the later change has been observed to.
+  - assert: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alice }, size: { shipments: 2 } } } }
+
+  # Let it go. What was written during the hold has to arrive now, on the order it belongs to.
+  - resume: fulfillment_db
+  - await: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alice }, size: { shipments: 3 } } } }
+
+  # Nothing else moved while all that happened: the release delivers the held rows, not a rebuild.
+  - assert: { doc: { views.order_state: { where: { id: 2 }, expect: { customer: hopper }, size: { shipments: 2 } } } }
+  - assert: { doc: { views.order_state: { where: { id: 3 }, expect: { customer: carol }, size: { shipments: 1 } } } }
+  - assert: { count: { views.order_state: 5 } }

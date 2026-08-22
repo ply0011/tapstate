@@ -34,7 +34,9 @@ class TheDemoAndTheGoldenPathCaseAreOneSampleTest {
 
     private static final Path QUICKSTART = Path.of("..", "deploy", "quickstart", "quickstart.sh");
 
-    private static final Path CASE = Path.of("examples", "the-golden-path-two-engines-become-one-object");
+    private static final Path EXAMPLES = Path.of("examples");
+
+    private static final Path CASE = EXAMPLES.resolve("the-golden-path-two-engines-become-one-object");
 
     /** The settings line, which is the one thing the two are allowed to disagree on. */
     private static final String ADDRESS_LINE_PREFIX = "config:";
@@ -69,6 +71,31 @@ class TheDemoAndTheGoldenPathCaseAreOneSampleTest {
         for (String source : List.of("orders_db.tap.yml", "fulfillment_db.tap.yml")) {
             assertThat(heredoc("work/source/" + source)).contains(ADDRESS_LINE_PREFIX);
             assertThat(caseFile(source)).contains(ADDRESS_LINE_PREFIX);
+        }
+    }
+
+    /**
+     * Every other case that carries the demo's pipeline carries the same one.
+     *
+     * <p>The sameness above is between two files. This is the reason a third copy cannot quietly become
+     * a fourth shape: cases about the demo are written by copying it, so the moment one of them is
+     * edited in place the demo has forked without anyone deciding to fork it.
+     */
+    @Test
+    void everyCaseCarryingTheDemoPipelineCarriesTheSameOne() throws IOException {
+        String demo = heredoc("work/pipeline/order_pipeline.tap.yml");
+        List<Path> copies;
+        try (var entries = Files.list(EXAMPLES)) {
+            copies = entries.map(dir -> dir.resolve("order_pipeline.tap.yml")).filter(Files::exists).toList();
+        }
+
+        assertThat(copies)
+                .as("the golden path case at least, or this test is watching nothing")
+                .isNotEmpty();
+        for (Path copy : copies) {
+            assertThat(Files.readString(copy))
+                    .as("%s carries the demo's pipeline, so it has to carry the demo's pipeline", copy)
+                    .isEqualTo(demo);
         }
     }
 

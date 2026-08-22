@@ -36,6 +36,8 @@ a-view-whose-store-cannot-be-reached-fails-with-a-named-code on IN_PROCESS
 a-view-whose-store-cannot-be-reached-fails-with-a-named-code on REAL_PROCESS
 default-selection-reaches-every-discovered-table on IN_PROCESS
 default-selection-reaches-every-discovered-table on REAL_PROCESS
+holding-one-stream-does-not-stop-the-other on IN_PROCESS
+holding-one-stream-does-not-stop-the-other on REAL_PROCESS
 negative-lookahead-source-regex-roundtrip on IN_PROCESS
 negative-lookahead-source-regex-roundtrip on REAL_PROCESS
 real-mysql-rows-cross-to-a-real-mongo-target on IN_PROCESS

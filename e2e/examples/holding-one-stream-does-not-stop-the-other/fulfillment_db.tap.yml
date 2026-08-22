@@ -1,0 +1,7 @@
+version: tapstate/v1
+kind: source
+id: fulfillment_db
+connector: postgres
+config: { host: ${FULFILLMENT_HOST}, port: ${FULFILLMENT_PORT}, database: ${FULFILLMENT_DATABASE}, schema: public, user: ${FULFILLMENT_USERNAME}, password: ${FULFILLMENT_PASSWORD} }
+mode: cdc
+tables: [ shipments ]
