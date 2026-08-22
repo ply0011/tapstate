@@ -49,6 +49,19 @@ Timestamps are filled in from the finished recording; they are also what the REA
 | 9 | 01:12 | An MCP client asking "current state of order 1?" | The agent answers out of the same materialized object, through `data_browser_collections` / `data_browser_find` | Criterion 6 — the state-query MCP reaches the same object |
 | 10 | 01:20 | — | Closing frame: what this was, and the one-line install again | — |
 
+## Which shots a test is watching, and which are only watched here
+
+Most of these shots have a case behind them that fails if the product stops doing what the shot
+shows. Three do not, and saying which is the point of writing this down:
+
+| Shot | Watched by |
+|---|---|
+| 1, 3, 4, 6, 7 | The golden-path end-to-end case, which runs the same pipeline file this demo generates |
+| 8 | The held-stream end-to-end case, on the terms in the next section |
+| 2, 5 | **Nothing automated.** A test can assert that `watch` sent the right escape sequences; only a person can see whether the screen redraws in place. This is what the [browsing live data by hand](tutorials/browsing-live-data-by-hand/) walkthrough is for |
+| 9 | **Partly.** The MCP read tools, and their answers following newly applied sources without restarting the session, are covered. That the agent reaches *this demo's* assembled object is shown here and nowhere else |
+| 10 | Nothing. It is a closing frame |
+
 ## What shot 8 proves, and what it does not
 
 It proves two things: **only the named stream stops** — the other one keeps moving on screen, which is
