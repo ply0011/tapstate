@@ -181,13 +181,21 @@ if [ -n "$pw_a" ] && [ "$pw_a" != "$pw_b" ]; then ok "each fresh run gets a diff
 
 # --- the demo workspace is generated, uses in-network addresses, and honours the CEL constraint ------
 WORK="$PREP/work"
-have work/source/db_src.tap.yml        "generates the source resource"
-have work/pipeline/sync_orders.tap.yml "generates the pipeline resource"
+have work/source/orders_db.tap.yml           "generates the first engine's source resource"
 # The second engine's half. Its seed has been fetched and mounted since the compose file grew a
 # postgres service, but nothing read it: the demo generated a mysql source, a mongo target and one
 # pipeline. A seeded database no resource names is indistinguishable from one that is not there.
-have work/source/db_shipments.tap.yml     "generates the second engine's source resource"
-have work/pipeline/sync_shipments.tap.yml "generates the second engine's pipeline"
+have work/source/fulfillment_db.tap.yml      "generates the second engine's source resource"
+# One pipeline over both, not one per engine. Two pipelines put each engine's rows in a collection of
+# its own, which is two syncs standing next to each other; the object this demo is about only exists
+# because a single pipeline reads both.
+have work/pipeline/order_pipeline.tap.yml    "generates one pipeline over both engines"
+pcount="$(find "$PREP/work/pipeline" -name '*.tap.yml' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$pcount" = 1 ]; then
+  ok "generates exactly one pipeline, so the demo has one collection to look at"
+else
+  bad "generated $pcount pipelines (want 1): $(find "$PREP/work/pipeline" -name '*.tap.yml' 2>/dev/null)"
+fi
 # The managed store is deliberately NOT here. It is the deployment's, registered by the server at
 # startup, and a demo that shipped it as a file to apply would be teaching the opposite -- that the
 # store is one more thing an author owns and has to hand back.
@@ -198,10 +206,10 @@ else
 fi
 # Addresses use compose service names: the connector runs inside the server container, so 127.0.0.1
 # would point the server at itself, not at the databases.
-if grep -q 'host: mysql' "$WORK/source/db_src.tap.yml" 2>/dev/null && ! grep -q '127.0.0.1' "$WORK/source/db_src.tap.yml" 2>/dev/null; then
+if grep -q 'host: mysql' "$WORK/source/orders_db.tap.yml" 2>/dev/null && ! grep -q '127.0.0.1' "$WORK/source/orders_db.tap.yml" 2>/dev/null; then
   ok "source addresses mysql by its compose service name, not loopback"
 else
-  bad "source is not addressed by service name: $(cat "$WORK/source/db_src.tap.yml" 2>/dev/null)"
+  bad "source is not addressed by service name: $(cat "$WORK/source/orders_db.tap.yml" 2>/dev/null)"
 fi
 # The store the server seeds is derived from its own store URI, so that URI has to be reachable from
 # inside the container for the derived one to be too. Checked on the compose file, which is where it is
@@ -220,36 +228,71 @@ else
   bad "warehouse survives the rename in: $stale"
 fi
 vcount="$(cat "$WORK"/source/*.tap.yml "$WORK"/pipeline/*.tap.yml 2>/dev/null | grep -c '^version: tapstate/v1' || true)"
-if [ "$vcount" = 4 ]; then ok "all four generated resources declare version: tapstate/v1"; else bad "version lines = $vcount (want 4)"; fi
+if [ "$vcount" = 3 ]; then ok "all three generated resources declare version: tapstate/v1"; else bad "version lines = $vcount (want 3)"; fi
 
 # The second source is addressed the same way the first is, and it reads changes rather than only a
 # snapshot. Both matter to the live check this demo exists to make possible: a row inserted by hand
 # after the stack is up only crosses if the tail is running.
-if grep -q 'host: postgres' "$WORK/source/db_shipments.tap.yml" 2>/dev/null \
-   && ! grep -q '127.0.0.1' "$WORK/source/db_shipments.tap.yml" 2>/dev/null; then
+if grep -q 'host: postgres' "$WORK/source/fulfillment_db.tap.yml" 2>/dev/null \
+   && ! grep -q '127.0.0.1' "$WORK/source/fulfillment_db.tap.yml" 2>/dev/null; then
   ok "the second source addresses postgres by its compose service name, not loopback"
 else
-  bad "second source is not addressed by service name: $(cat "$WORK/source/db_shipments.tap.yml" 2>/dev/null)"
+  bad "second source is not addressed by service name: $(cat "$WORK/source/fulfillment_db.tap.yml" 2>/dev/null)"
 fi
-if grep -q 'mode: cdc' "$WORK/source/db_shipments.tap.yml" 2>/dev/null \
-   && grep -q 'read_mode: snapshot_and_cdc' "$WORK/pipeline/sync_shipments.tap.yml" 2>/dev/null; then
-  ok "the second engine's half reads changes, not only a snapshot"
+# Both streams carry changes, not just one. With the two engines assembled into a single object, a
+# source left on snapshot contributes its seeded rows and then goes quiet - and the object still looks
+# complete, because the other side keeps it moving. Which side went quiet is invisible from outside.
+if grep -q 'mode: cdc' "$WORK/source/orders_db.tap.yml" 2>/dev/null \
+   && grep -q 'mode: cdc' "$WORK/source/fulfillment_db.tap.yml" 2>/dev/null \
+   && grep -q 'read_mode: snapshot_and_cdc' "$WORK/pipeline/order_pipeline.tap.yml" 2>/dev/null; then
+  ok "both engines read changes, not only a snapshot"
 else
-  bad "the second half is snapshot-only, so a hand-inserted row would never cross"
+  bad "one of the two halves is snapshot-only, so a hand-inserted row would never cross"
 fi
 # HARD CONSTRAINT: the decimal `amount` column cannot pass through a CEL expression in this preview, so
 # the demo pipeline must never name it -- it only ever passes through untouched.
-if ! grep -q 'amount' "$WORK/pipeline/sync_orders.tap.yml" 2>/dev/null \
-   && ! grep -qE '=[^#]*after\.(id|amount)' "$WORK/pipeline/sync_orders.tap.yml" 2>/dev/null; then
+if ! grep -q 'amount' "$WORK/pipeline/order_pipeline.tap.yml" 2>/dev/null \
+   && ! grep -qE '=[^#]*after\.(id|amount)' "$WORK/pipeline/order_pipeline.tap.yml" 2>/dev/null; then
   ok "the decimal amount column never appears in the pipeline (no numeric column in any CEL)"
 else
-  bad "a numeric column leaked into the pipeline: $(grep -nE 'amount|after\.(id|amount)' "$WORK/pipeline/sync_orders.tap.yml" 2>/dev/null)"
+  bad "a numeric column leaked into the pipeline: $(grep -nE 'amount|after\.(id|amount)' "$WORK/pipeline/order_pipeline.tap.yml" 2>/dev/null)"
 fi
-# there IS a CEL, and it reads only string/envelope fields -- proves the demo still exercises transforms
-if grep -q '"=after.customer' "$WORK/pipeline/sync_orders.tap.yml" 2>/dev/null; then
-  ok "the demo still exercises a CEL transform over string/envelope fields"
+
+# --- the shape the demo exists to show: two engines assembled into one object ------------------------
+# Each of these is a way the pipeline could still apply, still move rows, and no longer be the demo.
+PIPE="$WORK/pipeline/order_pipeline.tap.yml"
+if grep -qE '^source: *\[ *orders_db *, *fulfillment_db *\]' "$PIPE" 2>/dev/null; then
+  ok "one pipeline reads both engines, named in a single source list"
 else
-  bad "no string/envelope CEL present: $(cat "$WORK/pipeline/sync_orders.tap.yml" 2>/dev/null)"
+  bad "the pipeline does not read both engines: $(grep -n '^source:' "$PIPE" 2>/dev/null)"
+fi
+if grep -q 'type: nest' "$PIPE" 2>/dev/null && grep -q 'path: shipments' "$PIPE" 2>/dev/null; then
+  ok "the second engine's rows are placed inside the first engine's object, not beside it"
+else
+  bad "no nest placing shipments under the order: $(cat "$PIPE" 2>/dev/null)"
+fi
+# arrayKey is what identifies an element already in the array. Without it an updated shipment appends a
+# second copy instead of moving the one it belongs to -- which the demo's own CDC walk would show, and
+# which no assertion about the pipeline applying could see.
+if grep -q 'arrayKey' "$PIPE" 2>/dev/null; then
+  ok "array elements are identified, so a changed shipment moves rather than duplicates"
+else
+  bad "the embed carries no arrayKey: $(grep -n 'embed' -A 2 "$PIPE" 2>/dev/null)"
+fi
+# No serve block, and a view instead. A serve block would write the result into somebody else's system;
+# declaring a view is the instruction to materialize it in the store the deployment already runs. The
+# demo's whole "no second client, no URI to configure" claim rests on which of the two is here.
+if grep -q '^view:' "$PIPE" 2>/dev/null && ! grep -q '^serve:' "$PIPE" 2>/dev/null; then
+  ok "the pipeline declares a view and names no target: materializing is the declaration"
+else
+  bad "the pipeline still names a target instead of declaring a view: $(cat "$PIPE" 2>/dev/null)"
+fi
+# The materialized document has to say what identifies it. Missing, the run is refused at actuation --
+# well after validate has passed, which is exactly where a generated workspace must not send a reader.
+if grep -q 'primary_key:' "$PIPE" 2>/dev/null; then
+  ok "the view says what identifies a document, so materializing is not refused later"
+else
+  bad "the view carries no primary_key: $(cat "$PIPE" 2>/dev/null)"
 fi
 
 # --- idempotency: a re-run keeps generated state and does not re-download verified assets ------------
@@ -361,17 +404,29 @@ fi
 # Failure branches print the driven command stream to say what went wrong -- and that stream contains
 # the admin password by design (the assertion above requires it there). Print it redacted, always.
 redacted_stdin() { sed "s/$RUN_PW/<redacted>/g" "$RUN/.cli-stdin" 2>/dev/null; }
+# The second engine is driven as far as the first is. It no longer has a pipeline of its own -- there
+# is one pipeline over both -- so what is left to check is its connector and its discovery, and the
+# ordering check below then holds it to the same sequence as the first.
 if grep -q 'register \.\./postgres-connector.jar' "$RUN/.cli-stdin" 2>/dev/null \
-   && grep -q 'discover-schema db_shipments' "$RUN/.cli-stdin" 2>/dev/null \
-   && grep -q 'start sync_shipments' "$RUN/.cli-stdin" 2>/dev/null; then
-  ok "drives the second engine's connector, discovery and pipeline too"
+   && grep -q 'discover-schema fulfillment_db' "$RUN/.cli-stdin" 2>/dev/null \
+   && grep -q 'apply source/fulfillment_db.tap.yml' "$RUN/.cli-stdin" 2>/dev/null; then
+  ok "drives the second engine's connector, source and discovery too"
 else
   bad "the second engine is not driven: $(redacted_stdin)"
 fi
-if grep -q 'register \.\./mysql-connector.jar' "$RUN/.cli-stdin" 2>/dev/null && grep -q '^apply' "$RUN/.cli-stdin" 2>/dev/null && grep -q 'start sync_orders' "$RUN/.cli-stdin" 2>/dev/null; then
+if grep -q 'register \.\./mysql-connector.jar' "$RUN/.cli-stdin" 2>/dev/null && grep -q '^apply' "$RUN/.cli-stdin" 2>/dev/null && grep -q 'start order_pipeline' "$RUN/.cli-stdin" 2>/dev/null; then
   ok "drives register / apply / start through the REPL"
 else
   bad "online verbs not driven: $(redacted_stdin)"
+fi
+# Exactly one start. Two would mean the workspace grew a second pipeline again, which is the shape this
+# demo moved away from -- and a stream that starts one pipeline and silently leaves another stopped
+# looks identical from here to one that has only ever had one.
+starts="$(grep -c '^start ' "$RUN/.cli-stdin" 2>/dev/null || true)"
+if [ "$starts" = 1 ]; then
+  ok "starts one pipeline, because there is one"
+else
+  bad "started $starts pipelines (want 1): $(grep '^start ' "$RUN/.cli-stdin" 2>/dev/null)"
 fi
 # The order, not just the presence. Each pipeline maps a row field, which the server refuses to apply
 # until the source it reads has a discovered schema -- while the discovery needs the source applied.
@@ -380,7 +435,7 @@ fi
 #
 # Both engines are held to it, separately. The second engine's pipeline maps a row field exactly like
 # the first's, so it is under the same rule -- and checking only the first would pass a stream that
-# discovers db_shipments after the workspace apply, which is the same defect wearing the other engine.
+# discovers fulfillment_db after the workspace apply, which is the same defect wearing the other engine.
 check_apply_order() {   # $1 = source id
   _src="$(grep -n "^apply source/$1.tap.yml\$" "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
   _disc="$(grep -n "^discover-schema $1\$" "$RUN/.cli-stdin" 2>/dev/null | head -1 | cut -d: -f1)"
@@ -392,8 +447,8 @@ check_apply_order() {   # $1 = source id
     bad "apply/discover ordering for $1 (source-apply=$_src discover=$_disc full-apply=$_full): $(redacted_stdin)"
   fi
 }
-check_apply_order db_src
-check_apply_order db_shipments
+check_apply_order orders_db
+check_apply_order fulfillment_db
 if printf '%s' "$RUN_OUT" | grep -q 'down -v' && printf '%s' "$RUN_OUT" | grep -qi 'images remain'; then
   ok "prints teardown on completion (down -v, images noted)"
 else
@@ -461,28 +516,58 @@ fi
 # fake docker returns 5 orders and 6 shipments). Naming them is the point: one number for the pair
 # would leave the reader unable to tell which engine produced it, and the demo's whole claim is that
 # two of them did.
-if printf '%s' "$RUN_OUT" | grep -q 'holds 5 orders from MySQL and 6 shipments from PostgreSQL'; then
-  ok "prints both engines' row counts automatically (no user action)"
+if printf '%s' "$RUN_OUT" | grep -q '5 orders from MySQL' \
+   && printf '%s' "$RUN_OUT" | grep -q '6 of them, in one object per order'; then
+  ok "prints what was assembled automatically (no user action), naming both engines"
 else
-  bad "snapshot row counts not printed: $RUN_OUT"
+  bad "assembly counts not printed: $RUN_OUT"
 fi
 # The CDC section walks all three operations -- consistent with a pipeline that no longer drops deletes.
+# They are spread across the two engines on purpose now: the parent moves in MySQL, the array elements
+# arrive and leave from PostgreSQL, and that spread is the demonstration. A walk that stayed on one
+# engine would show three operations and none of the thing this demo is about.
 if printf '%s' "$RUN_OUT" | grep -q 'INSERT INTO orders' \
    && printf '%s' "$RUN_OUT" | grep -q 'UPDATE orders' \
-   && printf '%s' "$RUN_OUT" | grep -q 'DELETE FROM orders'; then
+   && printf '%s' "$RUN_OUT" | grep -q 'DELETE FROM shipments'; then
   ok "the CDC section demonstrates insert, update and delete"
 else
   bad "CDC section does not walk insert/update/delete: $RUN_OUT"
 fi
-# And it shows the same thing on the second engine. This gesture is the whole reason the second engine
-# is wired in: a row typed into PostgreSQL after the stack is up crosses to the same target. A reader
-# who is never shown it has no way to try the one claim the demo is making, and a run that prints only
-# the mysql walk looks complete.
+# And it shows a change made in the second engine reaching the object the first engine roots. This is
+# the whole reason the second engine is wired in, and the read it is verified by has to be the array
+# inside that object -- a walk that inserted into PostgreSQL and then read a collection of its own
+# would demonstrate two syncs, which is what this demo stopped being.
 if printf '%s' "$RUN_OUT" | grep -q 'INSERT INTO shipments' \
-   && printf '%s' "$RUN_OUT" | grep -q 'db.shipments'; then
-  ok "the CDC section also demonstrates a row inserted in the second engine"
+   && printf '%s' "$RUN_OUT" | grep -q 'order_state.findOne({id:1})?.shipments?.length'; then
+  ok "a change in the second engine is shown reaching the first engine's object"
 else
-  bad "no second-engine change demonstrated: $RUN_OUT"
+  bad "no second-engine change demonstrated inside the assembled object: $RUN_OUT"
+fi
+# Every wait printed for the user to paste is bounded. An unbounded `until` returns in a second when
+# the change arrives and hangs forever, in silence, when it does not -- and a recording of this demo
+# structurally cannot show that, because on the recording machine it always returns. Counted rather
+# than spot-checked: one unbounded loop among four is the whole defect.
+unbounded="$(printf '%s' "$RUN_OUT" | grep -c 'until docker compose exec.*; do sleep 1; done' || true)"
+loops="$(printf '%s' "$RUN_OUT" | grep -c '^  i=0; until docker compose exec' || true)"
+if [ "$unbounded" = 0 ] && [ "$loops" -ge 1 ]; then
+  ok "every wait a reader is told to paste is bounded ($loops of them), none can hang"
+else
+  bad "$unbounded unbounded wait(s) printed, $loops bounded: $(printf '%s' "$RUN_OUT" | grep 'until docker compose')"
+fi
+# A bound that gives up silently is the same trap wearing a timer. Each one has to say what it saw, so
+# a reader can tell "nothing is arriving" from "this machine is slow", and where to look next.
+if printf '%s' "$RUN_OUT" | grep -q 'docker compose logs --tail 50 server'; then
+  ok "a wait that runs out says what it observed and where to look"
+else
+  bad "a wait can run out with nothing actionable printed: $RUN_OUT"
+fi
+# One collection, and the demo says so. The whole "no second client, no URI to configure" claim is
+# about what a reader finds when they look: an intermediate resource showing up beside the object
+# would make the store look like a staging area, which is the thing the view declaration replaced.
+if printf '%s' "$RUN_OUT" | grep -q 'one collection: views.order_state'; then
+  ok "the demo points at exactly one collection, named"
+else
+  bad "the demo does not name the single collection a reader should find: $RUN_OUT"
 fi
 
 # --- the first admin exists before anyone tries to log in ---------------------------------------------
@@ -552,7 +637,7 @@ fi
 # a machine looks. The stack is deliberately left standing on the failure path: the server log is the
 # next thing to read, and tearing the stack down would take it away.
 run_phase_fakes 0
-if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'did not reach the target'; then
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'were not assembled'; then
   ok "fails non-zero when the pipeline delivers nothing to the target"
 else
   bad "an empty target was reported as success (rc=$RUN_RC): $RUN_OUT"
@@ -563,8 +648,8 @@ fi
 # wired in. A run verified on one total reports it as success, because that total is the one the
 # working half fills.
 run_phase_fakes 5 0
-if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'did not reach the target'; then
-  ok "fails non-zero when only the first engine's rows arrive"
+if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'were not assembled'; then
+  ok "fails non-zero when the first engine's orders arrive with nothing embedded in them"
 else
   bad "a run missing the second engine was reported as success (rc=$RUN_RC): $RUN_OUT"
 fi
@@ -572,7 +657,8 @@ fi
 # nothing if they also reject the successful one.
 run_phase_fakes 5 6
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$RUN_OUT" | grep -q 'holds 5 orders from MySQL and 6 shipments from PostgreSQL'; then
+   && printf '%s' "$RUN_OUT" | grep -q '5 orders from MySQL' \
+   && printf '%s' "$RUN_OUT" | grep -q '6 of them, in one object per order'; then
   ok "still succeeds when both engines' seeded rows are in the target"
 else
   bad "a delivering run was rejected (rc=$RUN_RC): $RUN_OUT"

@@ -15,13 +15,15 @@
 > is yours to own.
 
 What you'll do: bring up a Docker Compose stack — databases, the server, and the
-first-admin bootstrap all seeded and started together — then drive a source →
-pipeline → target from the CLI so rows move from one datastore to another: snapshot
-first, then live change-data-capture (CDC).
+first-admin bootstrap all seeded and started together — then drive two sources through
+one pipeline from the CLI, so that rows from two different database engines are assembled
+into a single object and kept fresh: snapshot first, then live change-data-capture (CDC).
 
-The worked example is **MySQL → MongoDB**. The runtime itself is connector-agnostic —
-every connector is loaded through the same plugin interface — but this release
-**registers MySQL and MongoDB only**: they are the connectors it supports end to end
+The worked example is **MySQL + PostgreSQL → one materialized object**. An order lives in
+MySQL, its shipments live in PostgreSQL, and neither database can see the other — so no
+view and no join can produce the result. The runtime itself is connector-agnostic (every
+connector is loaded through the same plugin interface), but this release **registers
+MySQL, PostgreSQL and MongoDB only**: they are the connectors it supports end to end
 today, and registering any other one is refused. The set grows as connectors are
 certified.
 
@@ -200,8 +202,8 @@ with the Universal FOSS Exception (see [`NOTICE`](../NOTICE)).
 
 ## 5. Author the resources
 
-A workspace is a folder partitioned by resource kind. Create five resources — one read
-source per engine, the write target they share, and a pipeline for each source:
+A workspace is a folder partitioned by resource kind. Create three resources — one read
+source per engine, and the single pipeline that assembles them:
 
 ```sh
 mkdir -p work/source work/pipeline
@@ -213,134 +215,110 @@ Unnamed, the CLI falls back to its default workspace, `tap-work`, and finds noth
 (`TAPSTATE_WORKDIR=work` in the environment does the same job for both.)
 
 The connector configs address the databases by their **compose service names**
-(`mysql`, `postgres`, `mongo`): the connector runs inside the server container, where those
-names resolve and loopback is the server itself.
+(`mysql`, `postgres`): the connector runs inside the server container, where those names
+resolve and loopback is the server itself.
 
-`work/source/db_src.tap.yml` — the read source (the demo MySQL):
+**There is no target resource here, and that is the shape rather than an omission.**
+Declaring a `view` is the whole instruction to materialize it, into the managed state
+store the deployment already runs. You never supply a store URI and never apply a store
+of your own.
+
+`work/source/orders_db.tap.yml` — the orders service's database (the demo MySQL):
 
 ```yaml
 version: tapstate/v1
 kind: source
-id: db_src
+id: orders_db
 connector: mysql
 config: { host: mysql, port: 3306, database: appdb, username: root, password: secret }
 mode: cdc
 tables: [ orders ]
 ```
 
-`work/source/db_shipments.tap.yml` — the second read source, on a different engine
-(the demo PostgreSQL). Two settings are spelled differently from the MySQL source
-above, and both are this connector's own spelling rather than a choice: the account is
-`user` where MySQL says `username`, and a table is addressed by schema as well as by
-database.
+`work/source/fulfillment_db.tap.yml` — the fulfillment service's database, on a
+different engine (the demo PostgreSQL). Two settings are spelled differently from the
+MySQL source above, and both are this connector's own spelling rather than a choice: the
+account is `user` where MySQL says `username`, and a table is addressed by schema as well
+as by database.
 
 ```yaml
 version: tapstate/v1
 kind: source
-id: db_shipments
+id: fulfillment_db
 connector: postgres
 config: { host: postgres, port: 5432, database: appdb, schema: public, user: postgres, password: secret }
 mode: cdc
 tables: [ shipments ]
 ```
 
-`work/source/views.tap.yml` — the write target (also `kind: source`):
-
-```yaml
-version: tapstate/v1
-kind: source
-id: views
-connector: mongodb
-config: { isUri: true, uri: "mongodb://mongo:27017/views?directConnection=true" }
-```
-
-`work/pipeline/sync_orders.tap.yml` — the data flow:
+`work/pipeline/order_pipeline.tap.yml` — one pipeline over both engines:
 
 ```yaml
 version: tapstate/v1
 kind: pipeline
-id: sync_orders
-source: db_src
+id: order_pipeline
+source: [ orders_db, fulfillment_db ]
 settings: { read_mode: snapshot_and_cdc }
 transforms:
-  - id: shape_orders
-    from: [ orders ]
-    type: map
-    fields:
-      customer_name: $customer
-      label: "=after.customer + ' <' + src + '>'"
+  - id: assemble
+    type: nest
+    from: { order: orders, shipment: shipments }
+    root:
+      from: order
+      key: [ id ]
+      embed:
+        - { from: shipment, on: { order_id: id }, as: array, path: shipments, arrayKey: [ id ] }
 view:
   id: order_state
-  from: shape_orders
+  from: assemble
   primary_key: id
 ```
 
-`work/pipeline/sync_shipments.tap.yml` — the second engine's flow, into the same target:
+**An order and its shipments live in two different databases, and neither can see the
+other.** There is no SQL view and no join that could produce this document: the tables
+are in separate engines, so an application would have to read both and stitch the result
+itself, on every request. `nest` declares the stitch once, and Tapstate keeps the result
+materialized and fresh as either side changes.
 
-```yaml
-version: tapstate/v1
-kind: pipeline
-id: sync_shipments
-source: db_shipments
-settings: { read_mode: snapshot_and_cdc }
-transforms:
-  - id: shape_shipments
-    from: [ shipments ]
-    type: map
-    fields:
-      route: "=after.carrier + ' -> ' + after.status"
-serve:
-  from: shape_shipments
-  sync:
-    - source: views
-```
+Reading the `nest` step:
 
-Two engines, one store. Nothing here assembles an order and its shipments into a
-single document — that is a separate capability; here each half simply arrives, which
-is what makes "insert a row in PostgreSQL and watch it appear" something you can do
-below. `route` names only text columns for the same reason `amount` is never named in
-the orders pipeline: see the note on numeric columns further down.
-
-One `map` step reshapes the stream, and it carries every change through — insert, update
-and delete. An insert or update is reshaped by the fields below; a delete has no `after`
-image, so the map leaves it untouched and the sink removes the row from the target by its
-key.
-
-A `map` step lists only the fields it changes — anything unlisted passes through
-untouched, so `id` and `amount` arrive at the target as they left the source. Each
-entry takes one of four forms:
-
-| Form | Meaning |
+| Key | What it says |
 |---|---|
-| `new: $old` | rename; the source field is consumed |
-| `field: false` | drop the field |
-| `field: <value>` | set a constant |
-| `field: "=<CEL>"` | compute from a CEL row expression |
+| `from` | short aliases for the tables this step reads — `order` is the MySQL table, `shipment` the PostgreSQL one |
+| `root.from` / `root.key` | which side is the document, and the column that identifies it |
+| `embed[].on` | `{ <child column>: <parent column> }` — how a shipment finds its order |
+| `embed[].as` / `path` | placed as an array, at the field `shipments` on the order |
+| `embed[].arrayKey` | what identifies an element already in that array, so a changed shipment moves the element it belongs to instead of appending a second copy |
 
-So `customer_name: $customer` renames the column, and `label` builds a new value from
-the row (`after.<field>`) and the change envelope (`src`, plus `op` and `ts`).
+Two settings outside the step matter as much:
 
-> **Numeric columns cannot be used in CEL expressions in this preview.** Row values
-> reach CEL as the connector produced them, so an `int` or `decimal` column matches no
-> CEL overload — `=string(after.amount)` and `=after.id > 2` both compile offline and
-> then fail at runtime with `No matching overload`. Keep expressions to string and
-> envelope fields for now; type conversion is not yet usable. (This is why the demo's
-> `amount` decimal is only ever passed through, never named in an expression.)
+- **`mode: cdc` on both sources.** A source left on a snapshot contributes its seeded
+  rows and then goes quiet — and the assembled object still looks complete, because the
+  other side keeps it moving. Which side went silent is not visible from outside.
+- **`read_mode: snapshot_and_cdc`** on the pipeline: the seeded rows arrive by snapshot,
+  everything typed afterwards arrives by change stream.
 
 > Declaring a `view` is the whole instruction to materialize it: the rows land in the
 > managed state store as the collection the view names — `views.order_state` here —
 > and no `serve` block is needed. `view.from` names the **last** step you want
-> materialized (`shape_orders` here); it takes a transform `id` or a concrete resource,
+> materialized (`assemble` here); it takes a transform `id` or a concrete resource,
 > **not** a regex such as `/.*/`. `primary_key` is the column documents are addressed
-> by, and the collection is indexed uniquely on it.
+> by, and the collection is indexed uniquely on it — without it the run is refused when
+> it goes to materialize, which is after `validate` has already passed.
 >
 > A `serve` block still exists, and is what you write to deliver to a system outside
 > Tapstate. The two are independent: a pipeline may carry either, or both.
 
+> **Numeric columns cannot be used in CEL expressions in this preview.** Row values
+> reach CEL as the connector produced them, so an `int` or `decimal` column matches no
+> CEL overload — `=string(after.amount)` and `=after.id > 2` both compile offline and
+> then fail at runtime with `No matching overload`. This pipeline names no columns in
+> expressions at all, so it does not meet the limit; a `map` step you add later would.
+
 Validate offline before going online (no server needed):
 
 ```sh
-./tapstate-cli/bin/tapstate validate work       # expects: valid: 5 resources in work
+./tapstate-cli/bin/tapstate validate work       # expects: valid: 3 resources in work
 ```
 
 ## 6. Go online and run
@@ -357,13 +335,12 @@ Password:                       # the admin password from step 2 (not echoed)
 tapstate(admin@127.0.0.1:8080)> register ../mysql-connector.jar
 tapstate(admin@127.0.0.1:8080)> register ../postgres-connector.jar
 tapstate(admin@127.0.0.1:8080)> register ../mongodb-connector.jar
-tapstate(admin@127.0.0.1:8080)> apply source/db_src.tap.yml
-tapstate(admin@127.0.0.1:8080)> apply source/db_shipments.tap.yml
-tapstate(admin@127.0.0.1:8080)> discover-schema db_src
-tapstate(admin@127.0.0.1:8080)> discover-schema db_shipments
+tapstate(admin@127.0.0.1:8080)> apply source/orders_db.tap.yml
+tapstate(admin@127.0.0.1:8080)> apply source/fulfillment_db.tap.yml
+tapstate(admin@127.0.0.1:8080)> discover-schema orders_db
+tapstate(admin@127.0.0.1:8080)> discover-schema fulfillment_db
 tapstate(admin@127.0.0.1:8080)> apply
-tapstate(admin@127.0.0.1:8080)> start sync_orders
-tapstate(admin@127.0.0.1:8080)> start sync_shipments
+tapstate(admin@127.0.0.1:8080)> start order_pipeline
 ```
 
 - **`register`** uploads a connector jar to the server (content-addressed and
@@ -375,20 +352,18 @@ tapstate(admin@127.0.0.1:8080)> start sync_shipments
   the reference closure — a pipeline and the sources it names must be applied
   together, so apply the workspace, not one file at a time.
 - **Each capture source is applied on its own first**, which is the one exception to
-  that. Both pipelines read a row field in an expression — `sync_orders` in its `label`,
-  `sync_shipments` in its `route` — and an expression that reads row fields is refused
-  until the source it reads has a discovered schema, while the discovery, in turn, needs
-  the source to exist on the server. A single batch carrying both can therefore not
-  succeed in either order: it is refused whole, leaving the sources unapplied and the
-  discoveries with nothing to look at. Applying a source twice costs nothing; the second
+  that. A discovery has to be asked for before the pipeline is applied, and a discovery
+  needs the source to already exist on the server — so a single batch carrying both
+  cannot succeed in either order. Applying a source twice costs nothing; the second
   apply reports it unchanged.
-- **`discover-schema db_src`** reads the source schema and derives the target model
+- **`discover-schema orders_db`** reads the source schema and derives the target model
   and primary key. Run it **after** that source is applied and **before** the apply that
-  carries the pipelines — and run it **once per source**, so `db_shipments` needs its
-  own. The second engine is not exempt: its pipeline reads a row field too.
-- **`start sync_orders`** submits the pipeline: it reads the current rows (snapshot),
-  then tails changes (CDC). Each pipeline is started on its own; `sync_shipments`
-  carries the second engine's half the same way.
+  carries the pipeline — and run it **once per source**, so `fulfillment_db` needs its
+  own. The second engine is not exempt; it is half the document.
+- **`start order_pipeline`** submits the pipeline: it reads the current rows of both
+  engines (snapshot), then tails both change streams. **One start, because there is one
+  pipeline** — the assembly is what makes it one, and two pipelines would be two
+  collections standing next to each other rather than one object.
 
 ## AI-driven alternative: run the pipeline through MCP
 
@@ -468,9 +443,9 @@ tool for stopping its own process.
 ## 7. Observe and verify
 
 ```console
-tapstate(admin@127.0.0.1:8080)> status sync_orders --watch    # live state; Ctrl-C to stop
-tapstate(admin@127.0.0.1:8080)> metrics sync_orders           # recordCount / errorCount / per-table offset
-tapstate(admin@127.0.0.1:8080)> logs sync_orders              # node-local operational log tail
+tapstate(admin@127.0.0.1:8080)> status order_pipeline --watch    # live state; Ctrl-C to stop
+tapstate(admin@127.0.0.1:8080)> metrics order_pipeline           # recordCount / errorCount / per-table offset
+tapstate(admin@127.0.0.1:8080)> logs order_pipeline              # node-local operational log tail
 ```
 
 - The read faces lag the write verbs: they report observed state, which converges to
@@ -483,14 +458,26 @@ tapstate(admin@127.0.0.1:8080)> logs sync_orders              # node-local opera
   an alert wired to these names will need revisiting. The `metrics` output says so too.
   The lifecycle state in `status` is not affected — that one is a stable contract.
 
-Verify the rows landed, straight from the target — `mongosh` runs inside the Mongo
+Verify the objects landed, straight from the store — `mongosh` runs inside the Mongo
 container, so no client is needed on the host:
 
 ```sh
+# five orders, one document each
 docker compose exec mongo mongosh --quiet \
   "mongodb://mongo:27017/views?directConnection=true" \
   --eval "db.order_state.countDocuments()"    # should reach 5
+
+# and the second engine inside them: six shipments, spread over four of those orders
+docker compose exec mongo mongosh --quiet \
+  "mongodb://mongo:27017/views?directConnection=true" \
+  --eval 'db.order_state.find({}, {id:1, customer:1, "shipments.carrier":1}).pretty()'
 ```
+
+**Count the array elements, not the documents, when you want to know the second engine
+arrived.** An assembly wired to MySQL alone still writes all five orders — each with an
+empty array — so a document count of 5 is satisfied by a demo that is only half working.
+Order 5 has no shipments at all, which is deliberate: an implementation that invents an
+empty array for it, or that drops it, is wrong in a way a uniform seeding would hide.
 
 To point a GUI or a driver at the store from your own machine instead, publish the
 port first — the stack does not, so nothing on the host can see it by default. Add
@@ -509,35 +496,50 @@ your own loopback, which reads like a firewall problem and is not one.
 
 ## 8. Exercise change-data-capture
 
-Change the source in MySQL and watch the target in MongoDB follow. The pipeline
-carries insert, update and delete — a delete removes the row from the target by key.
-Each change reaches MongoDB in about a second, so each read below waits for it rather
-than guessing:
+Change either database and watch the same object follow. This is the part worth doing by
+hand: the two halves are in engines that cannot see each other, and both of them reach one
+document.
+
+Each wait below gives up after 60 tries and says what it saw. That matters more than it
+looks: an unbounded wait returns in a second when the change arrives and hangs forever, in
+silence, when it does not.
 
 ```sh
-# insert a row, then wait for it to appear in the target (the sink upserts on the
-# discovered key, so the snapshot->CDC overlap never doubles a row)
-docker compose exec mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit(db.order_state.countDocuments({id:6})?0:1)'; do sleep 1; done
-docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'db.order_state.find({id:6}).pretty()'   # customer_name: 'frank', label: 'frank <orders>'
+uri="mongodb://mongo:27017/views?directConnection=true"
 
-# update it, and watch the mapped label follow the change
-docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit((db.order_state.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
-docker compose exec mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'db.order_state.find({id:6}).pretty()'
+# a shipment added in PostgreSQL joins the array on order 1, which already has two
+docker compose exec postgres psql -U postgres -d appdb -c "INSERT INTO shipments VALUES (7,1,'ups','pending');"
+i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) >= 3 ? 0 : 1)'; do
+  i=$((i+1)); [ "$i" -lt 60 ] || { echo "not assembled after 60s; order 1 holds $(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.shipments?.length ?? 0)') shipments (it started with 2). Look at: docker compose logs --tail 50 server"; break; }
+  sleep 1
+done
+docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:1}).pretty()'
 
-# delete it, and watch it leave the target too
-docker compose exec mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
-until docker compose exec -T mongo mongosh --quiet "mongodb://mongo:27017/views?directConnection=true" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
-echo "row 6 is gone from MongoDB, too"
+# the order itself changes in MySQL: the parent column moves, the array stays put
+docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='alicia' WHERE id=1;"
+i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.findOne({id:1})?.customer=="alicia"?0:1)'; do
+  i=$((i+1)); [ "$i" -lt 60 ] || { echo "not updated after 60s; order 1 still reads $(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.customer ?? "nothing")'). Look at: docker compose logs --tail 50 server"; break; }
+  sleep 1
+done
+
+# and removing that shipment shrinks the array back, in the same document
+docker compose exec postgres psql -U postgres -d appdb -c "DELETE FROM shipments WHERE id=7;"
+i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) <= 2 ? 0 : 1)'; do
+  i=$((i+1)); [ "$i" -lt 60 ] || { echo "still there after 60s. Look at: docker compose logs --tail 50 server"; break; }
+  sleep 1
+done
 ```
+
+A new order inserted into MySQL arrives with no shipments yet, and gains them as the
+fulfillment side catches up — which is the ordinary case, not an edge one: the two engines
+are independent and neither waits for the other.
 
 ## 9. Tear down
 
 In the REPL:
 
 ```console
-tapstate(admin@127.0.0.1:8080)> stop sync_orders
+tapstate(admin@127.0.0.1:8080)> stop order_pipeline
 tapstate(admin@127.0.0.1:8080)> exit
 ```
 
@@ -615,7 +617,7 @@ the server and databases are hosted changes.
 5. **Resources.** Use the same three resources as [step 5](#5-author-the-resources),
    with one change: the server now runs on the host, not in the compose network, so
    the connectors address the databases by their host ports instead of the compose
-   service names — `config: { host: 127.0.0.1, port: 3306, … }` in `db_src`, and
+   service names — `config: { host: 127.0.0.1, port: 3306, … }` in `orders_db`, and
    `uri: "mongodb://127.0.0.1:27017/views"` in `views`.
 
 6. **Online verbs, observe, CDC** are identical to steps 6–8, except you reach the

@@ -193,7 +193,7 @@ jobs:
             # counts are what this assertion is actually about, and they are what a half-arrived demo
             # cannot produce. Both are required: a run that carried MySQL and dropped PostgreSQL is the
             # failure the second engine exists to make visible.
-            grep -qE 'now holds [0-9]+ orders from MySQL and [0-9]+ shipments from PostgreSQL' run.log
+            grep -qE '[0-9]+ orders from MySQL' run.log && grep -qE '[0-9]+ of them, in one object per order' run.log
           else
             # The released summary is whatever that release wrote, and it changes between releases. This
             # leg cannot be held to the current demo's wording without going red every time the wording
@@ -241,23 +241,40 @@ jobs:
       - name: The target really holds the seeded rows
         # Read the target directly. The script prints a count of its own, and a check that only re-reads
         # the script's summary would pass for a script that printed it unconditionally.
+        #
+        # Two numbers on the from-source leg, and the second is the one that sees the second engine: an
+        # assembly wired to MySQL alone writes all five orders with empty arrays, so the document count
+        # is satisfied by a demo that is half working. The published leg is the last release, whose demo
+        # put the second engine in a collection of its own, so it is read the way that release built it.
         env:
           STORE_DB: ${{ steps.leg.outputs.db }}
+          LEG: ${{ matrix.server }}
         run: |
           set -eu
           cd "$RUNNER_TEMP/tapstate-demo"
-          rows="$(docker compose exec -T mongo mongosh --quiet \
-            "mongodb://mongo:27017/$STORE_DB?directConnection=true" \
-            --eval 'db.order_state.countDocuments()' | tr -d '[:space:]')"
-          [ "$rows" = 5 ] || { echo "target holds $rows rows, expected the 5 seeded ones" >&2; exit 1; }
-          echo "snapshot: $rows rows in the target"
+          uri="mongodb://mongo:27017/$STORE_DB?directConnection=true"
+          read_number() { docker compose exec -T mongo mongosh --quiet "$uri" --eval "$1" | tr -d '[:space:]'; }
+          rows="$(read_number 'db.order_state.countDocuments()')"
+          [ "$rows" = 5 ] || { echo "target holds $rows orders, expected the 5 seeded ones" >&2; exit 1; }
+          if [ "$LEG" = from-source ]; then
+            embedded="$(read_number 'db.order_state.aggregate([{$group:{_id:null,n:{$sum:{$size:{$ifNull:["$shipments",[]]}}}}}]).toArray()[0]?.n ?? 0')"
+            [ "$embedded" = 6 ] || { echo "the orders carry $embedded shipments, expected the 6 seeded ones -- the second engine did not reach the object" >&2; exit 1; }
+            echo "snapshot: $rows orders, carrying $embedded shipments assembled from the second engine"
+          else
+            echo "snapshot: $rows rows in the target"
+          fi
 
       - name: Change-data-capture carries insert, update and delete
         # The operations the script's closing instructions hand the user, in the same order. Each wait is
         # bounded: an unbounded one would spend the job timeout to say nothing, where a bounded one names
         # which of the three did not arrive.
+        #
+        # Leg-aware, because the two legs run different demos: the released script syncs each engine into
+        # its own collection and maps a field, while this checkout assembles both into one object and maps
+        # nothing. Holding the released leg to this checkout's shape would fail it for being the release.
         env:
           STORE_DB: ${{ steps.leg.outputs.db }}
+          LEG: ${{ matrix.server }}
         run: |
           set -eu
           cd "$RUNNER_TEMP/tapstate-demo"
@@ -276,14 +293,34 @@ jobs:
             docker compose logs server --tail 100 >&2
             exit 1
           }
-          docker compose exec -T mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
-          await insert 'db.order_state.countDocuments({id:6})'
-          # The mapped fields have to follow the change too: a target row that merely exists proves the
-          # insert landed, not that the transform is still being applied to later changes.
-          docker compose exec -T mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
-          await update '(db.order_state.findOne({id:6})||{}).customer_name=="franky" && (db.order_state.findOne({id:6})||{}).label=="franky <orders>"'
-          docker compose exec -T mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
-          await delete '!db.order_state.countDocuments({id:6})'
+          if [ "$LEG" = from-source ]; then
+            # A change in each engine, reaching the same document. The array assertions read its length
+            # rather than a total: a shipment that arrived but was hung on the wrong order keeps every
+            # total right, and only the length on the order it belongs to moves.
+            docker compose exec -T postgres psql -U postgres -d appdb -c "INSERT INTO shipments VALUES (7,1,'ups','pending');"
+            await 'a shipment added in the second engine' '(db.order_state.findOne({id:1})?.shipments?.length ?? 0) === 3'
+            docker compose exec -T mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='alicia' WHERE id=1;"
+            await 'the order own column changing in the first engine' 'db.order_state.findOne({id:1})?.customer === "alicia"'
+            # ...and the array still holds what it held. An implementation that rebuilds the document from
+            # the parent alone passes the line above and empties the array, which nothing else here sees.
+            await 'the array surviving a parent-only change' '(db.order_state.findOne({id:1})?.shipments?.length ?? 0) === 3'
+            docker compose exec -T postgres psql -U postgres -d appdb -c "DELETE FROM shipments WHERE id=7;"
+            await 'a shipment deleted in the second engine' '(db.order_state.findOne({id:1})?.shipments?.length ?? 0) === 2'
+            # A whole order added in the first engine arrives with no shipments of its own.
+            docker compose exec -T mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
+            await 'an order added in the first engine' 'db.order_state.countDocuments({id:6}) === 1'
+            docker compose exec -T mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
+            await 'that order deleted again' '!db.order_state.countDocuments({id:6})'
+          else
+            docker compose exec -T mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
+            await insert 'db.order_state.countDocuments({id:6})'
+            # The mapped fields have to follow the change too: a target row that merely exists proves the
+            # insert landed, not that the transform is still being applied to later changes.
+            docker compose exec -T mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
+            await update '(db.order_state.findOne({id:6})||{}).customer_name=="franky" && (db.order_state.findOne({id:6})||{}).label=="franky <orders>"'
+            docker compose exec -T mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
+            await delete '!db.order_state.countDocuments({id:6})'
+          fi
 
       - name: Server log on failure
         if: failure()
