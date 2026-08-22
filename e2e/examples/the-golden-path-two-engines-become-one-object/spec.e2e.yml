@@ -1,0 +1,84 @@
+# The demo this release ships, run as a case: an order in MySQL and its shipments in PostgreSQL,
+# assembled into one document that stays fresh as either database changes.
+#
+# The pipeline here is the demo's own file, byte for byte -- a gate holds the two to each other, because
+# "the recording is the end-to-end case" was a claim about intent until something checked it. The two
+# source files differ from the demo's in one line each, the address, and in nothing else: the demo dials
+# compose service names, this run dials whatever the harness brought up.
+#
+# What the assertions have to discriminate:
+#
+# - Counting documents does not see the second engine at all. Five orders arrive whether or not a single
+#   shipment did, so an implementation reading only MySQL - or assembling nothing and passing the root
+#   rows through - satisfies a count perfectly. Every reading below is therefore a doc matcher that names
+#   an array length beside a scalar.
+# - The array lengths are deliberately uneven: two, two, one, one, and an order with none at all. A
+#   constant, and an implementation hanging every child on the first root it saw, each satisfy one order
+#   and fail the others. The order with no shipments is the one that catches an implementation which
+#   invents an empty array where there should be none, or drops the root entirely.
+# - The scalar is read back beside the array every time. A document whose array is right and whose own
+#   columns were dropped on the way through is unusable, and no assertion about the array notices it.
+# - Before each change, the state it is about to leave is asserted. Without that control the ripple
+#   assertions are satisfied by a document that was already in the expected state - which is exactly what
+#   a change that never arrived looks like.
+#
+# The ripple is driven from both engines in turn, because they fail differently. A child arriving from
+# the second engine has to find a root that was written long ago and is not being touched; a parent
+# column changing in the first engine has to reach a document without taking the array with it - an
+# implementation that rebuilds the document from the root alone passes every scalar assertion and empties
+# the array, which is why the length is re-asserted after the parent moves.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips this
+# example, naming a directory whose jars do not resolve fails it.
+name: the-golden-path-two-engines-become-one-object
+setup:
+  databases:
+    orders: { kind: mysql }
+    fulfillment: { kind: postgres }
+    store: { kind: mongo }
+  connectors: [mysql, postgres, mongodb]
+  apply: [orders_db.tap.yml, fulfillment_db.tap.yml, views.tap.yml, order_pipeline.tap.yml]
+  discover: [orders_db, fulfillment_db]
+pipeline: order_pipeline.tap.yml
+seed:
+  orders_db.orders:
+    values:
+      - { id: 1, customer: alice }
+      - { id: 2, customer: bob }
+      - { id: 3, customer: carol }
+      - { id: 4, customer: dave }
+      - { id: 5, customer: erin }
+  fulfillment_db.shipments:
+    values:
+      - { id: 1, order_id: 1, carrier: dhl,   status: delivered }
+      - { id: 2, order_id: 1, carrier: ups,   status: in_transit }
+      - { id: 3, order_id: 2, carrier: fedex, status: delivered }
+      - { id: 4, order_id: 2, carrier: dhl,   status: pending }
+      - { id: 5, order_id: 3, carrier: ups,   status: delivered }
+      - { id: 6, order_id: 4, carrier: fedex, status: in_transit }
+steps:
+  - start
+  - await: { count: { views.order_state: 5 } }
+  # The assembled shape, before anything changes. Four lengths and one absence, all different from a
+  # constant and from each other's neighbours.
+  - await: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alice }, size: { shipments: 2 } } } }
+  - await: { doc: { views.order_state: { where: { id: 3 }, expect: { customer: carol }, size: { shipments: 1 } } } }
+  - assert: { doc: { views.order_state: { where: { id: 2 }, expect: { customer: bob }, size: { shipments: 2 } } } }
+  - assert: { doc: { views.order_state: { where: { id: 4 }, expect: { customer: dave }, size: { shipments: 1 } } } }
+  # The order nobody shipped. It has to be a document, and it has to have no shipments on it.
+  - assert: { doc: { views.order_state: { where: { id: 5 }, expect: { customer: erin }, size: { shipments: 0 } } } }
+  # Ripple one: a row inserted into the second engine reaches a document the first engine wrote.
+  - cdc: { fulfillment_db.shipments: { insert: { values: [ { id: 7, order_id: 1, carrier: ups, status: pending } ] } } }
+  - await: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alice }, size: { shipments: 3 } } } }
+  # Ripple two: the order's own column changes in the first engine. The scalar moves and the array does
+  # not - asserted in the same matcher, so an implementation that rebuilds from the root alone fails here
+  # rather than passing on the scalar.
+  - cdc: { orders_db.orders: { update: { where: { id: 1 }, set: { customer: alicia } } } }
+  - await: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alicia }, size: { shipments: 3 } } } }
+  # An untouched order is still what it was. A rebuild that reached every document would satisfy both
+  # readings above and quietly rewrite this one.
+  - assert: { doc: { views.order_state: { where: { id: 2 }, expect: { customer: bob }, size: { shipments: 2 } } } }
+  # Ripple three: the shipment leaves the second engine, and the array it was in shrinks back.
+  - cdc: { fulfillment_db.shipments: { delete: { where: { id: 7 } } } }
+  - await: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alicia }, size: { shipments: 2 } } } }
+  - assert: { count: { views.order_state: 5 } }

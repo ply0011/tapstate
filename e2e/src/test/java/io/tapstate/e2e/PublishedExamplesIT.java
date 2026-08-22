@@ -158,7 +158,18 @@ class PublishedExamplesIT {
                     control, workspace, drivers(files, stores), env(stores),
                     stores::driveStream, stores::behindTheGate);
 
-            new E2eExecutor(binding, new FilePipelineLoader(workspace), TIMEOUT, POLL).execute(envelope);
+            try {
+                new E2eExecutor(binding, new FilePipelineLoader(workspace), TIMEOUT, POLL).execute(envelope);
+            } catch (RuntimeException | AssertionError failed) {
+                // Before the containers go away. Everything that would explain this failure is inside
+                // them, and a second run to add a print statement costs two database engines again.
+                FailureScene.write(
+                        FAILURE_SCENES.resolve(specification + "-" + tier.name().toLowerCase(Locale.ROOT) + ".txt"),
+                        envelope,
+                        binding,
+                        new FilePipelineLoader(workspace).resolvePipelineId(envelope.pipeline()));
+                throw failed;
+            }
 
             if (envelope.setup().databases().isEmpty()) {
                 settled.forEach((alias, rows) -> assertThat(
@@ -254,6 +265,12 @@ class PublishedExamplesIT {
         }
         return Map.of();
     }
+
+    /**
+     * Where a failing run leaves what it saw, for the workflow to upload. Under target/ so a clean
+     * rebuilds it away, and named per example and tier so a matrix does not overwrite itself.
+     */
+    private static final Path FAILURE_SCENES = Path.of("target", "failure-scenes");
 
     /** Mongo refuses a database name longer than this, and says so only once a run is already underway. */
     private static final int NAME_LIMIT = 63;
