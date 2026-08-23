@@ -21,6 +21,16 @@ final class ReportRenderer {
         // printing one line only when they differ makes its absence carry meaning nobody can see.
         head.append("Spec SHA: `").append(report.specSha()).append("`\n");
         head.append("Capability SHA: `").append(report.capabilitySha()).append("`\n");
+        // Both values are always printed, but two values a reader has to compare is not the same as
+        // being told. A spec-only refresh advances one and leaves the other where the last derivation
+        // put it, so every capability in this report was read from a different revision than the
+        // structure beside it - the kind of thing that is obvious once said and invisible until then.
+        if (!java.util.Objects.equals(report.specSha(), report.capabilitySha())) {
+            head.append("\n> The capability face comes from an earlier upstream revision than the spec face: ")
+                .append("modes, sink and write semantics were derived at `").append(report.capabilitySha())
+                .append("`, while the structure below was read at `").append(report.specSha())
+                .append("`. A full refresh brings them back together.\n");
+        }
         head.append("Ingested connectors: ").append(report.ingestedIds().size()).append("\n\n");
 
         List<String> sections = new ArrayList<>();

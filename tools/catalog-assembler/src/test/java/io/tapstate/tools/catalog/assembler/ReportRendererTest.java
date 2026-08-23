@@ -35,6 +35,8 @@ class ReportRendererTest {
 
                 Spec SHA: `20371556abc`
                 Capability SHA: `9f0c11abdef`
+
+                > The capability face comes from an earlier upstream revision than the spec face: modes, sink and write semantics were derived at `9f0c11abdef`, while the structure below was read at `20371556abc`. A full refresh brings them back together.
                 Ingested connectors: 3
 
                 ## Unclassified — no resolvable mode (need tapstate.modes)
@@ -67,5 +69,20 @@ class ReportRendererTest {
                 ## Exemptions — modules and specs set aside
                 - [EXCLUDED] tdd-connector: known non-connector module
                 """);
+    }
+
+    @Test
+    void saysNothingAboutRevisionsWhenTheTwoFacesAgree() {
+        // The note has to be absent after a full refresh, not merely quieter. A report that carried it
+        // every time would train a reader to skip the line that only sometimes means something - and
+        // that line is the only warning that every capability below was read at another revision.
+        IngestReport report = new IngestReport("samesha", "samesha", List.of("mysql"),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of());
+
+        assertThat(ReportRenderer.render(report))
+                .contains("Spec SHA: `samesha`")
+                .contains("Capability SHA: `samesha`")
+                .doesNotContain("earlier upstream revision");
     }
 }
