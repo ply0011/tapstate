@@ -103,7 +103,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/rabbitmq-connector/src/main/resources/spec_rabbitmq.json",
     "specContentHash": "1188793de45ececa",
     "pdkApiVersion": null,

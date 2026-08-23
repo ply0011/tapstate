@@ -28,7 +28,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/temu-connector/src/main/resources/spec.json",
     "specContentHash": "660fdd0768880751",
     "pdkApiVersion": null,

@@ -23,6 +23,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CatalogAssemblerTest {
 
     private static final String SHA = "20371556";
+    // Deliberately not equal to SHA: the two faces are refreshed by different jobs, so a test that
+    // passed the same value twice would pass just as well against an implementation that used one
+    // of them for both.
+    private static final String CAP_SHA = "9f0c11ab";
 
     // batch + stream + write — a database registers all three.
     private static final Set<String> DB_CAPS =
@@ -95,7 +99,7 @@ class CatalogAssemblerTest {
         Map<String, String> merged = new java.util.HashMap<>(specs);
         merged.putAll(specOverrides);
 
-        return CatalogAssembler.assemble(walk, SHA, bitmap, overlay, merged::get);
+        return CatalogAssembler.assemble(walk, SHA, CAP_SHA, bitmap, overlay, merged::get);
     }
 
     @Test
@@ -220,7 +224,7 @@ class CatalogAssemblerTest {
                         "io.tapdata.connector.hazelcast.HazelcastConnector", false));
         WalkResult walk = new WalkResult(sources, List.of());
 
-        Assembly assembly = CatalogAssembler.assemble(walk, SHA, Map.of(), noOverlay(),
+        Assembly assembly = CatalogAssembler.assemble(walk, SHA, CAP_SHA, Map.of(), noOverlay(),
                 Map.of("connectors/hazelcast-connector/src/main/resources/spec_hazelcast.json",
                         hazelcastSpec)::get);
 
@@ -289,7 +293,7 @@ class CatalogAssemblerTest {
         String path = "connectors/" + id + "-connector/src/main/resources/spec_" + id + ".json";
         WalkResult walk = new WalkResult(
                 List.of(new ConnectorSource(id, id + "-connector", path, connectorClassFqn, false)), List.of());
-        return CatalogAssembler.assemble(walk, SHA, Map.of(id, caps), noOverlay(), Map.of(path, spec)::get);
+        return CatalogAssembler.assemble(walk, SHA, CAP_SHA, Map.of(id, caps), noOverlay(), Map.of(path, spec)::get);
     }
 
     private static ConnectorCatalogEntry only(Assembly assembly) {
@@ -322,7 +326,7 @@ class CatalogAssemblerTest {
         // Neither is in the bitmap: the unbuildable one because it is never built, kafka because its
         // jar happened not to be there - the two cases this partition has to tell apart.
         IngestReport report = CatalogAssembler
-                .assemble(new WalkResult(sources, List.of()), SHA, Map.of(), noOverlay(), specs::get)
+                .assemble(new WalkResult(sources, List.of()), SHA, CAP_SHA, Map.of(), noOverlay(), specs::get)
                 .report();
 
         assertThat(report.notBuilt())

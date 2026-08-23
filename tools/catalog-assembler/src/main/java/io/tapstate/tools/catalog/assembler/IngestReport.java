@@ -17,7 +17,8 @@ import java.util.List;
  * unrecognized Formily type tokens and unresolved i18n label refs, plus the modules the walk set
  * aside. Checked in beside the catalog so every gap is reviewable in the PR.
  */
-record IngestReport(String connectorRepoSha,
+record IngestReport(String specSha,
+                    String capabilitySha,
                     List<String> ingestedIds,
                     List<String> unclassified,
                     List<String> notDerived,

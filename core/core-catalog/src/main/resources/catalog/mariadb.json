@@ -267,7 +267,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/mariadb-connector/src/main/resources/spec_mariadb.json",
     "specContentHash": "9cba04b3068d282b",
     "pdkApiVersion": null,

@@ -61,7 +61,6 @@ class CatalogEntryReaderTest {
                 }
               ],
               "provenance": {
-                "connectorRepoSha": "20371556",
                 "specPath": "mysql-connector/src/main/resources/mysql-spec.json",
                 "specContentHash": "abc123",
                 "pdkApiVersion": null,
@@ -149,7 +148,10 @@ class CatalogEntryReaderTest {
     void readsProvenanceIncludingModeSourceAndNullSlots() {
         Provenance provenance = CatalogEntryReader.read(MYSQL_ENTRY).provenance();
 
-        assertThat(provenance.connectorRepoSha()).isEqualTo("20371556");
+        // An entry document carries neither revision - they are in the index head, and a row read on
+        // its own (a server-registered one) genuinely has none.
+        assertThat(provenance.specSha()).isNull();
+        assertThat(provenance.capabilitySha()).isNull();
         assertThat(provenance.specContentHash()).isEqualTo("abc123");
         assertThat(provenance.pdkApiVersion()).isNull();
         assertThat(provenance.modeSource())

@@ -43,7 +43,7 @@ class MongoConnectorCatalogStoreIT {
                  "default": null, "secret": false, "options": [],
                  "visibleWhen": {"controllingField": "deploymentMode", "equalsAnyOf": ["standalone"]}}
               ],
-              "provenance": {"connectorRepoSha": null, "specPath": "spec.json", "specContentHash": "abc",
+              "provenance": {"specPath": "spec.json", "specContentHash": "abc",
                 "pdkApiVersion": "1.3.5", "requiredLevel": null, "modeSource": {"cdc": "derived", "snapshot": "derived"}}
             }
             """;
@@ -54,7 +54,7 @@ class MongoConnectorCatalogStoreIT {
                   "id": "%s", "name": "%s", "displayName": "%s", "icon": null,
                   "group": "database", "modes": ["snapshot"], "discovery": "catalog",
                   "sink": {"capable": false, "writeSemantics": []}, "pushOut": false, "config": [],
-                  "provenance": {"connectorRepoSha": null, "specPath": "spec.json", "specContentHash": "h",
+                  "provenance": {"specPath": "spec.json", "specContentHash": "h",
                     "pdkApiVersion": "1.0.0", "requiredLevel": null, "modeSource": {"snapshot": "derived"}}
                 }
                 """.formatted(id, id, id);

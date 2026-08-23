@@ -79,7 +79,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/yashandb-connector/src/main/resources/yashandb-spec.json",
     "specContentHash": "224e3f74b76132b3",
     "pdkApiVersion": null,

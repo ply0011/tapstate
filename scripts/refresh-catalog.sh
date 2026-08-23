@@ -41,7 +41,9 @@
 #                         a git working tree (a tarball, a vendored copy)
 #   --keep-workspace      leave the scratch directory in place for inspection
 #
-# It writes to the working tree: core/core-catalog/src/main/resources/catalog/ and the ingest report.
+# It writes to the working tree: core/core-catalog/src/main/resources/catalog/, the ingest report, and
+# the capability bitmap - which is checked in so a spec-only refresh has a capability face to merge
+# without building a jar, and so the index head's capabilitySha names something sitting next to it.
 # Review the diff it prints before committing.
 set -uo pipefail
 
@@ -69,7 +71,7 @@ usage() {
 refuse() { printf 'refresh-catalog: %s\n' "$1" >&2; exit 2; }
 fail()   { printf 'refresh-catalog: %s\n' "$1" >&2; exit 1; }
 
-connectors=""; dist=""; bitmap=""; sha=""; spec_only=no; keep_workspace=no
+connectors=""; dist=""; bitmap=""; sha=""; capability_sha=""; spec_only=no; keep_workspace=no
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --connectors) connectors="${2:-}"; shift 2 ;;
@@ -170,7 +172,12 @@ skipped_list=""
 if [ "$spec_only" = yes ]; then
   bitmap="${bitmap:-$repo_root/$CHECKED_IN_BITMAP}"
   [ -s "$bitmap" ] || refuse "spec-only needs a checked-in bitmap and $CHECKED_IN_BITMAP is absent or empty - run a full refresh once, or pass --bitmap"
-  echo "  step 2 (capability bitmap) reusing $bitmap, skipping the connector build"
+  # This run derives nothing, so the capability face still comes from whichever revision last did.
+  # Stamping "$sha" on it as well would say the capabilities are current when nothing re-read them -
+  # and that stamp is the only provenance a reader gets.
+  capability_sha="$(sed -n 's/.*"capabilitySha": "\([^"]*\)".*/\1/p' "$CATALOG_DIR/index.json" | head -1)"
+  [ -n "$capability_sha" ] || refuse "cannot read capabilitySha out of $CATALOG_DIR/index.json - run a full refresh once"
+  echo "  step 2 (capability bitmap) reusing $bitmap, derived at $capability_sha, skipping the connector build"
 else
   if [ -z "$dist" ]; then
     dist="$workspace/dist"
@@ -229,6 +236,10 @@ else
   # things that say so are this count and the list at the end - the diff shows what changed, which for
   # a gutted entry looks like any other edit.
   echo "  derived $derived_count of $manifest_count connectors; $skipped_count produced no capability bits"
+  # A full refresh reads the specs and derives the capabilities from the same checkout, so the two
+  # faces genuinely share a revision. They are still passed separately: a spec-only run is the case
+  # they differ in, and a script that only ever passed one could not tell the two runs apart.
+  capability_sha="$sha"
 fi
 
 # --- step 3: regenerate ---------------------------------------------------------------------------
@@ -243,7 +254,8 @@ run_step "step 3 (regenerate)" "$ASSEMBLER_REPORT" "$workspace/step3.log" \
   -Dtapstate.catalog.connectors="$connectors" \
   -Dtapstate.catalog.update=true \
   -Dtapstate.catalog.bitmap="$bitmap" \
-  -Dtapstate.catalog.sha="$sha"
+  -Dtapstate.catalog.sha="$sha" \
+  -Dtapstate.catalog.capability-sha="$capability_sha"
 
 # --- step 4: the two derivations agree --------------------------------------------------------------
 #
@@ -279,18 +291,37 @@ fi
 
 # --- what changed ---------------------------------------------------------------------------------
 
+# Reports what a path now differs by, and says "no change" only when it genuinely does not.
+#
+# `git diff` is blind to a file git is not tracking, and answers exit 0 for it - so a path that went
+# from not existing to holding a whole artifact reads as "no change", which is the one answer that
+# stops the reader looking. Both new shapes here hit it: the bitmap on the refresh that first writes
+# it, and a connector added upstream, whose catalog/<id>.json is untracked on the run that creates it
+# - the very run whose diff a reviewer most needs to see. `git status --porcelain` sees both.
+changed_report() {
+  local path="$1" state
+  state="$(git -C "$repo_root" status --porcelain -- "$path")"
+  if [ -z "$state" ]; then
+    echo "  no change"
+    return
+  fi
+  git -C "$repo_root" --no-pager diff --stat -- "$path" | sed 's/^/  /'
+  # Untracked paths carry no diff at all, so name them outright rather than printing nothing.
+  printf '%s\n' "$state" | awk '$1 == "??" { print "  new, untracked: " $2 }'
+}
+
 echo
 echo "Catalog diff ($CATALOG_DIR):"
-git -C "$repo_root" --no-pager diff --stat -- "$CATALOG_DIR" | sed 's/^/  /'
-git -C "$repo_root" diff --quiet -- "$CATALOG_DIR" && echo "  no change"
+changed_report "$CATALOG_DIR"
 echo
 echo "Ingest report diff ($INGEST_REPORT):"
 git -C "$repo_root" --no-pager diff -- "$INGEST_REPORT" | sed -n '5,60p' | sed 's/^/  /'
 git -C "$repo_root" diff --quiet -- "$INGEST_REPORT" && echo "  no change"
 
-# The connectors that produced no capability bits, one line each with why. These are the entries whose
-# modes can only come from the overlay, so they are the working list this refresh hands back - and
-# they are invisible in the diff, which shows what changed rather than what never arrived.
+echo
+echo "Capability bitmap diff ($CHECKED_IN_BITMAP):"
+changed_report "$CHECKED_IN_BITMAP"
+
 echo
 echo "Not derived this run:"
 if [ -n "$skipped_list" ] && [ -s "$skipped_list" ]; then

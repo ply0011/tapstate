@@ -21,7 +21,7 @@ class ConnectorCatalogEntryTest {
         bySource.put(mode, source);
         return new ConnectorCatalogEntry("id", "name", "Name", null, group, List.of(mode),
                 Discovery.NONE, new SinkCapability(false, null), false, List.of(),
-                new Provenance(null, null, null, null, null, bySource));
+                new Provenance(null, null, null, null, null, null, bySource));
     }
 
     @Test
@@ -73,7 +73,7 @@ class ConnectorCatalogEntryTest {
     private static ConnectorCatalogEntry emptyModed(ConnectorGroup group) {
         return new ConnectorCatalogEntry("id", "name", "Name", null, group, List.of(),
                 Discovery.NONE, new SinkCapability(false, null), false, List.of(),
-                new Provenance(null, null, null, null, null, new EnumMap<>(SourceMode.class)));
+                new Provenance(null, null, null, null, null, null, new EnumMap<>(SourceMode.class)));
     }
 
     @Test

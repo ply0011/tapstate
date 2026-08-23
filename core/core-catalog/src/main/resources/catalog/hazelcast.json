@@ -129,7 +129,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/hazelcast-connector/src/main/resources/spec_hazelcast.json",
     "specContentHash": "429195b3e94d5c91",
     "pdkApiVersion": null,

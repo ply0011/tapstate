@@ -51,7 +51,7 @@ class CatalogEntryWriterTest {
                 ConnectorGroup.DATABASE, List.of(SourceMode.CDC, SourceMode.SNAPSHOT),
                 Discovery.CATALOG, new SinkCapability(true, List.of(WriteMode.UPSERT, WriteMode.APPEND)),
                 false, List.of(host, protocol),
-                new Provenance("20371556", "mysql-connector/src/main/resources/mysql-spec.json",
+                new Provenance(null, null, "mysql-connector/src/main/resources/mysql-spec.json",
                         "h-mysql", null, null, modeSource));
 
         String json = writer.write(CatalogEntryWriter.toTree(entry));
@@ -69,7 +69,7 @@ class CatalogEntryWriterTest {
                 ConnectorGroup.MQ, List.of(SourceMode.STREAM),
                 Discovery.CATALOG, new SinkCapability(true, List.of(WriteMode.UPSERT, WriteMode.APPEND)),
                 true, List.of(),
-                new Provenance("20371556", "kafka-connector/src/main/resources/spec_kafka.json",
+                new Provenance(null, null, "kafka-connector/src/main/resources/spec_kafka.json",
                         "h-kafka", null, null, modeSource));
 
         assertThat(writer.write(CatalogEntryWriter.toTree(entry))).isEqualTo("""
@@ -93,7 +93,6 @@ class CatalogEntryWriterTest {
                   "pushOut": true,
                   "config": [],
                   "provenance": {
-                    "connectorRepoSha": "20371556",
                     "specPath": "kafka-connector/src/main/resources/spec_kafka.json",
                     "specContentHash": "h-kafka",
                     "pdkApiVersion": null,

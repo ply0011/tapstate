@@ -50,7 +50,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/lark-im-connector/src/main/resources/spec.json",
     "specContentHash": "3090cc6b52e9d7d7",
     "pdkApiVersion": null,

@@ -531,7 +531,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/postgres-connector/src/main/resources/spec_postgres.json",
     "specContentHash": "6a56d1e1f2cadf30",
     "pdkApiVersion": null,

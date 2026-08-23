@@ -16,7 +16,11 @@ final class ReportRenderer {
     static String render(IngestReport report) {
         StringBuilder head = new StringBuilder();
         head.append("# Connector catalog ingest report\n\n");
-        head.append("Connector repo SHA: `").append(report.connectorRepoSha()).append("`\n");
+        // Two revisions rather than one, and both are printed even when equal: a reader comparing
+        // them is how "the capability face is older than the spec face" becomes visible at all, and
+        // printing one line only when they differ makes its absence carry meaning nobody can see.
+        head.append("Spec SHA: `").append(report.specSha()).append("`\n");
+        head.append("Capability SHA: `").append(report.capabilitySha()).append("`\n");
         head.append("Ingested connectors: ").append(report.ingestedIds().size()).append("\n\n");
 
         List<String> sections = new ArrayList<>();

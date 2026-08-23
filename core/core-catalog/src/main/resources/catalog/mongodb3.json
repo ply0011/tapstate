@@ -264,7 +264,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/mongodb-lower-connector/src/main/resources/mongo3-spec.json",
     "specContentHash": "47319572642a5574",
     "pdkApiVersion": null,

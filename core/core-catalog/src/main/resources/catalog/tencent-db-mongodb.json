@@ -240,7 +240,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/tencent-db-mongodb-connector/src/main/resources/tencent-db-mongodb-spec.json",
     "specContentHash": "34b20b9359fceac5",
     "pdkApiVersion": null,

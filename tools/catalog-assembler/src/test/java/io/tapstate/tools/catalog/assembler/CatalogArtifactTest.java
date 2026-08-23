@@ -31,9 +31,14 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <ol>
  *   <li>{@code -Dtapstate.catalog.manifest=<path>} — walk the checkout and write the probe manifest;</li>
  *   <li>catalog-derive reads that manifest, probes, and writes the bitmap;</li>
- *   <li>{@code -Dtapstate.catalog.update -Dtapstate.catalog.bitmap=<path> -Dtapstate.catalog.sha=<sha>} —
- *       regenerate the checked-in catalog (index, per-connector entries) and the ingest report.</li>
+ *   <li>{@code -Dtapstate.catalog.update -Dtapstate.catalog.bitmap=<path> -Dtapstate.catalog.sha=<sha>
+ *       -Dtapstate.catalog.capability-sha=<sha>} — regenerate the checked-in catalog (index, per-connector
+ *       entries), the ingest report and the bitmap itself.</li>
  * </ol>
+ *
+ * <p>Two revisions rather than one because the two faces are refreshed by different jobs: a spec-only
+ * refresh reuses the checked-in bitmap, so its capability revision is whatever last derived one, and
+ * stamping this run's revision on both would make the catalog claim capabilities nothing re-read.
  *
  * Without the update toggle the same step byte-compares the regenerated catalog to the checked-in
  * artifacts, so an upstream drift is caught. Catalog entries embed the connectors repo sha, so the
@@ -117,14 +122,16 @@ class CatalogArtifactTest {
         assumeTrue(checkout.isPresent(), "connectors checkout absent — skipping");
         assumeTrue(bitmapPath != null, "no -Dtapstate.catalog.bitmap (derive the bitmap first) — skipping");
 
-        Map<String, Set<String>> bitmap = BitmapReader.read(Files.readString(Path.of(bitmapPath)));
-        GeneratedCatalog catalog = CatalogGenerator.generate(checkout.get(), resolveSha(), bitmap);
+        String bitmapTsv = Files.readString(Path.of(bitmapPath));
+        Map<String, Set<String>> bitmap = BitmapReader.read(bitmapTsv);
+        GeneratedCatalog catalog = CatalogGenerator.generate(
+                checkout.get(), resolveSpecSha(), resolveCapabilitySha(), bitmap);
 
         if (UPDATE) {
-            writeArtifacts(catalog);
+            writeArtifacts(catalog, bitmapTsv);
             return;
         }
-        assertCheckedIn(catalog);
+        assertCheckedIn(catalog, bitmapTsv);
     }
 
     @Test
@@ -137,7 +144,7 @@ class CatalogArtifactTest {
                 .isFalse();
     }
 
-    private void writeArtifacts(GeneratedCatalog catalog) throws IOException {
+    private void writeArtifacts(GeneratedCatalog catalog, String bitmapTsv) throws IOException {
         Path catalogDir = catalogDir();
         Files.createDirectories(catalogDir);
         // Remove stale entries (a connector dropped upstream must not linger), then write fresh.
@@ -149,9 +156,14 @@ class CatalogArtifactTest {
             Files.writeString(catalogDir.resolve(entry.getKey() + ".json"), entry.getValue());
         }
         Files.writeString(reportFile(), catalog.report());
+        // The bitmap is checked in alongside what was generated from it, so the capability revision in
+        // the index head has the thing it names sitting next to it rather than in a build that is gone.
+        // It is also what a spec-only refresh merges: with it in the tree, refreshing the spec face
+        // builds no jars at all, and the two jobs stop writing the same files.
+        Files.writeString(bitmapFile(), bitmapTsv);
     }
 
-    private void assertCheckedIn(GeneratedCatalog catalog) throws IOException {
+    private void assertCheckedIn(GeneratedCatalog catalog, String bitmapTsv) throws IOException {
         Path catalogDir = catalogDir();
         assertThat(Files.exists(catalogDir.resolve(INDEX)))
                 .as("catalog index missing — regenerate with -Dtapstate.catalog.update")
@@ -177,6 +189,13 @@ class CatalogArtifactTest {
         }
         assertThat(actual).as("stale catalog entries not in the regenerated set").isEqualTo(expected);
         assertThat(Files.readString(reportFile())).as("ingest report drift").isEqualTo(catalog.report());
+        // Locked for the reason the entries are: the checked-in bitmap is what a spec-only refresh
+        // merges, so one that has drifted from the jars this run probed would keep producing rows from
+        // capabilities nothing has held since - and every other artifact here would still match.
+        assertThat(Files.exists(bitmapFile()))
+                .as("capability bitmap missing - regenerate with -Dtapstate.catalog.update")
+                .isTrue();
+        assertThat(Files.readString(bitmapFile())).as("capability bitmap drift").isEqualTo(bitmapTsv);
     }
 
     /** The {@code <id>.json} entry files (the index is not an entry). */
@@ -194,21 +213,40 @@ class CatalogArtifactTest {
         return files;
     }
 
-    /** The connectors repo sha that stamps provenance; required when regenerating so the durable
+    /** The connectors revision the spec files were read at; required when regenerating so the durable
      *  catalog is never poisoned with a sentinel. */
-    private static String resolveSha() {
-        String sha = System.getProperty("tapstate.catalog.sha");
-        if (UPDATE && (sha == null || sha.isBlank())) {
-            throw new IllegalStateException(
-                    "regeneration requires -Dtapstate.catalog.sha=<connectors repo sha> to stamp provenance");
+    private static String resolveSpecSha() {
+        return requiredWhenRegenerating("tapstate.catalog.sha", "the connectors revision the specs were read at");
+    }
+
+    /**
+     * The connectors revision the bitmap being merged was derived at. Passed rather than assumed equal
+     * to the spec revision: a spec-only refresh reuses a bitmap derived at an older revision, and
+     * stamping that run's revision on both faces would make the only provenance there is say the
+     * capabilities are current when nothing re-derived them.
+     */
+    private static String resolveCapabilitySha() {
+        return requiredWhenRegenerating("tapstate.catalog.capability-sha",
+                "the connectors revision the bitmap was derived at");
+    }
+
+    private static String requiredWhenRegenerating(String property, String what) {
+        String value = System.getProperty(property);
+        if (UPDATE && (value == null || value.isBlank())) {
+            throw new IllegalStateException("regeneration requires -D" + property + "=<sha> - " + what);
         }
-        return sha == null ? "unknown" : sha;
+        return value == null ? "unknown" : value;
     }
 
     /** The runtime bundles the catalog from core-catalog's resources, so the artifacts live there. */
     private static Path catalogDir() {
         return repoRoot().resolve("core").resolve("core-catalog")
                 .resolve("src").resolve("main").resolve("resources").resolve("catalog");
+    }
+
+    /** The derived capability bitmap, checked in beside the tool that merges it. */
+    private static Path bitmapFile() {
+        return repoRoot().resolve("tools").resolve("catalog-assembler").resolve("capability-bitmap.tsv");
     }
 
     /** The ingest report is a build audit (not bundled into the runtime), kept beside this tool. */

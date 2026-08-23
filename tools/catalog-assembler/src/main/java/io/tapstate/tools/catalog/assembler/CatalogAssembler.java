@@ -42,7 +42,7 @@ final class CatalogAssembler {
     private CatalogAssembler() {
     }
 
-    static Assembly assemble(WalkResult walk, String connectorRepoSha,
+    static Assembly assemble(WalkResult walk, String specSha, String capabilitySha,
                              Map<String, Set<String>> bitmap,
                              ConnectorOverlay overlay,
                              Function<String, String> specContent) {
@@ -68,8 +68,7 @@ final class CatalogAssembler {
             String hash = sha256(content);
 
             ConnectorCatalogEntry entry =
-                    CatalogEntryAssembler.assemble(spec, caps, overlay, connectorRepoSha,
-                            source.specPath(), hash);
+                    CatalogEntryAssembler.assemble(spec, caps, overlay, source.specPath(), hash);
             entries.add(entry);
             ingestedIds.add(entry.id());
 
@@ -113,7 +112,7 @@ final class CatalogAssembler {
             findings.unresolvedLabelRefs().forEach(k -> unresolvedLabelRefs.add(entry.id() + ":" + k));
         }
 
-        IngestReport report = new IngestReport(connectorRepoSha, ingestedIds, unclassified, notDerived, notBuilt,
+        IngestReport report = new IngestReport(specSha, capabilitySha, ingestedIds, unclassified, notDerived, notBuilt,
                 unverifiedModes, overlayDivergences, overlayNotDerivable, sinkDefaultedNoSignal,
                 unknownTypeFields, unresolvedLabelRefs, walk.exemptions());
         return new Assembly(entries, report);

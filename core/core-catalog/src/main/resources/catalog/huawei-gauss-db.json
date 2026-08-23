@@ -322,7 +322,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/huawei-cloud-gaussdb-connector/src/main/resources/spec_gauss_db.json",
     "specContentHash": "a903d9505e76785d",
     "pdkApiVersion": null,

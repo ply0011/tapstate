@@ -77,7 +77,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/tablestore-connector/src/main/resources/spec_tablestore.json",
     "specContentHash": "b93243400a67964c",
     "pdkApiVersion": null,

@@ -32,7 +32,6 @@ public final class CatalogEntryAssembler {
     public static ConnectorCatalogEntry assemble(NormalizedSpec spec,
                                                  Set<String> derivedCapabilityIds,
                                                  ConnectorOverlay overlay,
-                                                 String connectorRepoSha,
                                                  String specPath,
                                                  String specContentHash) {
         Set<DerivedCapability> capabilities = DerivedCapability.fromCapabilityIds(derivedCapabilityIds);
@@ -55,7 +54,10 @@ public final class CatalogEntryAssembler {
         // A message-queue connector is the one kind that can be a push (event-stream) target.
         boolean pushOut = group == ConnectorGroup.MQ;
 
-        Provenance provenance = new Provenance(connectorRepoSha, specPath, specContentHash,
+        // No revision is stamped here. It is a property of a whole catalog rather than of one entry,
+        // so it lives in the index head and is filled in when the catalog is read; the runtime caller
+        // assembles a single row with no head at all, and null is the honest answer for it.
+        Provenance provenance = new Provenance(null, null, specPath, specContentHash,
                 null, null, modeResolution.bySource());
 
         return new ConnectorCatalogEntry(spec.id(), spec.name(), spec.displayName(), spec.icon(),

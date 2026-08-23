@@ -328,7 +328,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/vastbase-connector/src/main/resources/spec_vastbase.json",
     "specContentHash": "d41b14a8bfa35b15",
     "pdkApiVersion": null,

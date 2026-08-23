@@ -53,11 +53,17 @@ class CatalogGeneratorTest {
 
     @Test
     void generatesADeterministicIndexInIdOrder() {
+        // The head carries the two revisions once for the whole catalog, so a refresh that changed one
+        // connector no longer rewrites all of them just to restamp a value none of them differ on.
         assertThat(generate().index()).isEqualTo("""
-                [
-                  "github",
-                  "mysql"
-                ]
+                {
+                  "specSha": "specsha",
+                  "capabilitySha": "capsha",
+                  "entries": [
+                    "github",
+                    "mysql"
+                  ]
+                }
                 """);
     }
 
@@ -66,7 +72,9 @@ class CatalogGeneratorTest {
         ConnectorCatalogEntry mysql = CatalogEntryReader.read(generate().entries().get("mysql"));
         assertThat(mysql.modes()).containsExactlyInAnyOrder(SourceMode.SNAPSHOT, SourceMode.CDC);
         assertThat(mysql.group()).isEqualTo(ConnectorGroup.DATABASE);
-        assertThat(mysql.provenance().connectorRepoSha()).isEqualTo("testsha");
+        // Both revisions live in the index head now, so an entry read on its own carries neither.
+        assertThat(mysql.provenance().specSha()).isNull();
+        assertThat(mysql.provenance().capabilitySha()).isNull();
     }
 
     @Test
@@ -91,7 +99,7 @@ class CatalogGeneratorTest {
                  "messages":{"default":"en_US","en_US":{}}}
                 """);
 
-        assertThatThrownBy(() -> CatalogGenerator.generate(repo, "testsha", Map.of()))
+        assertThatThrownBy(() -> CatalogGenerator.generate(repo, "specsha", "capsha", Map.of()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("dup");
     }
@@ -99,7 +107,7 @@ class CatalogGeneratorTest {
     private GeneratedCatalog generate() {
         Map<String, Set<String>> bitmap = Map.of("mysql",
                 Set.of("batch_read_function", "stream_read_function", "write_record_function"));
-        return CatalogGenerator.generate(repo, "testsha", bitmap);
+        return CatalogGenerator.generate(repo, "specsha", "capsha", bitmap);
     }
 
     private void write(String relative, String content) throws IOException {

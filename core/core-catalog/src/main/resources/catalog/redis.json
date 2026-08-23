@@ -169,7 +169,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/redis-connector/src/main/resources/spec_redis.json",
     "specContentHash": "795c6bff1bc4ee5b",
     "pdkApiVersion": null,

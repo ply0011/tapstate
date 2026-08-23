@@ -52,6 +52,6 @@ class SpecPathEnumeratorTest {
 
     private static ConnectorCatalogEntry entry(String id, String specPath) {
         return new ConnectorCatalogEntry(id, id, id, null, null, List.of(), null, null, false, List.of(),
-                new Provenance(null, specPath, null, null, null, null));
+                new Provenance(null, null, specPath, null, null, null, null));
     }
 }

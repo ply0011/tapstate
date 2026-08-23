@@ -328,7 +328,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/aliyun-adb-postgres-connector/src/main/resources/aliyun-adb-postgres-spec.json",
     "specContentHash": "2e304924922fd41f",
     "pdkApiVersion": null,

@@ -124,6 +124,10 @@ fresh_tree() {
   mkdir -p "$scratch/tree/tools/catalog-assembler" "$scratch/tree/tools/catalog-derive" \
       "$scratch/tree/core/core-catalog/src/main/resources/catalog" "$scratch/tree/scripts"
   : > "$scratch/tree/tools/catalog-assembler/ingest-report.md"
+  # A previously generated catalog, in the shape the head is defined to have: a spec-only refresh
+  # reads the capability revision out of it, because that run derives nothing to get a fresh one.
+  printf '{\n  "specSha": "aaaa1111",\n  "capabilitySha": "oldcaps",\n  "entries": []\n}\n' \
+      > "$scratch/tree/core/core-catalog/src/main/resources/catalog/index.json"
   cp "$driver" "$scratch/tree/scripts/refresh-catalog.sh"
   seed_git_repo "$scratch/tree"
   mkdir -p "$scratch/connectors/connectors/mysql-connector/src/main/resources"
@@ -247,6 +251,32 @@ printf 'mysql\tBATCH_READ\n' > "$scratch/tree/tools/catalog-assembler/capability
 expect "spec-only builds no jars" 0 "skipping the connector build" \
   --connectors "$scratch/connectors" --spec-only
 
+# A spec-only run derives nothing, so the capability face still comes from whichever revision last
+# did. Stamping this run's revision on it too would say the capabilities were re-read when nothing
+# read them - and that stamp is the only provenance a reader of the catalog gets. The two values are
+# deliberately different here: passing "$sha" for both satisfies every other case in this file.
+fresh_tree
+printf 'mysql\tBATCH_READ\n' > "$scratch/tree/tools/catalog-assembler/capability-bitmap.tsv"
+expect "spec-only carries the checked-in capability revision forward" 0 "derived at oldcaps" \
+  --connectors "$scratch/connectors" --spec-only
+carried="$(grep -c -- '-Dtapstate.catalog.capability-sha=oldcaps' "$scratch/tree/.mvn-args" 2>/dev/null || true)"
+if [ "$carried" = 1 ]; then
+  printf '  ok    %s\n' "the reused bitmap's own revision reaches the regeneration"
+  passed=$((passed + 1))
+else
+  printf '  FAIL  %s: wanted one run stamped oldcaps, got %s\n' \
+    "the reused bitmap's own revision reaches the regeneration" "$carried"
+  failed=$((failed + 1))
+fi
+
+# The old index was a bare array of ids and carries no revision at all. Read leniently that is an
+# empty capability-sha, which regenerates a catalog whose only provenance is blank - so it refuses.
+fresh_tree
+printf 'mysql\tBATCH_READ\n' > "$scratch/tree/tools/catalog-assembler/capability-bitmap.tsv"
+printf '["mysql"]\n' > "$scratch/tree/core/core-catalog/src/main/resources/catalog/index.json"
+expect "spec-only refuses an index with no capability revision" 2 "capabilitySha" \
+  --connectors "$scratch/connectors" --spec-only
+
 # --- the full run ---------------------------------------------------------------------------------
 
 fresh_tree
@@ -319,6 +349,44 @@ if [ -n "$regenerate_at" ] && [ -n "$agreement_at" ] && [ "$agreement_at" -gt "$
 else
   printf '  FAIL  %s: regenerate ran at line %s and the agreement at %s\n' \
     "the agreement step runs after the regeneration" "${regenerate_at:-none}" "${agreement_at:-none}"
+  failed=$((failed + 1))
+fi
+
+# A full refresh reads the specs and derives the capabilities from one checkout, so both faces
+# genuinely share a revision - and the run has to say so rather than leave one unstamped.
+fresh_tree
+expect "a full refresh stamps both faces with this run's revision" 0 "step 3 (regenerate) ok" \
+  --connectors "$scratch/connectors"
+head_sha="$(git -C "$scratch/connectors" rev-parse --short HEAD)"
+both="$(grep -c -- "-Dtapstate.catalog.sha=$head_sha -Dtapstate.catalog.capability-sha=$head_sha" \
+  "$scratch/tree/.mvn-args" 2>/dev/null || true)"
+if [ "$both" = 1 ]; then
+  printf '  ok    %s\n' "both revisions are stamped, and both are this checkout's"
+  passed=$((passed + 1))
+else
+  printf '  FAIL  %s: wanted one run stamped %s on both faces, got %s\n' \
+    "both revisions are stamped, and both are this checkout's" "$head_sha" "$both"
+  failed=$((failed + 1))
+fi
+
+# A path git is not tracking has no diff, and `git diff --quiet` answers 0 for it - so reporting off
+# diff alone calls a file that went from absent to present "no change", which is the one answer that
+# stops a reviewer looking. Both new shapes hit this: the bitmap on the run that first writes it, and
+# a connector added upstream, whose entry file is untracked on exactly the run worth reviewing.
+fresh_tree
+printf '{"id":"newconn"}' > "$scratch/tree/core/core-catalog/src/main/resources/catalog/newconn.json"
+printf 'mysql\tBATCH_READ\n' > "$scratch/tree/tools/catalog-assembler/capability-bitmap.tsv"
+out_untracked="$(cd "$scratch/tree" && env PATH="$(make_mvn_stub):$PATH" SMOKE_TREE="$scratch/tree" \
+    ASSEMBLER_REPORT="$assembler_report" DERIVE_REPORT="$derive_report" HARNESS_REPORT="$harness_report" \
+    TAPSTATE_CONNECTOR_BUILD="$scratch/stub-build-unused" \
+    bash "$scratch/tree/scripts/refresh-catalog.sh" --connectors "$scratch/connectors" --spec-only 2>&1)"
+if printf '%s' "$out_untracked" | grep -q 'new, untracked: core/core-catalog/src/main/resources/catalog/newconn.json' \
+   && printf '%s' "$out_untracked" | grep -q 'new, untracked: tools/catalog-assembler/capability-bitmap.tsv'; then
+  printf '  ok    %s\n' "a file git does not track is reported as new, not as no change"
+  passed=$((passed + 1))
+else
+  printf '  FAIL  %s\n' "a file git does not track is reported as new, not as no change"
+  printf '%s\n' "$out_untracked" | sed -n '/diff/,$p' | sed 's/^/        /'
   failed=$((failed + 1))
 fi
 

@@ -17,6 +17,7 @@ class ReportRendererTest {
     void rendersEverySectionDeterministicallyWithNoneWhereEmpty() {
         IngestReport report = new IngestReport(
                 "20371556abc",
+                "9f0c11abdef",
                 List.of("github", "kafka", "mysql"),
                 List.of("github"),
                 List.of("hazelcast"),
@@ -32,7 +33,8 @@ class ReportRendererTest {
         assertThat(ReportRenderer.render(report)).isEqualTo("""
                 # Connector catalog ingest report
 
-                Connector repo SHA: `20371556abc`
+                Spec SHA: `20371556abc`
+                Capability SHA: `9f0c11abdef`
                 Ingested connectors: 3
 
                 ## Unclassified — no resolvable mode (need tapstate.modes)

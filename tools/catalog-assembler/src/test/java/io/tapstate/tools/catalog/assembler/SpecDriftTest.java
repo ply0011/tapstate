@@ -31,7 +31,7 @@ class SpecDriftTest {
 
     private static ConnectorCatalogEntry row(String id, String specPath, String specContent) {
         return new ConnectorCatalogEntry(id, id, id, null, null, List.of(), null, null, false, List.of(),
-                new Provenance(null, specPath, SpecHash.of(specContent), null, null, null));
+                new Provenance(null, null, specPath, SpecHash.of(specContent), null, null, null));
     }
 
     @Test

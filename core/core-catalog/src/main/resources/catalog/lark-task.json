@@ -38,7 +38,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/lark-task-connector/src/main/resources/spec.json",
     "specContentHash": "91849919f4217755",
     "pdkApiVersion": null,

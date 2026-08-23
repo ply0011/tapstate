@@ -43,7 +43,10 @@ class CatalogConsistencyTest {
             ConnectorCatalogEntry entry = catalog.byId(id);
             assertThat(entry.id()).isEqualTo(id);
             assertThat(entry.group()).isNotNull();
-            assertThat(entry.provenance().connectorRepoSha()).isNotBlank();
+            // Both come from the index head via the loader; blank here means the bundled catalog
+            // shipped with no provenance at all, which is the state the head shape exists to prevent.
+            assertThat(entry.provenance().specSha()).isNotBlank();
+            assertThat(entry.provenance().capabilitySha()).isNotBlank();
         }
     }
 

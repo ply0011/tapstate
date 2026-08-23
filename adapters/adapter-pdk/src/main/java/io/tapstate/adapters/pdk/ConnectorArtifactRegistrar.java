@@ -289,7 +289,7 @@ public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
         // The same overlay the checked-in snapshot was assembled against, so a connector registered at
         // runtime lands on the same catalog row the offline path would have produced for it.
         ConnectorCatalogEntry row = CatalogEntryAssembler.assemble(
-                normalized, capabilities.capabilityIds(), ConnectorOverlay.load(), null,
+                normalized, capabilities.capabilityIds(), ConnectorOverlay.load(),
                 introspected.specPath(), specHash);
         catalogStore.upsert(row);
     }

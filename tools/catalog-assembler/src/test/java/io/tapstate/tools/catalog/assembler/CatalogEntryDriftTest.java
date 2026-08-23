@@ -14,7 +14,7 @@ class CatalogEntryDriftTest {
 
     private static final String ENTRY = """
             {"id":"kafka","modes":["stream"],"sink":{"capable":true},\
-            "provenance":{"connectorRepoSha":"d889798e","modeSource":{"stream":"overlay"}}}""";
+            "provenance":{"specContentHash":"d889798e","modeSource":{"stream":"overlay"}}}""";
 
     @Test
     @DisplayName("identical entries produce no clause at all")
@@ -35,11 +35,11 @@ class CatalogEntryDriftTest {
     @DisplayName("a changed provenance field is named one level in, not as the whole object")
     void aChangedProvenanceFieldIsNamedOneLevelIn() {
         // Reporting "provenance" as changed would be true and useless: every re-pin changes it. The
-        // question a reader has is which of the sha and the mode attribution moved, because one is
-        // routine and the other is a capability claim.
+        // question a reader has is which of the spec hash and the mode attribution moved, because one
+        // is routine and the other is a capability claim.
         String regenerated = ENTRY.replace("d889798e", "aaaa1111");
         assertThat(CatalogEntryDrift.describe(ENTRY, regenerated))
-                .contains("provenance.connectorRepoSha (checked-in d889798e, regenerated aaaa1111)")
+                .contains("provenance.specContentHash (checked-in d889798e, regenerated aaaa1111)")
                 .doesNotContain("provenance.modeSource");
     }
 

@@ -190,7 +190,7 @@ class ConnectorApiTest {
                   "required": false, "default": null, "secret": true, "options": [],
                   "visibleWhen": {"controllingField": "authType", "equalsAnyOf": ["password"]}}
               ],
-              "provenance": {"connectorRepoSha": null, "specPath": "spec.json", "specContentHash": "h",
+              "provenance": {"specPath": "spec.json", "specContentHash": "h",
                 "pdkApiVersion": "1.3.5", "requiredLevel": null, "modeSource": {"snapshot": "derived"}}
             }
             """;

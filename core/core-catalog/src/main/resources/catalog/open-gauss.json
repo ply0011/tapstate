@@ -327,7 +327,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/opengauss-connector/src/main/resources/spec_opengauss.json",
     "specContentHash": "3e11cc67808c6bd6",
     "pdkApiVersion": null,

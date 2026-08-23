@@ -38,7 +38,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/ai-chat-connector/src/main/resources/spec.json",
     "specContentHash": "37a78d68d9dc0c15",
     "pdkApiVersion": null,

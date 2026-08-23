@@ -7,10 +7,11 @@ import java.util.TreeSet;
 
 /**
  * Serializes the derived capability bitmap — connector id to the capability ids its
- * {@code registerCapabilities} registered — to the transient text the PDK-free assembler reads back.
+ * {@code registerCapabilities} registered — to the text the PDK-free assembler reads back.
  * One tab-separated line per connector: the id followed by its sorted capability ids. Line-oriented
- * so neither tool needs a JSON library at the hand-off; ids sorted so a refresh diff is stable. The
- * bitmap is transient (not checked in), so it is not byte-locked; the determinism is for legibility.
+ * so neither tool needs a JSON library at the hand-off. The ordering is load-bearing rather than
+ * cosmetic: the bitmap is checked in and byte-locked beside the catalog generated from it, so a
+ * serialization that varied between runs would fail that lock with nothing having changed.
  * A connector that registered nothing is a line with just its id.
  */
 final class CapabilityBitmap {

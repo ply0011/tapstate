@@ -41,7 +41,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/bigquery-connector/src/main/resources/spec-v2.json",
     "specContentHash": "2702e1194211127b",
     "pdkApiVersion": null,

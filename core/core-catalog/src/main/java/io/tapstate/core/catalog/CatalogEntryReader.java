@@ -16,7 +16,8 @@ import io.tapstate.core.model.WriteMode;
  * <p>The product format (deterministic key order):
  * {@code {id, name, displayName, icon, group, modes[], discovery, sink{capable,writeSemantics[]},
  * pushOut, config[{name,type,label{},required,default,secret,options[{value,label{}}],visibleWhen}],
- * provenance{connectorRepoSha,specPath,specContentHash,pdkApiVersion,requiredLevel,modeSource{}}}}.
+ * provenance{specPath,specContentHash,pdkApiVersion,requiredLevel,modeSource{}}}}. The two
+ * catalog-wide revisions are not in an entry - they live in the index head, read by TapstateCatalog.
  * Enum-valued strings use each enum's {@code yaml()} code.
  */
 public final class CatalogEntryReader {
@@ -97,13 +98,19 @@ public final class CatalogEntryReader {
         return new VisibleWhen(str(m.get("controllingField")), values);
     }
 
+    /**
+     * Both catalog-wide revisions come back null: an entry document does not carry them, so reading
+     * one on its own - which is exactly what a server-registered row is - has none to report.
+     * {@link TapstateCatalog} fills them in from the index head for the bundled path.
+     */
     private static Provenance provenanceOf(Map<String, Object> m) {
         Map<SourceMode, ModeSource> modeSource = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : asMap(m.get("modeSource")).entrySet()) {
             modeSource.put(sourceModeOf(entry.getKey()), modeSourceOf(String.valueOf(entry.getValue())));
         }
         return new Provenance(
-                str(m.get("connectorRepoSha")),
+                null,
+                null,
                 str(m.get("specPath")),
                 str(m.get("specContentHash")),
                 str(m.get("pdkApiVersion")),

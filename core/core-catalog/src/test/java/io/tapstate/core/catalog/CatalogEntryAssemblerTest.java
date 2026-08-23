@@ -22,7 +22,7 @@ class CatalogEntryAssemblerTest {
                 List.of("update_on_exists", "ignore_on_exists", "just_insert"), true, null);
 
         ConnectorCatalogEntry entry =
-                CatalogEntryAssembler.assemble(spec, DB_CAPS, noOverlay(), "20371556", "mysql/mysql-spec.json", "h1");
+                CatalogEntryAssembler.assemble(spec, DB_CAPS, noOverlay(), "mysql/mysql-spec.json", "h1");
 
         assertThat(entry.modes()).containsExactly(SourceMode.CDC, SourceMode.SNAPSHOT);
         assertThat(entry.group()).isEqualTo(ConnectorGroup.DATABASE);
@@ -42,7 +42,7 @@ class CatalogEntryAssemblerTest {
         NormalizedSpec spec = spec("kafka", ConnectorGroup.DATABASE, List.of(), false, List.of("stream"));
 
         ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(
-                spec, Set.of("stream_read_function", "write_record_function"), noOverlay(), "20371556",
+                spec, Set.of("stream_read_function", "write_record_function"), noOverlay(),
                 "kafka.json", "h2");
 
         assertThat(entry.modes()).containsExactly(SourceMode.STREAM);
@@ -57,7 +57,7 @@ class CatalogEntryAssemblerTest {
         NormalizedSpec spec = spec("csv", ConnectorGroup.FILE, List.of(), false, List.of("file"));
 
         ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(
-                spec, Set.of("batch_read_function"), noOverlay(), "20371556", "csv.json", "h3");
+                spec, Set.of("batch_read_function"), noOverlay(), "csv.json", "h3");
 
         assertThat(entry.modes()).containsExactly(SourceMode.FILE);
         assertThat(entry.group()).isEqualTo(ConnectorGroup.FILE);
@@ -71,7 +71,7 @@ class CatalogEntryAssemblerTest {
         NormalizedSpec spec = spec("github", ConnectorGroup.OTHER, List.of(), false, List.of("api"));
 
         ConnectorCatalogEntry entry =
-                CatalogEntryAssembler.assemble(spec, Set.of(), noOverlay(), "20371556", "github.json", "h4");
+                CatalogEntryAssembler.assemble(spec, Set.of(), noOverlay(), "github.json", "h4");
 
         assertThat(entry.modes()).containsExactly(SourceMode.API);
         assertThat(entry.group()).isEqualTo(ConnectorGroup.SAAS);
@@ -86,13 +86,16 @@ class CatalogEntryAssemblerTest {
                 ConnectorGroup.DATABASE, List.of(host), List.of(), false, null);
 
         ConnectorCatalogEntry entry =
-                CatalogEntryAssembler.assemble(spec, DB_CAPS, noOverlay(), "20371556", "mysql/mysql-spec.json", "hash-abc");
+                CatalogEntryAssembler.assemble(spec, DB_CAPS, noOverlay(), "mysql/mysql-spec.json", "hash-abc");
 
         assertThat(entry.id()).isEqualTo("mysql");
         assertThat(entry.displayName()).isEqualTo("MySQL");
         assertThat(entry.icon()).isEqualTo("icons/mysql.png");
         assertThat(entry.config()).extracting(ConfigField::name).containsExactly("host");
-        assertThat(entry.provenance().connectorRepoSha()).isEqualTo("20371556");
+        // Neither revision is stamped on an entry: they belong to the catalog head, and this method
+        // also assembles the single row a runtime registration produces, which has no head at all.
+        assertThat(entry.provenance().specSha()).isNull();
+        assertThat(entry.provenance().capabilitySha()).isNull();
         assertThat(entry.provenance().specPath()).isEqualTo("mysql/mysql-spec.json");
         assertThat(entry.provenance().specContentHash()).isEqualTo("hash-abc");
     }
@@ -101,7 +104,7 @@ class CatalogEntryAssemblerTest {
     void rejectsAnUnknownDeclaredMode() {
         NormalizedSpec spec = spec("weird", ConnectorGroup.OTHER, List.of(), false, List.of("teleport"));
 
-        assertThatThrownBy(() -> CatalogEntryAssembler.assemble(spec, Set.of(), noOverlay(), "sha", "p", "h"))
+        assertThatThrownBy(() -> CatalogEntryAssembler.assemble(spec, Set.of(), noOverlay(), "p", "h"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -130,7 +133,7 @@ class CatalogEntryAssemblerTest {
         NormalizedSpec spec = spec("kafka", ConnectorGroup.DATABASE, List.of(), false, List.of("cdc"));
 
         ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(
-                spec, Set.of("stream_read_function"), overlayDeclaring("kafka", "stream"), "sha",
+                spec, Set.of("stream_read_function"), overlayDeclaring("kafka", "stream"),
                 "kafka.json", "h");
 
         assertThat(entry.modes()).containsExactly(SourceMode.STREAM);
@@ -143,7 +146,7 @@ class CatalogEntryAssemblerTest {
         NormalizedSpec spec = spec("rabbitmq", ConnectorGroup.DATABASE, List.of(), false, null);
 
         ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(
-                spec, Set.of("stream_read_function"), overlayDeclaring("rabbitmq", "stream"), "sha",
+                spec, Set.of("stream_read_function"), overlayDeclaring("rabbitmq", "stream"),
                 "rabbitmq.json", "h");
 
         // Without the overlay this would derive cdc, and connector: rabbitmq with mode: cdc would pass
@@ -156,7 +159,7 @@ class CatalogEntryAssemblerTest {
         NormalizedSpec spec = spec("mysql", ConnectorGroup.DATABASE, List.of(), false, null);
 
         ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(
-                spec, DB_CAPS, overlayDeclaring("kafka", "stream"), "sha", "mysql.json", "h");
+                spec, DB_CAPS, overlayDeclaring("kafka", "stream"), "mysql.json", "h");
 
         assertThat(entry.provenance().modeSource().values()).containsOnly(ModeSource.DERIVED);
     }
@@ -178,7 +181,7 @@ class CatalogEntryAssemblerTest {
 
         ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(spec, Set.of(),
                 overlayDeclaringSink("greenplum", "snapshot", "\"upsert\",\"append\""),
-                "sha", "path", "hash");
+                "path", "hash");
 
         assertThat(entry.sink().capable()).isTrue();
         assertThat(entry.sink().writeSemantics()).containsExactly(WriteMode.UPSERT, WriteMode.APPEND);
@@ -191,7 +194,7 @@ class CatalogEntryAssemblerTest {
         NormalizedSpec spec = spec("mysql", ConnectorGroup.DATABASE, List.of("update_on_exists"), true, null);
 
         ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(spec,
-                Set.of("write_record_function"), noOverlay(), "sha", "path", "hash");
+                Set.of("write_record_function"), noOverlay(), "path", "hash");
 
         assertThat(entry.sink().capable()).isTrue();
     }
