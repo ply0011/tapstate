@@ -42,10 +42,13 @@ for arg in "$@"; do
 done
 echo "$modules" > "$SMOKE_MODULES_SEEN"
 echo "${JAVA_HOME:-}" > "$SMOKE_JAVA_HOME_SEEN"
+case " $* " in *" clean "*) cleans=yes ;; *) cleans=no ;; esac
 IFS=',' read -r -a mods <<< "$modules"
 for module in "${mods[@]}"; do
   artifact="$(basename "$module")"
   mkdir -p "$checkout/$module/target"
+  # Real Maven removes target/ on clean, which is what keeps one run's jars out of the next one's.
+  [ "$cleans" = yes ] && rm -f "$checkout/$module/target"/*.jar
   [ "${SMOKE_NO_JAR:-no}" = yes ] && continue
   : > "$checkout/$module/target/$artifact-1.0.0.jar"        # the thin jar, which must not be staged
   : > "$checkout/$module/target/$artifact-v1.0.0.jar"       # the shaded jar, which must
@@ -215,6 +218,16 @@ else
   printf '%s\n' "$out" | sed 's/^/        /'
   failed=$((failed + 1))
 fi
+
+# A refresh runs against a checkout somebody already built in, and upstream stamps a build timestamp
+# into each shaded jar's name - so a second run leaves two of them side by side and the staging rule,
+# which requires exactly one, refuses. Worse than the refusal: two jars in a tree built from two
+# upstream revisions are two different connectors, and provenance is stamped per revision.
+fresh_checkout
+mkdir -p "$scratch/checkout/connectors/mysql-connector/target"
+: > "$scratch/checkout/connectors/mysql-connector/target/mysql-connector-v1.0-SNAPSHOT-201001010000.jar"
+expect "a jar left by an earlier run does not become a second shaded jar" 0 "Connector jars staged" \
+  --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest"
 
 # The JDK the connector build compiles with. Several connectors pin a Lombok that JDK 21 breaks, and
 # the failure lands 37 modules into a 93-module reactor as a javac NoSuchFieldError - so what is

@@ -194,9 +194,17 @@ echo "Building $modules with the JDK at $connector_java_home (Java $major)"
 # A checkout old enough to still carry it fails here in a way that points somewhere else entirely:
 # the jar stages fine and the failure lands much later, at the first read of the artifact.
 # The odd expansion keeps an empty array from tripping set -u on the bash a Mac ships.
+#
+# Cleaning first, which is not tidiness. Upstream stamps a build timestamp into each shaded jar's
+# name, so a second run in the same checkout leaves the first run's jars beside its own - and the
+# staging rule below requires exactly one, so the run ends by refusing over a jar it produced itself.
+# The refusal is the mild half: a checkout built at one upstream revision and then again at another
+# holds two different connectors under two names, and provenance is stamped per revision, so the one
+# that gets staged decides what the catalog says. A runner clones fresh and never sees either; the
+# developer running a refresh locally sees both.
 JAVA_HOME="$connector_java_home" \
     mvn -B -f "$checkout/pom.xml" -pl "$modules" -am -DskipTests \
-    ${protoc_flags[@]+"${protoc_flags[@]}"} package
+    ${protoc_flags[@]+"${protoc_flags[@]}"} clean package
 
 # Stage one jar per connector, and insist on exactly one.
 #
