@@ -465,7 +465,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/xml-connector/src/main/resources/spec_xml.json",
     "specContentHash": "cef89a7b94dfc92b",
     "pdkApiVersion": null,

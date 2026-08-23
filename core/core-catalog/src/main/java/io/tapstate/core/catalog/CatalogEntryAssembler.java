@@ -8,8 +8,7 @@ import io.tapstate.core.model.SourceMode;
 /**
  * Merges a connector's structural facts ({@link NormalizedSpec}) with its derived capability bitmap
  * into a {@link ConnectorCatalogEntry}: resolves modes (overlay, then upstream declaration, then
- * derived defaults),
- * sink capability and write semantics, the refined group, the discovery axis and the push-out flag,
+ * derived defaults), sink capability and write semantics (overlay, then derived), the refined group, the discovery axis and the push-out flag,
  * then stamps provenance. This is the shared merge — the same rules the runtime server-register path
  * will reuse — so it lives in the core ring and depends on no build tooling.
  */
@@ -41,7 +40,12 @@ public final class CatalogEntryAssembler {
                 capabilities, spec.declaredModes(), overlay.modesFor(spec.id()));
         List<SourceMode> modes = List.copyOf(modeResolution.modes());
 
-        SinkCapability sink = SinkRules.derive(
+        // Same precedence as modes, for the same reason: a connector this repository cannot build
+        // derives no capabilities, and a sink read off an absent write_record says "not a target"
+        // rather than "could not tell". Absent declaration means derive, so adding the block to one
+        // connector leaves every other one exactly as it was.
+        SinkCapability declaredSink = overlay.sinkFor(spec.id());
+        SinkCapability sink = declaredSink != null ? declaredSink : SinkRules.derive(
                 capabilities.contains(DerivedCapability.WRITE_RECORD),
                 spec.dmlInsertAlternatives(),
                 spec.hasDmlUpdatePolicy());

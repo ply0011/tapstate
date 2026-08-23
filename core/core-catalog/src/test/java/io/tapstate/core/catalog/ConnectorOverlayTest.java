@@ -5,6 +5,8 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import io.tapstate.core.model.WriteMode;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -92,5 +94,46 @@ class ConnectorOverlayTest {
         // The shipped resource, read the way the assembler reads it. Guards the layout itself: a file
         // moved out from under the glob would pass every test above and fail only here.
         assertThat(ConnectorOverlay.load().ids()).isNotEmpty();
+    }
+
+    @Test
+    void readsTheSinkThisRepositoryDeclares() {
+        // Modes are not the only face that has to be declarable. Sink capability is read off the
+        // write_record capability, which needs the connector's jar - so for a connector this
+        // repository cannot build, the only honest source for it is a declaration.
+        ConnectorOverlay overlay = ConnectorOverlay.read(files(
+                INDEX, "[\"greenplum\"]",
+                "/catalog/overlay/pdk/greenplum.json",
+                "{\"modes\": [\"snapshot\"], \"sink\": {\"capable\": true,"
+                        + " \"writeSemantics\": [\"upsert\", \"append\"]}}")::get);
+
+        assertThat(overlay.sinkFor("greenplum").capable()).isTrue();
+        assertThat(overlay.sinkFor("greenplum").writeSemantics())
+                .containsExactly(WriteMode.UPSERT, WriteMode.APPEND);
+    }
+
+    @Test
+    void aConnectorDeclaringOnlyModesLeavesTheSinkToDerivation() {
+        // The sink block is optional, and absent has to mean "derive it" rather than "no sink":
+        // every entry that predates the block declares modes only, and reading those as sink-less
+        // would silently turn eighteen connectors into non-targets.
+        ConnectorOverlay overlay = ConnectorOverlay.read(files(
+                INDEX, "[\"kafka\"]",
+                "/catalog/overlay/pdk/kafka.json", "{\"modes\": [\"stream\"]}")::get);
+
+        assertThat(overlay.sinkFor("kafka")).isNull();
+    }
+
+    @Test
+    void aSinkDeclaringItIsNotCapableIsRefused() {
+        // Same reasoning as an empty modes list: "we declare it can sink nothing" and "we did not
+        // declare a sink" are one written form apart and behave identically downstream, so the one
+        // that says nothing has to be the absent block rather than a present, false one.
+        assertThatThrownBy(() -> ConnectorOverlay.read(files(
+                INDEX, "[\"greenplum\"]",
+                "/catalog/overlay/pdk/greenplum.json",
+                "{\"modes\": [\"snapshot\"], \"sink\": {\"capable\": false}}")::get))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("greenplum");
     }
 }

@@ -268,7 +268,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/paimon-plus-connector/src/main/resources/spec.json",
     "specContentHash": "356d95c29ef78ecb",
     "pdkApiVersion": null,

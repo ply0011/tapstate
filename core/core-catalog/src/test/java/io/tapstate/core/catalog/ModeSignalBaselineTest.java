@@ -38,9 +38,15 @@ class ModeSignalBaselineTest {
     private final TapstateCatalog catalog = TapstateCatalog.load();
 
     /**
-     * Why a connector resolved no mode at all. Stated per id rather than counted, because the three
-     * have nothing in common but their symptom: one is a gap in our build, one is the correct answer
-     * for a target-only connector, and one is a question the probe is structurally unable to ask.
+     * Why a connector resolved no mode at all. Stated per id rather than counted, because the two
+     * have nothing in common but their symptom: one is the correct answer for a target-only
+     * connector, the other a question the probe is structurally unable to ask.
+     *
+     * <p>There is deliberately no reason here for "its jar was not built". A connector this
+     * repository cannot build is named where that is decided, and declares its modes in the overlay -
+     * so it never reaches this bucket. Leaving the reason available would offer a second way out:
+     * pinning a connector as unbuilt silences the same red that declaring it would have fixed, and
+     * the row it leaves shipped has its mode validation switched off rather than satisfied.
      */
     private enum NoModeReason {
         /** Probed, and it registered a write function but no read function: a sink-only connector.
@@ -48,10 +54,7 @@ class ModeSignalBaselineTest {
         WRITE_ONLY,
         /** A JavaScript connector: no connector class exists, so the probe has nothing to open and
          *  derives nothing whatever the connector actually does. Only a declaration can answer. */
-        NOT_PROBEABLE,
-        /** Its jar was not built, or would not classload, on the refresh that produced this snapshot.
-         *  Nothing came back for it at all - the ingest report separates this from the others. */
-        NOT_BUILT
+        NOT_PROBEABLE
     }
 
     /**
@@ -71,7 +74,7 @@ class ModeSignalBaselineTest {
             entry("risingwave", NoModeReason.WRITE_ONLY),
             entry("tablestore", NoModeReason.WRITE_ONLY),
             entry("vika", NoModeReason.WRITE_ONLY),
-            entry("hazelcast", NoModeReason.NOT_BUILT));
+            entry("hazelcast", NoModeReason.WRITE_ONLY));
 
     /**
      * What the connector is, for the rows whose modes are only a guess. Named by the family the
@@ -185,12 +188,6 @@ class ModeSignalBaselineTest {
                     if (!javascript) {
                         contradicted.add(entry.id() + ": pinned NOT_PROBEABLE but its spec is not a "
                                 + "JavaScript connector's - a class exists, so the probe could ask");
-                    }
-                }
-                case NOT_BUILT -> {
-                    if (javascript || entry.sink().capable()) {
-                        contradicted.add(entry.id() + ": pinned NOT_BUILT but something came back for "
-                                + "it - it was probed after all");
                     }
                 }
             }

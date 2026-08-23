@@ -105,7 +105,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/http-receiver-connector/src/main/resources/spec.json",
     "specContentHash": "fce4d294ca13c405",
     "pdkApiVersion": null,

@@ -62,15 +62,17 @@ class CatalogConsistencyTest {
      * declared, not "the official set" — that is the register path's set, a different thing.
      */
     private static final List<String> EXPECTED_OVERLAY_IDS = List.of(
-            "GitHub", "activemq", "ali1688", "feishu-bitable", "hubspot", "kafka", "kafka_enhanced",
-            "lark-approval", "lark-doc", "metabase", "rabbitmq", "rocketmq", "salesforce", "selectdb",
-            "shein", "temu", "yashandb", "zoho-crm");
+            "GitHub", "activemq", "ali1688", "aws-clickhouse", "dws", "feishu-bitable",
+            "file-stream", "greenplum", "highgo", "huawei-gauss-db", "hubspot", "kafka",
+            "kafka_enhanced", "lark-approval", "lark-doc", "metabase", "mongodb3", "rabbitmq",
+            "rocketmq", "salesforce", "selectdb", "shein", "temu", "vastbase", "yashandb",
+            "zoho-crm");
 
     @Test
     void keepsTheModesOnlyOurOwnDeclarationSupplies() {
         // Pinning the count as well as the ids: shrinking the list is the cheapest way to make a
-        // failing run go green, and it would leave a test that still looks like it guards eighteen.
-        assertThat(EXPECTED_OVERLAY_IDS).as("the pinned set must stay whole").hasSize(18);
+        // failing run go green, and it would leave a test that still looks like it guards the whole set.
+        assertThat(EXPECTED_OVERLAY_IDS).as("the pinned set must stay whole").hasSize(26);
         assertThat(catalog.ids()).containsAll(EXPECTED_OVERLAY_IDS);
 
         for (String id : EXPECTED_OVERLAY_IDS) {

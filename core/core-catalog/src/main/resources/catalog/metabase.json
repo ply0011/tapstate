@@ -52,7 +52,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/metabase-connector/src/main/resources/spec.json",
     "specContentHash": "490bab99cbff25d0",
     "pdkApiVersion": null,

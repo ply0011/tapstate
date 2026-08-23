@@ -322,7 +322,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/tdengine-connector/src/main/resources/tdengine-spec.json",
     "specContentHash": "c334d878e8bf6262",
     "pdkApiVersion": null,

@@ -67,7 +67,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/activemq-connector/src/main/resources/spec_activemq.json",
     "specContentHash": "7650bcc9b5006aa2",
     "pdkApiVersion": null,

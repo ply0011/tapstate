@@ -173,7 +173,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/risingwave-connector/src/main/resources/spec_risingwave.json",
     "specContentHash": "f45046942a7bc83d",
     "pdkApiVersion": null,

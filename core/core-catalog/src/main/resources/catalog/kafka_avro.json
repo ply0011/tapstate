@@ -480,7 +480,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/kafka-avro-connector/src/main/resources/spec_kafka_avro.json",
     "specContentHash": "54141fb7215fa3f4",
     "pdkApiVersion": null,

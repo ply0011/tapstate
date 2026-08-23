@@ -111,7 +111,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/elasticsearch-connector/src/main/resources/spec_elasticsearch.json",
     "specContentHash": "ba4ba8141f22df97",
     "pdkApiVersion": null,

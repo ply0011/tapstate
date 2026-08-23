@@ -50,7 +50,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/beschannels-connector/src/main/resources/spec.json",
     "specContentHash": "f2d4ec47bd72e699",
     "pdkApiVersion": null,

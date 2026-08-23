@@ -267,7 +267,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/mysql-pxc-connector/src/main/resources/mysql-pxc-spec.json",
     "specContentHash": "0ae96af71961dca7",
     "pdkApiVersion": null,

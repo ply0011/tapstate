@@ -95,7 +95,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/azure-cosmosdb-connector/src/main/resources/azure-cosmosdb-spec.json",
     "specContentHash": "d27aaf7f1c60eb60",
     "pdkApiVersion": null,

@@ -67,7 +67,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/hbase-connector/src/main/resources/spec.json",
     "specContentHash": "6e5ab17af6a74a69",
     "pdkApiVersion": null,

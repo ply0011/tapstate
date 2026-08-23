@@ -12,6 +12,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
+import io.tapstate.core.model.WriteMode;
+
 /**
  * This repository's own mode declarations for the connectors it ships — the authoritative source for
  * those, overriding both the connector's upstream spec and anything derived from its capabilities.
@@ -42,9 +44,12 @@ public final class ConnectorOverlay {
     static final List<String> TYPES = List.of("pdk");
 
     private final Map<String, List<String>> modesById;
+    private final Map<String, SinkCapability> sinkById;
 
-    private ConnectorOverlay(Map<String, List<String>> modesById) {
+    private ConnectorOverlay(Map<String, List<String>> modesById,
+                             Map<String, SinkCapability> sinkById) {
         this.modesById = Collections.unmodifiableMap(modesById);
+        this.sinkById = Collections.unmodifiableMap(sinkById);
     }
 
     /** Reads the overlay bundled with this artifact. */
@@ -63,15 +68,17 @@ public final class ConnectorOverlay {
      */
     public static ConnectorOverlay read(Function<String, String> resource) {
         Map<String, List<String>> modesById = new LinkedHashMap<>();
+        Map<String, SinkCapability> sinkById = new LinkedHashMap<>();
         for (String type : TYPES) {
             String dir = "/catalog/overlay/" + type + "/";
-            readType(resource, dir, modesById);
+            readType(resource, dir, modesById, sinkById);
         }
-        return new ConnectorOverlay(modesById);
+        return new ConnectorOverlay(modesById, sinkById);
     }
 
     private static void readType(Function<String, String> resource, String dir,
-                                 Map<String, List<String>> into) {
+                                 Map<String, List<String>> into,
+                                 Map<String, SinkCapability> sinkInto) {
         String indexPath = dir + "index.json";
         String indexJson = resource.apply(indexPath);
         if (indexJson == null) {
@@ -91,14 +98,19 @@ public final class ConnectorOverlay {
                 throw new IllegalStateException(
                         "connector overlay entry missing: " + entryPath + " (indexed as '" + id + "')");
             }
-            into.put(id, modesOf(id, entryPath, entryJson));
+            if (!(CatalogJson.parse(entryJson) instanceof Map<?, ?> entry)) {
+                throw new IllegalStateException(
+                        "connector overlay entry is not a JSON object: " + entryPath);
+            }
+            into.put(id, modesOf(id, entryPath, entry));
+            SinkCapability sink = sinkOf(id, entryPath, entry);
+            if (sink != null) {
+                sinkInto.put(id, sink);
+            }
         }
     }
 
-    private static List<String> modesOf(String id, String entryPath, String entryJson) {
-        if (!(CatalogJson.parse(entryJson) instanceof Map<?, ?> entry)) {
-            throw new IllegalStateException("connector overlay entry is not a JSON object: " + entryPath);
-        }
+    private static List<String> modesOf(String id, String entryPath, Map<?, ?> entry) {
         if (!(entry.get("modes") instanceof List<?> declared) || declared.isEmpty()) {
             // An empty list is refused as hard as a missing one, and deliberately. It would resolve to
             // zero modes, zero modes makes the mode check return early, and that connector's mode
@@ -118,6 +130,46 @@ public final class ConnectorOverlay {
     /** The modes this repository declares for {@code connectorId}, or {@code null} if it declares none. */
     public List<String> modesFor(String connectorId) {
         return modesById.get(connectorId);
+    }
+
+    /**
+     * The sink block, or {@code null} when the entry declares none - which means "derive it", not
+     * "there is no sink". Every entry written before the block existed declares modes only, and
+     * reading those as sink-less would turn eighteen connectors into non-targets in one step.
+     *
+     * <p>Declarable at all because sink capability is read off the {@code write_record} capability,
+     * which needs the connector's jar: for a connector this repository cannot build, a declaration is
+     * the only honest source there is.
+     */
+    private static SinkCapability sinkOf(String id, String entryPath, Map<?, ?> entry) {
+        Object declared = entry.get("sink");
+        if (declared == null) {
+            return null;
+        }
+        if (!(declared instanceof Map<?, ?> sink)) {
+            throw new IllegalStateException(
+                    "connector overlay entry '" + id + "' has a sink that is not an object: " + entryPath);
+        }
+        if (!Boolean.TRUE.equals(sink.get("capable"))) {
+            // Refused for the same reason an empty modes list is: a present-but-false sink and an
+            // absent one behave identically downstream, so the one that declares nothing has to be
+            // the absent block. A connector that genuinely cannot sink declares no sink.
+            throw new IllegalStateException(
+                    "connector overlay entry '" + id + "' declares a sink that is not capable: "
+                            + entryPath + " - a connector that cannot sink declares no sink block");
+        }
+        List<WriteMode> semantics = new ArrayList<>();
+        if (sink.get("writeSemantics") instanceof List<?> declaredSemantics) {
+            for (Object mode : declaredSemantics) {
+                semantics.add(WriteMode.valueOf(String.valueOf(mode).toUpperCase(java.util.Locale.ROOT)));
+            }
+        }
+        return new SinkCapability(true, semantics);
+    }
+
+    /** The sink this repository declares for {@code connectorId}, or {@code null} if it declares none. */
+    public SinkCapability sinkFor(String connectorId) {
+        return sinkById.get(connectorId);
     }
 
     /** Every id this overlay declares. */

@@ -1,5 +1,6 @@
 {
   "modes": [
+    "cdc",
     "snapshot"
   ],
   "sink": {

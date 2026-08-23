@@ -28,7 +28,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/ali1688-connector/src/main/resources/spec.json",
     "specContentHash": "454a3bfdba444f82",
     "pdkApiVersion": null,

@@ -314,7 +314,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/starrocks-connector/src/main/resources/spec_starrocks.json",
     "specContentHash": "74c9f70e8c05a874",
     "pdkApiVersion": null,

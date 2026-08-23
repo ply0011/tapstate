@@ -314,7 +314,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors/doris-connector/src/main/resources/spec_doris.json",
     "specContentHash": "4bd1d1d8636cc7b6",
     "pdkApiVersion": null,

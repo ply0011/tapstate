@@ -28,7 +28,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/salesforce-connector/src/main/resources/spec.json",
     "specContentHash": "a7389586eca6b0c6",
     "pdkApiVersion": null,

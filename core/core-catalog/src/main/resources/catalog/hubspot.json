@@ -28,7 +28,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
+    "connectorRepoSha": "0bbc5d2c",
     "specPath": "connectors-javascript/hubspot-connector/src/main/resources/spec.json",
     "specContentHash": "03efb2c047097a5d",
     "pdkApiVersion": null,

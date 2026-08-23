@@ -160,4 +160,39 @@ class CatalogEntryAssemblerTest {
 
         assertThat(entry.provenance().modeSource().values()).containsOnly(ModeSource.DERIVED);
     }
+
+    private static ConnectorOverlay overlayDeclaringSink(String id, String modes, String semantics) {
+        return ConnectorOverlay.read(java.util.Map.of(
+                "/catalog/overlay/pdk/index.json", "[\"" + id + "\"]",
+                "/catalog/overlay/pdk/" + id + ".json",
+                "{\"modes\":[\"" + modes + "\"],\"sink\":{\"capable\":true,"
+                        + "\"writeSemantics\":[" + semantics + "]}}")::get);
+    }
+
+    @Test
+    void aDeclaredSinkStandsInForOneNoCapabilityCanBeDerivedFor() {
+        // A connector this repository cannot build derives no capabilities at all, so its sink reads
+        // as incapable - which does not say "we could not tell", it says "this is not a target".
+        // The declaration is the only source left, and it has to reach the row.
+        NormalizedSpec spec = spec("greenplum", ConnectorGroup.DATABASE, List.of(), false, null);
+
+        ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(spec, Set.of(),
+                overlayDeclaringSink("greenplum", "snapshot", "\"upsert\",\"append\""),
+                "sha", "path", "hash");
+
+        assertThat(entry.sink().capable()).isTrue();
+        assertThat(entry.sink().writeSemantics()).containsExactly(WriteMode.UPSERT, WriteMode.APPEND);
+    }
+
+    @Test
+    void aConnectorDeclaringNoSinkStillDerivesOne() {
+        // The declaration is an override, not a replacement of the rules: everything that can be
+        // derived still is, or adding the block to one connector would change every other one.
+        NormalizedSpec spec = spec("mysql", ConnectorGroup.DATABASE, List.of("update_on_exists"), true, null);
+
+        ConnectorCatalogEntry entry = CatalogEntryAssembler.assemble(spec,
+                Set.of("write_record_function"), noOverlay(), "sha", "path", "hash");
+
+        assertThat(entry.sink().capable()).isTrue();
+    }
 }
