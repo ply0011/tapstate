@@ -21,6 +21,8 @@ final class ReportRenderer {
 
         List<String> sections = new ArrayList<>();
         sections.add(section("Unclassified — no resolvable mode (need tapstate.modes)", report.unclassified()));
+        sections.add(section("Not built — this repository cannot build these, by name and with reason",
+                report.notBuilt()));
         sections.add(section("Not derived — no built jar or did not classload (excluded from refresh)",
                 report.notDerived()));
         sections.add(section("Unverified modes — derived for a non-database connector nobody declared",

@@ -41,4 +41,23 @@ class ManifestWriterTest {
 
         assertThat(ManifestWriter.write(jsOnly)).isEmpty();
     }
+
+    @Test
+    void leavesOutAConnectorThisRepositoryCannotBuild() {
+        // The worklist is what the build list is derived from, so a connector that cannot be built
+        // has to be absent from it - present, it stops the reactor part-way and nothing downstream
+        // gets derived at all.
+        String unbuildable = UnbuildableConnectors.ids().iterator().next();
+        List<ConnectorSource> sources = List.of(
+                new ConnectorSource("mysql", "mysql-connector",
+                        "mysql-connector/src/main/resources/mysql-spec.json",
+                        "io.tapdata.connector.mysql.MysqlConnector", false),
+                new ConnectorSource(unbuildable, unbuildable + "-connector",
+                        unbuildable + "-connector/src/main/resources/spec.json",
+                        "io.tapdata.connector.Whatever", false));
+
+        assertThat(ManifestWriter.write(sources))
+                .doesNotContain(unbuildable)
+                .contains("mysql");
+    }
 }

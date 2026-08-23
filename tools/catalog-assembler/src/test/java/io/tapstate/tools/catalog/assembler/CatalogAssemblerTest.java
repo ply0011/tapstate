@@ -300,4 +300,33 @@ class CatalogAssemblerTest {
     private ConnectorCatalogEntry entry(String id) {
         return assemble().entries().stream().filter(e -> e.id().equals(id)).findFirst().orElseThrow();
     }
+
+    @Test
+    void aConnectorThisRepositoryCannotBuildIsReportedByNameWithItsReason() {
+        // Both buckets hold connectors with no derived capabilities, and they mean opposite things:
+        // one is a decision, the other is a connector that stopped being built and nobody noticed.
+        // Lumped together, the second is invisible - which is the whole reason the first is named.
+        String unbuildable = UnbuildableConnectors.ids().iterator().next();
+        String specPath = "connectors/" + unbuildable + "-connector/src/main/resources/spec.json";
+        List<ConnectorSource> sources = List.of(
+                new ConnectorSource(unbuildable, unbuildable + "-connector", specPath,
+                        "io.tapdata.connector.Whatever", false),
+                new ConnectorSource("kafka", "kafka-connector",
+                        "connectors/kafka-connector/src/main/resources/spec_kafka.json",
+                        "io.tapdata.connector.kafka.KafkaConnector", false));
+        String spec = MYSQL_SPEC.replace("\"id\":\"mysql\"", "\"id\":\"" + unbuildable + "\"");
+        Map<String, String> specs = Map.of(
+                specPath, spec,
+                "connectors/kafka-connector/src/main/resources/spec_kafka.json", KAFKA_SPEC);
+
+        // Neither is in the bitmap: the unbuildable one because it is never built, kafka because its
+        // jar happened not to be there - the two cases this partition has to tell apart.
+        IngestReport report = CatalogAssembler
+                .assemble(new WalkResult(sources, List.of()), SHA, Map.of(), noOverlay(), specs::get)
+                .report();
+
+        assertThat(report.notBuilt())
+                .containsExactly(unbuildable + ": " + UnbuildableConnectors.reasonFor(unbuildable));
+        assertThat(report.notDerived()).containsExactly("kafka");
+    }
 }

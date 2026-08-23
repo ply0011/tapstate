@@ -50,6 +50,7 @@ final class CatalogAssembler {
         List<String> ingestedIds = new ArrayList<>();
         List<String> unclassified = new ArrayList<>();
         List<String> notDerived = new ArrayList<>();
+        List<String> notBuilt = new ArrayList<>();
         List<String> unverifiedModes = new ArrayList<>();
         List<String> overlayDivergences = new ArrayList<>();
         List<String> overlayNotDerivable = new ArrayList<>();
@@ -77,7 +78,11 @@ final class CatalogAssembler {
             // distinct gap from a connector that was probed (or is JavaScript) and still resolved no
             // mode, so keep the two apart rather than lumping a build gap into unclassified.
             boolean notDerivedThisRun = source.connectorClassFqn() != null && !bitmap.containsKey(source.id());
-            if (notDerivedThisRun) {
+            if (notDerivedThisRun && UnbuildableConnectors.contains(source.id())) {
+                // Named, so its absence is a decision with a reason rather than a connector that
+                // quietly stopped being built. Both look identical in the catalog itself.
+                notBuilt.add(entry.id() + ": " + UnbuildableConnectors.reasonFor(source.id()));
+            } else if (notDerivedThisRun) {
                 notDerived.add(entry.id());
             } else if (entry.modes().isEmpty()) {
                 unclassified.add(entry.id());
@@ -108,7 +113,7 @@ final class CatalogAssembler {
             findings.unresolvedLabelRefs().forEach(k -> unresolvedLabelRefs.add(entry.id() + ":" + k));
         }
 
-        IngestReport report = new IngestReport(connectorRepoSha, ingestedIds, unclassified, notDerived,
+        IngestReport report = new IngestReport(connectorRepoSha, ingestedIds, unclassified, notDerived, notBuilt,
                 unverifiedModes, overlayDivergences, overlayNotDerivable, sinkDefaultedNoSignal,
                 unknownTypeFields, unresolvedLabelRefs, walk.exemptions());
         return new Assembly(entries, report);

@@ -20,6 +20,7 @@ class ReportRendererTest {
                 List.of("github", "kafka", "mysql"),
                 List.of("github"),
                 List.of("hazelcast"),
+                List.of("yashandb: driver published only to the upstream project's private repository"),
                 List.of("kafka"),
                 List.of("rabbitmq: upstream [cdc], ours [stream]"),
                 List.of("selectdb: snapshot needs batch_read_function"),
@@ -36,6 +37,9 @@ class ReportRendererTest {
 
                 ## Unclassified — no resolvable mode (need tapstate.modes)
                 - github
+
+                ## Not built — this repository cannot build these, by name and with reason
+                - yashandb: driver published only to the upstream project's private repository
 
                 ## Not derived — no built jar or did not classload (excluded from refresh)
                 - hazelcast
