@@ -219,6 +219,34 @@ else
   failed=$((failed + 1))
 fi
 
+# Two consumers resolve this directory by two different rules, and only one of them was asserted.
+# catalog-derive resolves a jar by its module name; the witnesses resolve by connector id. Those
+# coincide for the three connectors the witness lane drives and diverge for most of the catalog -
+# 'aliyun-db-mongodb' is built by aliyun-mongodb-connector - so a catalog refresh staged all of its
+# jars and was then told the directory resolved none of them.
+fresh_checkout
+mkdir -p "$scratch/checkout/connectors/aliyun-mongodb-connector/src/main/resources"
+expect "an id that is not its module's file prefix" 0 "Connector jars staged" \
+  --modules "aliyun-db-mongodb=connectors/aliyun-mongodb-connector" \
+  --checkout "$scratch/checkout" "$scratch/dest"
+
+# The other rule still has to hold for the lane that uses it: the witnesses take the default list and
+# resolve by id, so a sibling sharing an id's prefix makes their lookup ambiguous.
+fresh_checkout
+mkdir -p "$scratch/dest"
+: > "$scratch/dest/mysql-pxc-connector-v1.0.0.jar"
+expect "a sibling jar makes the witnesses' id lookup ambiguous" 1 "require exactly one" \
+  --checkout "$scratch/checkout" "$scratch/dest"
+
+# The destination is not cleared, so a jar left there by an earlier run with a different version can
+# sit beside the one just staged - and derive's rule fails loud on two, which is a refusal this
+# script should give rather than pass on.
+fresh_checkout
+mkdir -p "$scratch/dest"
+: > "$scratch/dest/mysql-connector-v0.9.0-old.jar"
+expect "a stale jar for the same module in the destination" 1 "derive requires exactly one" \
+  --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest"
+
 # A refresh runs against a checkout somebody already built in, and upstream stamps a build timestamp
 # into each shaded jar's name - so a second run leaves two of them side by side and the staging rule,
 # which requires exactly one, refuses. Worse than the refusal: two jars in a tree built from two

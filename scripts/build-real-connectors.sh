@@ -231,14 +231,35 @@ for index in "${!CONNECTOR_IDS[@]}"; do
     echo "Staged $(basename "${built[0]}") for connector '$id'"
 done
 
-# The destination is what the witnesses are pointed at, so assert the property they depend on here
-# rather than letting an ambiguous directory fail later as something that reads like a product bug.
-for id in "${CONNECTOR_IDS[@]}"; do
-    staged="$(find "$destination" -maxdepth 1 -name "$id*.jar" -type f | wc -l | tr -d ' ')"
+# What the destination has to satisfy, asserted here rather than left to fail later as something
+# that reads like a product bug. Two consumers read this directory by two different rules, so both
+# are checked, each against the list it applies to.
+#
+# catalog-derive resolves a jar by module name. That rule holds for every caller, because it is the
+# one staging above just satisfied.
+for module in "${CONNECTOR_MODULES[@]}"; do
+    artifact="$(basename "$module")"
+    staged="$(find "$destination" -maxdepth 1 -name "$artifact-*.jar" -type f | wc -l | tr -d ' ')"
     if [ "$staged" -ne 1 ]; then
-        echo "$destination resolves $staged jars for '$id', and the witnesses require exactly one" >&2
+        echo "$destination resolves $staged jars for module '$artifact', and derive requires exactly one" >&2
         exit 1
     fi
 done
+
+# The witnesses resolve by connector id instead, and an id is only its jar's prefix for some
+# connectors: the three this lane drives, yes; most of the catalog, no - 'aliyun-db-mongodb' is built
+# by aliyun-mongodb-connector. So this half is asserted for the lane it belongs to, which is the one
+# taking the default list. A catalog refresh names its own list and is read by derive, not by the
+# witnesses; over its dist the id rule is ambiguous by construction, since siblings that share a
+# prefix (mysql, mysql-pxc) are all staged on purpose.
+if [ -z "$modules_arg" ]; then
+    for id in "${CONNECTOR_IDS[@]}"; do
+        staged="$(find "$destination" -maxdepth 1 -name "$id*.jar" -type f | wc -l | tr -d ' ')"
+        if [ "$staged" -ne 1 ]; then
+            echo "$destination resolves $staged jars for '$id', and the witnesses require exactly one" >&2
+            exit 1
+        fi
+    done
+fi
 
 echo "Connector jars staged in $destination"
