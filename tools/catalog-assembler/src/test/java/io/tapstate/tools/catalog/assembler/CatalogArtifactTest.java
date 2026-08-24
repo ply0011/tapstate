@@ -245,7 +245,7 @@ class CatalogArtifactTest {
     }
 
     /** The derived capability bitmap, checked in beside the tool that merges it. */
-    private static Path bitmapFile() {
+    static Path bitmapFile() {
         return repoRoot().resolve("tools").resolve("catalog-assembler").resolve("capability-bitmap.tsv");
     }
 
