@@ -46,12 +46,12 @@ import java.util.concurrent.Callable;
  * the recording follows and what teaches the shape; this command is the shortcut for people who want
  * the result first, never a replacement for them.
  */
-@Command(name = "example", mixinStandardHelpOptions = true,
+@Command(name = "demo", mixinStandardHelpOptions = true,
         description = {
-                "Write the example workspace: two sources on different engines, and the pipeline that"
+                "Write the demo workspace: two sources on different engines, and the pipeline that"
                         + " assembles them into one object.",
                 "Writes files only - bring the stack up with the quickstart script."})
-final class ExampleCmd implements Callable<Integer> {
+final class DemoCmd implements Callable<Integer> {
 
     /** Exit code when a coded diagnostic is reported, as the other offline verbs spell it. */
     static final int EXIT_DIAGNOSTIC = 1;
@@ -85,8 +85,8 @@ final class ExampleCmd implements Callable<Integer> {
     private static final List<String> STEPS = List.of(
             "1. Install and bring up the stack (databases, server and store, seeded):",
             "     curl -sSL https://install.tapstate.dev | sh",
-            "2. Write the example workspace - orders in MySQL, shipments in PostgreSQL:",
-            "     tapstate example -w work",
+            "2. Write the demo workspace - orders in MySQL, shipments in PostgreSQL:",
+            "     tapstate demo -w work",
             "3. Go online, register the connectors this demo reads, and apply it:",
             "     tapstate -w work   then: connect http://127.0.0.1:8080 ; login admin",
             "     register ../mysql-connector.jar ; register ../postgres-connector.jar",
@@ -112,7 +112,7 @@ final class ExampleCmd implements Callable<Integer> {
      * step the reader takes will work, and the answer is worth one line now instead of an error three
      * commands from here.
      */
-    java.util.function.BooleanSupplier dockerIsOnThePath = ExampleCmd::dockerIsInstalled;
+    java.util.function.BooleanSupplier dockerIsOnThePath = DemoCmd::dockerIsInstalled;
 
     @Spec
     CommandSpec spec;
@@ -162,7 +162,7 @@ final class ExampleCmd implements Callable<Integer> {
                 Path target = root.resolve(resource);
                 if (Files.exists(target)) {
                     throw new TapstateException(
-                            CliError.EXAMPLE_WORKSPACE_EXISTS, Map.of("path", target.toString()), null);
+                            CliError.DEMO_WORKSPACE_EXISTS, Map.of("path", target.toString()), null);
                 }
             }
         }
@@ -200,8 +200,8 @@ final class ExampleCmd implements Callable<Integer> {
 
     /** One bundled resource. Absent means a broken build, not a user error, so it crashes bare. */
     static String bundled(String resource) {
-        String name = "/example/" + resource.substring(resource.indexOf('/') + 1);
-        try (InputStream in = ExampleCmd.class.getResourceAsStream(name)) {
+        String name = "/demo/" + resource.substring(resource.indexOf('/') + 1);
+        try (InputStream in = DemoCmd.class.getResourceAsStream(name)) {
             if (in == null) {
                 throw new IllegalStateException("the demo resource " + name + " is not on the classpath");
             }
@@ -248,12 +248,12 @@ final class ExampleCmd implements Callable<Integer> {
             case JSON -> out.println(JsonOut.write(envelope(root, written)));
             case YAML -> out.println(YamlOut.write(envelope(root, written)));
             default -> {
-                out.println("Wrote the example workspace to " + root + ":");
+                out.println("Wrote the demo workspace to " + root + ":");
                 written.forEach(path -> out.println("  " + root.relativize(path)));
                 out.println();
                 if (dockerIsOnThePath.getAsBoolean()) {
                     out.println("Next: bring the stack up, then apply it."
-                            + " `tapstate example --print-steps` prints the whole walkthrough.");
+                            + " `tapstate demo --print-steps` prints the whole walkthrough.");
                 } else {
                     // Said here rather than left for the stack to say later. This command needs no
                     // Docker and refuses nothing without it - the files are correct either way - but the
@@ -262,7 +262,7 @@ final class ExampleCmd implements Callable<Integer> {
                     // that needs a container, and refusing here would be refusing work that succeeded.
                     out.println("These resources need a running stack next, and Docker is not on your"
                             + " PATH. Install Docker with the Compose v2 plugin first;"
-                            + " `tapstate example --print-steps` prints the whole walkthrough.");
+                            + " `tapstate demo --print-steps` prints the whole walkthrough.");
                 }
             }
         }

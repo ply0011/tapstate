@@ -81,9 +81,9 @@ cli.alias-name-taken:
 cli.artifact-exists:
   message: "An artifact already exists at {path}."
   solution: "Choose a different id or --out, or pass --force to overwrite."
-cli.example-workspace-exists:
-  message: "The workspace already holds an example resource at {path}."
-  solution: "Use a different workspace with -w, or pass --force to overwrite the example files there."
+cli.demo-workspace-exists:
+  message: "The workspace already holds a demo resource at {path}."
+  solution: "Use a different workspace with -w, or pass --force to overwrite the demo files there."
 cli.unknown-connector:
   message: "No connector '{connector}' in the catalog."
   solution: "Pick a connector id from the catalog; run `tapstate new` interactively to choose one."

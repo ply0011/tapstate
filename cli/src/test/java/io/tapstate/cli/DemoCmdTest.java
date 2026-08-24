@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * two of three files is a state nobody asked for and neither a re-run nor {@code --force} was designed
  * around.
  */
-class ExampleCmdTest {
+class DemoCmdTest {
 
     private record Run(int code, String out, String err) {
         String all() {
@@ -40,7 +40,7 @@ class ExampleCmdTest {
 
     @Test
     void writesTheThreeResourcesIntoTheirKindDirectories(@TempDir Path dir) {
-        Run r = run("example", "-w", dir.toString());
+        Run r = run("demo", "-w", dir.toString());
 
         assertThat(r.code()).isZero();
         assertThat(dir.resolve("source/orders_db.tap.yml")).exists();
@@ -56,7 +56,7 @@ class ExampleCmdTest {
      */
     @Test
     void whatItWritesIsTheAssemblyTheDemoIsAbout(@TempDir Path dir) throws IOException {
-        run("example", "-w", dir.toString());
+        run("demo", "-w", dir.toString());
 
         String pipeline = Files.readString(dir.resolve("pipeline/order_pipeline.tap.yml"));
         assertThat(pipeline)
@@ -70,14 +70,14 @@ class ExampleCmdTest {
 
     @Test
     void refusesRatherThanOverwriteAWorkspaceThatAlreadyHasThem(@TempDir Path dir) throws IOException {
-        run("example", "-w", dir.toString());
+        run("demo", "-w", dir.toString());
         Path edited = dir.resolve("pipeline/order_pipeline.tap.yml");
         Files.writeString(edited, "# mine now\n");
 
-        Run again = run("example", "-w", dir.toString());
+        Run again = run("demo", "-w", dir.toString());
 
-        assertThat(again.code()).isEqualTo(ExampleCmd.EXIT_DIAGNOSTIC);
-        assertThat(again.all()).contains("cli.example-workspace-exists");
+        assertThat(again.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
+        assertThat(again.all()).contains("cli.demo-workspace-exists");
         assertThat(Files.readString(edited))
                 .as("the whole point of the refusal: an edited file survives it")
                 .isEqualTo("# mine now\n");
@@ -85,11 +85,11 @@ class ExampleCmdTest {
 
     @Test
     void overwritesOnlyWhenAskedTo(@TempDir Path dir) throws IOException {
-        run("example", "-w", dir.toString());
+        run("demo", "-w", dir.toString());
         Path edited = dir.resolve("pipeline/order_pipeline.tap.yml");
         Files.writeString(edited, "# mine now\n");
 
-        Run forced = run("example", "-w", dir.toString(), "--force");
+        Run forced = run("demo", "-w", dir.toString(), "--force");
 
         assertThat(forced.code()).isZero();
         assertThat(Files.readString(edited)).contains("type: nest");
@@ -105,9 +105,9 @@ class ExampleCmdTest {
         Files.createDirectories(dir.resolve("pipeline"));
         Files.writeString(dir.resolve("pipeline/order_pipeline.tap.yml"), "# mine\n");
 
-        Run r = run("example", "-w", dir.toString());
+        Run r = run("demo", "-w", dir.toString());
 
-        assertThat(r.code()).isEqualTo(ExampleCmd.EXIT_DIAGNOSTIC);
+        assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
         assertThat(dir.resolve("source/orders_db.tap.yml"))
                 .as("the other two must not have been written before the refusal")
                 .doesNotExist();
@@ -115,7 +115,7 @@ class ExampleCmdTest {
 
     @Test
     void printsTheWalkthroughAndWritesNothing(@TempDir Path dir) {
-        Run r = run("example", "-w", dir.toString(), "--print-steps");
+        Run r = run("demo", "-w", dir.toString(), "--print-steps");
 
         assertThat(r.code()).isZero();
         assertThat(r.out()).contains("curl -sSL https://install.tapstate.dev")
@@ -136,7 +136,7 @@ class ExampleCmdTest {
      */
     @Test
     void theWatchLineNamesACollectionRatherThanACallOnOne() {
-        String line = ExampleCmd.READS.stream()
+        String line = DemoCmd.READS.stream()
                 .map(read -> read[0])
                 .filter(l -> l.startsWith("watch "))
                 .findFirst()
@@ -162,7 +162,7 @@ class ExampleCmdTest {
      */
     @Test
     void everyReadTheWalkthroughPrintsIsOneTheShellAccepts() {
-        List<DataBrowserCall> reads = ExampleCmd.READS.stream()
+        List<DataBrowserCall> reads = DemoCmd.READS.stream()
                 .map(read -> readShellCall(read[0]))
                 .toList();
 
@@ -176,10 +176,10 @@ class ExampleCmdTest {
     /** What is printed is what is checked: the calls reach the page through this list, not beside it. */
     @Test
     void theCallsCheckedAboveAreTheOnesPrinted() {
-        String printed = String.join("\n", ExampleCmd.walkthrough());
+        String printed = String.join("\n", DemoCmd.walkthrough());
 
-        assertThat(ExampleCmd.READS).isNotEmpty();
-        ExampleCmd.READS.forEach(read -> assertThat(printed).contains(read[0]).contains(read[1]));
+        assertThat(DemoCmd.READS).isNotEmpty();
+        DemoCmd.READS.forEach(read -> assertThat(printed).contains(read[0]).contains(read[1]));
     }
 
     /**
@@ -213,13 +213,13 @@ class ExampleCmdTest {
     }
 
     /** The {@code example} command object picocli built, so a test can drive one of its seams. */
-    private static ExampleCmd commandFrom(CommandLine cl) {
-        return cl.getSubcommands().get("example").getCommand();
+    private static DemoCmd commandFrom(CommandLine cl) {
+        return cl.getSubcommands().get("demo").getCommand();
     }
 
     /** The indented command lines of the printed walkthrough, trimmed, prose lines dropped. */
     private static List<String> commandLines() {
-        Run r = run("example", "--print-steps");
+        Run r = run("demo", "--print-steps");
         assertThat(r.code()).isZero();
         return r.out().lines()
                 .filter(l -> l.startsWith("     "))
@@ -230,7 +230,7 @@ class ExampleCmdTest {
 
     @Test
     void reportsAStructuredEnvelopeForScriptsAndAgents(@TempDir Path dir) {
-        Run r = run("example", "-w", dir.toString(), "-o", "json");
+        Run r = run("demo", "-w", dir.toString(), "-o", "json");
 
         assertThat(r.code()).isZero();
         assertThat(r.out()).contains("\"status\": \"ok\"").contains("\"created\"")
@@ -239,18 +239,18 @@ class ExampleCmdTest {
 
     @Test
     void reportsTheRefusalInTheSameEnvelope(@TempDir Path dir) {
-        run("example", "-w", dir.toString());
+        run("demo", "-w", dir.toString());
 
-        Run again = run("example", "-w", dir.toString(), "-o", "json");
+        Run again = run("demo", "-w", dir.toString(), "-o", "json");
 
-        assertThat(again.code()).isEqualTo(ExampleCmd.EXIT_DIAGNOSTIC);
+        assertThat(again.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
         assertThat(again.out()).contains("\"status\": \"error\"")
-                .contains("\"code\": \"cli.example-workspace-exists\"");
+                .contains("\"code\": \"cli.demo-workspace-exists\"");
     }
 
     @Test
     void whatItWritesValidates(@TempDir Path dir) {
-        run("example", "-w", dir.toString());
+        run("demo", "-w", dir.toString());
 
         Run validated = run("validate", dir.toString());
 
@@ -263,8 +263,8 @@ class ExampleCmdTest {
 
     @Test
     void isOfferedAsAnOfflineVerb() {
-        assertThat(Cli.OFFLINE_VERBS).contains("example");
-        assertThat(run("--help").out()).contains("example");
+        assertThat(Cli.OFFLINE_VERBS).contains("demo");
+        assertThat(run("--help").out()).contains("demo");
     }
 
     /**
@@ -278,7 +278,7 @@ class ExampleCmdTest {
         commandFrom(cl).dockerIsOnThePath = () -> false;
         StringWriter out = new StringWriter();
         cl.setOut(new PrintWriter(out));
-        int code = cl.execute("example", "-w", dir.toString());
+        int code = cl.execute("demo", "-w", dir.toString());
 
         assertThat(code).as("writing files is not the step that needs Docker").isZero();
         assertThat(dir.resolve("pipeline/order_pipeline.tap.yml")).exists();
@@ -291,7 +291,7 @@ class ExampleCmdTest {
         commandFrom(cl).dockerIsOnThePath = () -> true;
         StringWriter out = new StringWriter();
         cl.setOut(new PrintWriter(out));
-        cl.execute("example", "-w", dir.toString());
+        cl.execute("demo", "-w", dir.toString());
 
         assertThat(out.toString()).doesNotContain("Docker").contains("--print-steps");
     }
@@ -300,17 +300,17 @@ class ExampleCmdTest {
     void everyResourceItNamesIsOnTheClasspath() {
         // The bundle is what makes this command a copy of the demo rather than a second one. A missing
         // file is a broken build, and it must not first surface as a half-written workspace.
-        for (String resource : ExampleCmd.RESOURCES) {
-            assertThat(ExampleCmd.bundled(resource)).isNotBlank().startsWith("version: tapstate/v1");
+        for (String resource : DemoCmd.RESOURCES) {
+            assertThat(DemoCmd.bundled(resource)).isNotBlank().startsWith("version: tapstate/v1");
         }
-        assertThat(ExampleCmd.RESOURCES).hasSize(3);
+        assertThat(DemoCmd.RESOURCES).hasSize(3);
     }
 
     @Test
     void writesResourcesUnderTheDirectoryTheirKindRequires() {
         // validate refuses a resource whose kind does not match its directory, so the layout is not a
         // convention here - a demo written flat would fail its own first validate.
-        assertThat(ExampleCmd.RESOURCES)
+        assertThat(DemoCmd.RESOURCES)
                 .allSatisfy(resource -> assertThat(List.of("source", "pipeline"))
                         .contains(resource.substring(0, resource.indexOf('/'))));
     }
