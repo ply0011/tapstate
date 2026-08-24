@@ -25,7 +25,7 @@ enum CliError implements TapstateErrorCode {
      * files it is theirs, and a command whose whole purpose is to save typing must not be the thing
      * that discards an afternoon of it.
      */
-    DEMO_WORKSPACE_EXISTS("cli.demo-workspace-exists", Set.of("path")),
+    EXAMPLE_WORKSPACE_EXISTS("cli.example-workspace-exists", Set.of("path")),
 
     /**
      * The optional {@code tap} shortcut cannot be managed because that name belongs to something else;

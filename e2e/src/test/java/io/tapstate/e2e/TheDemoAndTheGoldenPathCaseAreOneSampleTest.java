@@ -36,8 +36,8 @@ class TheDemoAndTheGoldenPathCaseAreOneSampleTest {
 
     private static final Path EXAMPLES = Path.of("examples");
 
-    /** What {@code tapstate demo} writes, carried beside the command as classpath resources. */
-    private static final Path CLI_BUNDLE = Path.of("..", "cli", "src", "main", "resources", "demo");
+    /** What {@code tapstate example} writes, carried beside the command as classpath resources. */
+    private static final Path CLI_BUNDLE = Path.of("..", "cli", "src", "main", "resources", "example");
 
     private static final Path CASE = EXAMPLES.resolve("the-golden-path-two-engines-become-one-object");
 
@@ -103,7 +103,7 @@ class TheDemoAndTheGoldenPathCaseAreOneSampleTest {
     }
 
     /**
-     * And the third copy: what {@code tapstate demo} writes.
+     * And the third copy: what {@code tapstate example} writes.
      *
      * <p>All three, byte for byte, with no address exemption - unlike the case, this one targets the
      * same compose stack the quickstart does, so there is nothing it could legitimately spell
@@ -115,7 +115,7 @@ class TheDemoAndTheGoldenPathCaseAreOneSampleTest {
     void theCommandWritesWhatTheQuickstartWrites() throws IOException {
         for (String resource : List.of("orders_db.tap.yml", "fulfillment_db.tap.yml")) {
             assertThat(Files.readString(CLI_BUNDLE.resolve(resource)))
-                    .as("%s: `tapstate demo` and the quickstart write the same file", resource)
+                    .as("%s: `tapstate example` and the quickstart write the same file", resource)
                     .isEqualTo(heredoc("work/source/" + resource));
         }
         assertThat(Files.readString(CLI_BUNDLE.resolve("order_pipeline.tap.yml")))

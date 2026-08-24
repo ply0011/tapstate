@@ -26,7 +26,7 @@ import java.util.function.Supplier;
  */
 @Command(name = "tapstate", mixinStandardHelpOptions = true, version = Cli.VERSION,
         subcommands = {
-                ValidateCmd.class, NewCmd.class, DemoCmd.class, ExplainCmd.class, LsCmd.class,
+                ValidateCmd.class, NewCmd.class, ExampleCmd.class, ExplainCmd.class, LsCmd.class,
                 DescCmd.class, McpCmd.class, AliasCmd.class},
         // the second line is indented by hand under the "Usage: " heading picocli prints before the first
         customSynopsis = {
@@ -96,7 +96,7 @@ public final class Cli implements Runnable {
      * so the declared list can never drift from the verbs actually wired up.
      */
     static final List<String> OFFLINE_VERBS =
-            List.of("validate", "new", "demo", "explain", "ls", "desc");
+            List.of("validate", "new", "example", "explain", "ls", "desc");
 
     /**
      * How this face spells each operation it projects: operation id → verb name. The spelling is not

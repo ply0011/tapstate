@@ -107,13 +107,13 @@ by shot in [docs/demo.md](docs/demo.md) — including what the recording does *n
 prove, and the fact that its images were pulled beforehand so your first run includes
 a download it does not.
 
-Already have the stack up and just want the workspace back? `tapstate demo` writes
-the same three resources the quickstart generates, and `tapstate demo --print-steps`
+Already have the stack up and just want the workspace back? `tapstate example` writes
+the same three resources the quickstart generates, and `tapstate example --print-steps`
 prints the walkthrough they belong to:
 
 ```sh
-tapstate demo -w work            # write the demo workspace
-tapstate demo --print-steps      # the walkthrough, without writing anything
+tapstate example -w work         # write the example workspace
+tapstate example --print-steps   # the walkthrough, without writing anything
 ```
 
 > **Preview.** The runtime is single-node and not production-ready. Runtime state is
