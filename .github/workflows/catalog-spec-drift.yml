@@ -50,6 +50,10 @@ on:
     # this lane merges there is no way to run it at all - and the change that most needs a run is the
     # one that introduces it. Running on pull requests that touch the lane closes that gap, and keeps
     # it closed: whoever next edits it finds out then, rather than on the following night's schedule.
+    #
+    # labeled is here so that catalog-drift-pr (see below) can be asked for on a pull request that
+    # has already been opened, rather than only at the moment it opens.
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - ".github/workflows/catalog-spec-drift.yml"
       - ".github/scripts/catalog-age-days.sh"
@@ -133,6 +137,15 @@ jobs:
 
       - name: What drifted, and does it open a pull request
         id: drift
+        env:
+          # The catalog-drift-pr label means "open the pull request from this run", and it has to
+          # move the age because that is what decides. The fallback measures how long the catalog has
+          # gone without upstream carried in, and a branch that has itself just edited the catalog
+          # reads as zero - so the one run that needs to reach the open-a-pull-request path is
+          # structurally the one that never can. Unlabelled runs read the real number, which is the
+          # whole point of leaving this off by default: an unlabelled pull request must not open a
+          # catalog rebuilt from code that is still under review.
+          AGE_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'catalog-drift-pr') && '9999' || '' }}
         run: |
           mvn -B -pl tools/catalog-assembler -am test \
             -Dtest=CatalogArtifactTest#emitsTheDriftReportWhenAskedTo \
@@ -140,7 +153,7 @@ jobs:
             -Dapi.version=1.44 \
             -Dtapstate.catalog.fetched="$PWD/upstream" \
             -Dtapstate.catalog.fetch-list="$PWD/fetch-list.txt" \
-            -Dtapstate.catalog.catalog-age-days="$(.github/scripts/catalog-age-days.sh)" \
+            -Dtapstate.catalog.catalog-age-days="${AGE_OVERRIDE:-$(.github/scripts/catalog-age-days.sh)}" \
             -Dtapstate.catalog.drift-report="$PWD/drift-report.txt"
           if [ ! -s drift-report.txt ]; then
             echo "the drift report is empty - the comparison did not run" >&2
@@ -167,10 +180,15 @@ jobs:
           scripts/refresh-catalog.sh --connectors upstream --spec-only
 
       - name: Open the pull request
-        # Not on a pull request: that run is here to exercise the lane, not to act on what it finds,
-        # and opening a second pull request from inside one is not exercising it. Everything above
-        # this step still runs there, which is the whole lane bar this call.
-        if: steps.drift.outputs.decision == 'OPEN' && github.event_name != 'pull_request'
+        # A pull request run is here to exercise the lane, not to act on what it finds, so by default
+        # it stops short of this step - everything above still runs, which is the whole lane bar this
+        # call. The exception is asked for by name: label a pull request catalog-drift-pr and this
+        # run opens the drift pull request from there, which is the only way to see the checks fire
+        # on a bot-opened one before this lane is on the default branch.
+        if: >-
+          steps.drift.outputs.decision == 'OPEN'
+          && (github.event_name != 'pull_request'
+              || contains(github.event.pull_request.labels.*.name, 'catalog-drift-pr'))
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ steps.token.outputs.token }}

@@ -163,3 +163,13 @@ regeneration that dropped them is already red.
 supports opens one at once; everything else accumulates and is swept up by the next pull request,
 with a seven-day ceiling so an unsupported connector's specification cannot wait indefinitely. A scan
 that has not opened anything for a few days is not evidence that it is broken.
+
+**Two labels change what a lane does on a pull request.** Both lanes run on pull requests as well as
+on their own schedules, because a lane that runs only on a schedule cannot run at all until it is on
+the default branch - the wrong way round for the change that introduces one. On a pull request,
+`catalog-full-rebuild` asks for the full rebuild, which is far too expensive to attach to every pull
+request that happens to touch it. `catalog-drift-pr` lets the spec-drift lane open its catalog pull
+request from that run, and moves the seven-day ceiling aside so that it can - a branch that has just
+edited the catalog itself reads as zero days old, so the ceiling would otherwise hold every time.
+Without that label a pull request run stops one step short of opening anything, deliberately: the
+catalog it would carry was rebuilt from code that is still under review.
