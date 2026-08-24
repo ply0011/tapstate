@@ -46,7 +46,7 @@ Timestamps are filled in from the finished recording; they are also what the REA
 |---|---|---|---|---|
 | 1 | 00:00 | `curl -sSL https://install.tapstate.dev \| sh` | The stack comes up: two source engines, the server, and the managed store. Ends with a line naming the orders assembled and the shipments inside them | Milestone criterion 2 — a clean machine reaches a reproducible cross-source demo from one command |
 | 2 | 00:12 | `tapstate -w work` then `connect` / `login` | A prompt. **No database URI is typed, here or anywhere later** | Criterion 3 — the CLI reads live state without being handed a store address |
-| 3 | 00:18 | `show collections` | One line: `views.order_state`. Nothing else — no intermediate resource, no staging collection | Criterion 3, positive half (the negative half is the query plan's own case) |
+| 3 | 00:18 | `show collections` | Three lines: the two source tables, and `views.order_state`. **One** collection in the store — no intermediate, no staging collection — and no address was typed for any of the three | Criterion 3, positive half (the negative half is the query plan's own case) |
 | 4 | 00:24 | `views.order_state.find({id:1})` | One order with its shipments **inside it** — a document assembled from two different database engines | Criterion 2 — the assembly, not two syncs standing side by side |
 | 5 | 00:34 | `watch views.order_state {id:1}` | The same object, held on screen and redrawn in place | Criterion 5 — the live view starts and holds |
 | 6 | 00:40 | *(second pane)* `INSERT INTO shipments …` in PostgreSQL | The watched object gains an array element **while you are looking at it** | Criteria 2 and 5 — a change in one engine ripples into the object rooted in the other |

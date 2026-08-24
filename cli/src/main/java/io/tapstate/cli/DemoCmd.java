@@ -71,7 +71,7 @@ final class DemoCmd implements Callable<Integer> {
      * the collection, which the shell reads as a collection whose name contains the call.
      */
     static final List<String[]> READS = List.of(
-            new String[] {"show collections", "one collection: views.order_state"},
+            new String[] {"show collections", "three: the two sources, and views.order_state"},
             new String[] {"views.order_state.find({id:1})", "one order, with its shipments inside it"},
             new String[] {"watch views.order_state {id:1}", "the same object, redrawn as it changes"});
 

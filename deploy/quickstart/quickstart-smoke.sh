@@ -561,10 +561,17 @@ if printf '%s' "$RUN_OUT" | grep -q 'docker compose logs --tail 50 server'; then
 else
   bad "a wait can run out with nothing actionable printed: $RUN_OUT"
 fi
-# One collection, and the demo says so. The whole "no second client, no URI to configure" claim is
-# about what a reader finds when they look: an intermediate resource showing up beside the object
-# would make the store look like a staging area, which is the thing the view declaration replaced.
-if printf '%s' "$RUN_OUT" | grep -q 'one collection: views.order_state'; then
+# The demo names the collection a reader should find, beside the command that lists it. The whole
+# "no second client, no URI to configure" claim is about what they find when they look, so the name
+# has to be in front of them rather than left to be recognised in a listing.
+#
+# Asserted on the name, not on the sentence around it. The sentence this once pinned said "one
+# collection", which a real machine contradicts: a bare listing shows the two source tables as well,
+# because it lists what every declared source holds. One collection in the *store* is the claim; the
+# earlier wording made it sound like one line of output, and this assertion held that wording in
+# place until somebody ran it by hand.
+if printf '%s' "$RUN_OUT" | grep -q 'show collections' \
+   && printf '%s' "$RUN_OUT" | grep -q 'views.order_state'; then
   ok "the demo points at exactly one collection, named"
 else
   bad "the demo does not name the single collection a reader should find: $RUN_OUT"

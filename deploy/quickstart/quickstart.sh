@@ -192,7 +192,7 @@ not a view and not a join. Tapstate keeps it fresh from both sides at once.
 Look at it (from this directory):
   ./tapstate -w work        then: connect http://127.0.0.1:8080 ; login admin
   then, at the prompt:
-    show collections                       one collection: views.order_state
+    show collections                      three: the two sources, and views.order_state
     views.order_state.find({id:1})         one order, with its shipments inside it
     watch views.order_state {id:1}         the same object, redrawn as it changes
     status order_pipeline --watch          the pipeline behind it
