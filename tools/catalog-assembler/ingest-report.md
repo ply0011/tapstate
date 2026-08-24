@@ -42,6 +42,16 @@ Ingested connectors: 78
 - xml
 - zoho-desk
 
+## Overlay carrying it alone — upstream declares nothing, the mode is ours only
+- aws-clickhouse: upstream declares nothing, ours [snapshot]
+- dws: upstream declares nothing, ours [snapshot]
+- file-stream: upstream declares nothing, ours [cdc, snapshot]
+- greenplum: upstream declares nothing, ours [snapshot]
+- highgo: upstream declares nothing, ours [cdc, snapshot]
+- huawei-gauss-db: upstream declares nothing, ours [cdc, snapshot]
+- mongodb3: upstream declares nothing, ours [cdc, snapshot]
+- vastbase: upstream declares nothing, ours [cdc, snapshot]
+
 ## Overlay divergences — our declaration differs from the connector's own
 (none)
 
