@@ -76,6 +76,27 @@ class TapstateCompleterTest {
     }
 
     @Test
+    void completesModesNarrowedByAConnectorThisRepositoryDeclaresRatherThanDerives() {
+        // kafka reaches the same narrowing down the other branch: it is not a database connector, and
+        // nothing derived from its capabilities names a mode, so the one mode offered here can only
+        // have come from this repository's own declaration. The mysql case above never touches that
+        // branch - it is trustworthy on its group alone - so the two conditions the narrowing is
+        // written as could be combined wrongly and only this line would notice.
+        assertThat(completer.candidates(List.of("new", "-c", "kafka", "-m", ""), 4))
+                .containsExactly("stream");
+    }
+
+    @Test
+    void completesEveryModeForAConnectorNobodyCouldWorkOutTheModesOf() {
+        // databend is a database connector, so its modes are trustworthy on its group alone - and it
+        // has none, because nothing could be derived and nothing was declared. Trustworthy and empty
+        // at once is the case the narrowing has to fall through rather than honour: narrowed to an
+        // empty set, the option completes to nothing at all on a connector that constrains nothing.
+        assertThat(completer.candidates(List.of("new", "-c", "databend", "-m", ""), 4))
+                .containsExactlyInAnyOrder("cdc", "snapshot", "stream", "api", "file");
+    }
+
+    @Test
     void completesEveryModeWhenNoConnectorConstrainsThem() {
         assertThat(completer.candidates(List.of("new", "--mode", ""), 2))
                 .contains("cdc", "snapshot", "stream", "api", "file");
