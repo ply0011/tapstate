@@ -30,6 +30,10 @@ logs/
 # downloaded connector jars, the plugin cache the server unpacks them into, and the
 # authored workspace. Tens of megabytes of binaries a reader would otherwise commit.
 /connectors/
+# Connector jars staged for a from-source run of the quickstart stack. The directory itself is
+# tracked (it ships a README and the compose file mounts it); the jars a developer drops in for a
+# local run are ~120MB and are not.
+/deploy/quickstart/connectors/*.jar
 /plugins/
 /work/
 

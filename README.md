@@ -78,9 +78,11 @@ not current guarantees.
 ## Try the current preview
 
 Run the preview locally as a Docker Compose stack. The quickstart brings up MySQL,
-the tapstate server, and a MongoDB-backed preview store, then drives a real snapshot
-and CDC flow. One command does the whole flow in a `tapstate-demo` directory it
-creates:
+PostgreSQL, the tapstate server and a MongoDB-backed preview store, then assembles an
+order in one engine and its shipments in the other into a single object that stays
+fresh as either side changes -- something no SQL view or join can produce, because
+neither database can see the other's table. One command does the whole flow in a
+`tapstate-demo` directory it creates:
 
 ```sh
 curl -sSL https://install.tapstate.dev | sh
@@ -99,6 +101,20 @@ Everything it installs stays inside that one directory; tearing down is
 `docker compose down -v` in it, and `rm -rf` of the directory removes the rest.
 See [docs/quickstart-online.md](docs/quickstart-online.md) for the full walkthrough
 and the manual `docker compose` steps behind it.
+
+The recording of this demo, and what each shot is evidence for, is written down shot
+by shot in [docs/demo.md](docs/demo.md) — including what the recording does *not*
+prove, and the fact that its images were pulled beforehand so your first run includes
+a download it does not.
+
+Already have the stack up and just want the workspace back? `tapstate demo` writes
+the same three resources the quickstart generates, and `tapstate demo --print-steps`
+prints the walkthrough they belong to:
+
+```sh
+tapstate demo -w work            # write the demo workspace
+tapstate demo --print-steps      # the walkthrough, without writing anything
+```
 
 > **Preview.** The runtime is single-node and not production-ready. Runtime state is
 > in memory, and a restart replays from the source rather than resuming a durable

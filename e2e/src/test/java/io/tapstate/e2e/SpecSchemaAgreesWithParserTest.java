@@ -143,6 +143,19 @@ class SpecSchemaAgreesWithParserTest {
                 steps:
                   - await: { state: FAILED }
                   - assert: { failure_code: engine.job-failed }
+                """,
+                // The same two words in both scopes, in one specification: bare is the pipeline,
+                // carrying a source is that stream alone.
+                """
+                name: held-stream
+                pipeline: p.tap.yml
+                steps:
+                  - start
+                  - pause: src_shipments
+                  - cdc: { src_orders.orders: insert 1 }
+                  - resume: src_shipments
+                  - pause
+                  - resume
                 """);
     }
 
@@ -170,6 +183,21 @@ class SpecSchemaAgreesWithParserTest {
                 pipeline: p.tap.yml
                 steps:
                   - assert: { doc: { t.o: { where: { id: 1 } } } }
+                """,
+                // A lifecycle word that has no single-stream meaning: a pipeline running with one member
+                // stopped is a different claim, and no product surface offers it.
+                """
+                name: n
+                pipeline: p.tap.yml
+                steps:
+                  - stop: src_shipments
+                """,
+                // A stream-scoped word naming nothing.
+                """
+                name: n
+                pipeline: p.tap.yml
+                steps:
+                  - pause: {}
                 """,
                 // A verb the product does not have.
                 """

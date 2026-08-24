@@ -34,6 +34,7 @@ cli.alias-link-failed
 cli.alias-name-taken
 cli.artifact-exists
 cli.connect-failed
+cli.demo-workspace-exists
 cli.if-match-needs-one-resource
 cli.kind-dir-mismatch
 cli.mcp-unavailable

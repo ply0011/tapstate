@@ -69,6 +69,14 @@ final class PostgresEndpoints implements Endpoints {
         // table exists and holds nothing, and a wait for the first write is a wait on a table that is
         // already there. Explicit values can never be empty, so an empty seed is the generated shape.
         execute(connection, createTable(table, rows.isEmpty() ? SeedRows.generatedShape() : rows.getFirst()));
+        // The whole previous row on an update or a delete, not the key alone, which is all PostgreSQL
+        // sends unless it is told otherwise. A change to a row that is embedded somewhere has to be
+        // placeable by what the row *was*, not only by what it became - and a delete has nothing else at
+        // all. Without this a specification can add a child row and watch it arrive, then delete it and
+        // watch nothing happen, with every other reading healthy. Set on the seed rather than left to
+        // each case: two bespoke witnesses were already doing it by hand, which is a step a declarative
+        // example has no way to take.
+        execute(connection, "ALTER TABLE " + quoted(table) + " REPLICA IDENTITY FULL");
         if (!rows.isEmpty()) {
             insertRows(connection, table, rows);
         }

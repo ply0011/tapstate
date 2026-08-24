@@ -54,30 +54,54 @@ fetch() {
     fi
 }
 
-# One collection's row count in the target, as a plain integer. A read that fails, or answers anything
-# that is not a number, counts as zero: this is polled while the stack is still settling, and a
+# One number read out of the managed store, as a plain integer. A read that fails, or answers anything
+# that is not a number, counts as zero: these are polled while the stack is still settling, and a
 # half-started mongosh has to read as "not there yet" rather than abort the run.
-count_target() {   # $1 = collection name
+read_number() {   # $1 = a mongosh expression evaluating to a number
     _c="$(docker compose exec -T mongo mongosh --quiet \
         'mongodb://mongo:27017/views?directConnection=true' \
-        --eval "db.$1.countDocuments()" 2>/dev/null | tr -d '[:space:]')"
+        --eval "$1" 2>/dev/null | tr -d '[:space:]')"
     case "$_c" in ''|*[!0-9]*) _c=0 ;; esac
     printf '%s' "$_c"
 }
 
-# Generate the demo workspace: a source, a target, and the pipeline joining them, ready to apply. The
-# addresses are compose service names because the connector runs inside the server container, where
-# loopback is the server itself. The heredocs are quoted so $customer stays the literal DSL rename token
-# it is, not a shell variable. This mirrors the online walkthrough's sample on purpose -- one sample, not
-# two that drift. The pipeline carries every change through, deletes included: a map leaves a delete (which
-# has no after image) untouched, so the sink removes the row by key. The decimal `amount` column is only
-# ever passed through, never named in a CEL: numeric columns have no CEL overload in this preview.
+# How many orders have been assembled and written.
+count_orders() {
+    read_number 'db.order_state.countDocuments()'
+}
+
+# How many shipments are sitting inside those orders, added up across every document.
+#
+# This is the reading that sees the second engine, and counting documents is not: an assembly wired to
+# MySQL alone still writes five orders, each with an empty array, and a check on the document count
+# calls that a success. What only the second engine can produce is elements inside the arrays, so that
+# is what is counted. An order with no shipments has no array at all, hence the coalesce - a missing
+# field is zero elements, not an error that reads as zero rows arrived.
+count_embedded_shipments() {
+    # The $-prefixed words here are Mongo aggregation operators and a field path, not shell expansions,
+    # so the quoting is single on purpose.
+    # shellcheck disable=SC2016
+    read_number 'db.order_state.aggregate([{$group:{_id:null,n:{$sum:{$size:{$ifNull:["$shipments",[]]}}}}}]).toArray()[0]?.n ?? 0'
+}
+
+# Generate the demo workspace: two sources on different engines, and the one pipeline that assembles
+# them into a single object. The addresses are compose service names because the connector runs inside
+# the server container, where loopback is the server itself.
+#
+# There is no target here, and that is the point of the shape rather than an omission: declaring a view
+# is the whole instruction to materialize it, so the pipeline names nowhere to write and the assembled
+# documents land in the managed store the deployment already runs. A serve block would say where to
+# write, which is a different thing - an exit into somebody else's system, not the query face.
+#
+# The two halves cannot be joined by either database: orders live in MySQL, shipments in PostgreSQL,
+# and neither engine can see the other's table. That is what makes this worth demonstrating - it is not
+# a view and not a join, and no single SQL statement anywhere can produce it.
 generate_workspace() {
     mkdir -p work/source work/pipeline
-    cat > work/source/db_src.tap.yml <<'YAML'
+    cat > work/source/orders_db.tap.yml <<'YAML'
 version: tapstate/v1
 kind: source
-id: db_src
+id: orders_db
 connector: mysql
 config: { host: mysql, port: 3306, database: appdb, username: root, password: secret }
 mode: cdc
@@ -88,63 +112,58 @@ YAML
     # `username`, and a table is addressed by schema as well as by database. `mode: cdc` is what makes a
     # row inserted after the stack is up cross at all - a snapshot-only source would carry the seeded
     # rows and then nothing, which reads from outside as a demo that works.
-    cat > work/source/db_shipments.tap.yml <<'YAML'
+    cat > work/source/fulfillment_db.tap.yml <<'YAML'
 version: tapstate/v1
 kind: source
-id: db_shipments
+id: fulfillment_db
 connector: postgres
 config: { host: postgres, port: 5432, database: appdb, schema: public, user: postgres, password: secret }
 mode: cdc
 tables: [ shipments ]
 YAML
-    cat > work/pipeline/sync_orders.tap.yml <<'YAML'
+    # One pipeline over both sources. `from:` names each side under a short alias; the root is the order,
+    # and each shipment is placed into an array on the order it belongs to.
+    #
+    # Three settings here are load-bearing and none is decoration. `arrayKey` is how an element inside
+    # the array is identified, so a shipment that is later updated or deleted moves the element it
+    # belongs to rather than appending a second one. `primary_key` is how the materialized document is
+    # addressed, and the run refuses without it. And `read_mode: snapshot_and_cdc` is what makes both
+    # halves live: the seeded rows arrive by snapshot, and everything typed afterwards - into either
+    # engine - arrives by change stream.
+    cat > work/pipeline/order_pipeline.tap.yml <<'YAML'
 version: tapstate/v1
 kind: pipeline
-id: sync_orders
-source: db_src
+id: order_pipeline
+source: [ orders_db, fulfillment_db ]
 settings: { read_mode: snapshot_and_cdc }
 transforms:
-  - id: shape_orders
-    from: [ orders ]
-    type: map
-    fields:
-      customer_name: $customer
-      label: "=after.customer + ' <' + src + '>'"
+  - id: assemble
+    type: nest
+    from: { order: orders, shipment: shipments }
+    root:
+      from: order
+      key: [ id ]
+      embed:
+        - { from: shipment, on: { order_id: id }, as: array, path: shipments, arrayKey: [ id ] }
 view:
   id: order_state
-  from: shape_orders
+  from: assemble
   primary_key: id
-YAML
-    # The second engine's half, into the same target: two engines, one store. Assembling the two
-    # into a single object is a separate thing and is not this - here they simply both arrive, which is
-    # what makes "insert a row in PostgreSQL and watch it appear" something a reader can actually do.
-    #
-    # The map names only `carrier` and `status`, both text columns. Numeric columns have no CEL overload
-    # in this preview, so `id` and `order_id` are passed through untouched rather than named - the same
-    # rule the orders pipeline follows for its decimal `amount`.
-    cat > work/pipeline/sync_shipments.tap.yml <<'YAML'
-version: tapstate/v1
-kind: pipeline
-id: sync_shipments
-source: db_shipments
-settings: { read_mode: snapshot_and_cdc }
-transforms:
-  - id: shape_shipments
-    from: [ shipments ]
-    type: map
-    fields:
-      route: "=after.carrier + ' -> ' + after.status"
-serve:
-  from: shape_shipments
-  sync:
-    - source: views
 YAML
 }
 
-# Closing instructions: how to watch the pipeline, exercise CDC, and remove everything. The teardown is
-# printed because "back to a clean machine" is only honest if the images are called out too. The CDC
-# section walks insert, update and delete -- the pipeline carries all three -- and each read retries for a
-# second or two so a change still in flight is never misread as a change that did not happen.
+# Closing instructions: how to watch the assembled object, exercise CDC on both engines, and remove
+# everything. The teardown is printed because "back to a clean machine" is only honest if the images are
+# called out too.
+#
+# Every wait printed here is bounded, and that is not tidiness. These lines are copied and pasted by
+# somebody the script will never hear from again: an unbounded `until` returns in a second when the
+# change arrives and hangs forever, silently, when it does not - and a recording of this demo cannot
+# show that, because on the machine doing the recording it always returns. The bound is generous, taken
+# for the slowest healthy machine rather than the fastest, so a normal run is never reported as a
+# failure; when it does run out it says what was actually observed, which is what separates "nothing is
+# arriving" from "this machine is slow": a count still at its starting value is the first, a count that
+# moved and did not finish is the second.
 print_next_steps() {
     demo_dir="$(basename "$PWD")"
     # Whole-directory removal is only ever offered for a directory this script made. Run in place --
@@ -158,37 +177,61 @@ print_next_steps() {
     tapstate tap versions/ connectors/ *-connector.jar mysql-init/ postgres-init/ work/ .env docker-compose.yml"
     fi
     uri="mongodb://mongo:27017/views?directConnection=true"
+    # How long a pasted wait keeps trying. Taken for the slowest healthy machine, not the fastest: a
+    # single change crosses in about a second here, so a minute is not a guess at the duration but a
+    # ceiling far above it - small enough that nobody sits in front of a hung terminal, large enough
+    # that a loaded laptop is never told its working demo failed.
+    cdc_wait_seconds=60
     cat <<EOF
 quickstart: pipeline started. The stack is running.
 
-Watch it (from this directory):
-  ./tapstate -w work        then: connect http://127.0.0.1:8080 ; login admin ; status sync_orders --watch
+What you have: one object per order, assembled out of two different databases. The orders are in
+MySQL, their shipments are in PostgreSQL, and neither engine can see the other's table -- so this is
+not a view and not a join. Tapstate keeps it fresh from both sides at once.
 
-See change-data-capture: change the source in MySQL, watch the view in MongoDB follow (run in this
-directory). A change reaches the target in about a second, so each read waits for it rather than guessing.
+Look at it (from this directory):
+  ./tapstate -w work        then: connect http://127.0.0.1:8080 ; login admin
+  then, at the prompt:
+    show collections                      three: the two sources, and views.order_state
+    views.order_state.find({id:1})         one order, with its shipments inside it
+    watch views.order_state {id:1}         the same object, redrawn as it changes
+    status order_pipeline --watch          the pipeline behind it
 
-  # insert a row, then wait for it to appear in the target
+See change-data-capture: change either database, watch the same object follow. Each wait below gives
+up after ${cdc_wait_seconds}s, says what it saw, and answers non-zero -- so pasted into a script it
+fails rather than passing quietly. It ends in \`false\` and not \`exit\` on purpose: \`exit\` would close
+the shell you are standing in.
+
+  # add a shipment in PostgreSQL -- it joins the array on order 1, which already has two
+  docker compose exec postgres psql -U postgres -d appdb -c "INSERT INTO shipments VALUES (7,1,'ups','pending');"
+  i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) >= 3 ? 0 : 1)'; do
+    i=\$((i+1)); [ "\$i" -lt ${cdc_wait_seconds} ] || { echo "not assembled after ${cdc_wait_seconds}s; order 1 now holds \$(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.shipments?.length ?? 0)') shipments (it started with 2). Look at: docker compose logs --tail 50 server"; break; }
+    sleep 1
+  done; [ "\$i" -lt ${cdc_wait_seconds} ] || false
+  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:1}).pretty()'
+
+  # change the order itself in MySQL -- the parent column moves, the array stays where it is
+  docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='alicia' WHERE id=1;"
+  i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.findOne({id:1})?.customer=="alicia"?0:1)'; do
+    i=\$((i+1)); [ "\$i" -lt ${cdc_wait_seconds} ] || { echo "not updated after ${cdc_wait_seconds}s; order 1 still reads \$(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.customer ?? "nothing")'). Look at: docker compose logs --tail 50 server"; break; }
+    sleep 1
+  done; [ "\$i" -lt ${cdc_wait_seconds} ] || false
+  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:1}).pretty()'
+
+  # remove that shipment again -- the array shrinks back, in the same object
+  docker compose exec postgres psql -U postgres -d appdb -c "DELETE FROM shipments WHERE id=7;"
+  i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) <= 2 ? 0 : 1)'; do
+    i=\$((i+1)); [ "\$i" -lt ${cdc_wait_seconds} ] || { echo "still there after ${cdc_wait_seconds}s; order 1 holds \$(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.shipments?.length ?? 0)') shipments. Look at: docker compose logs --tail 50 server"; break; }
+    sleep 1
+  done; [ "\$i" -lt ${cdc_wait_seconds} ] || false
+
+  # and a whole new order in MySQL, which arrives with no shipments yet
   docker compose exec mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
-  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?0:1)'; do sleep 1; done
+  i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?0:1)'; do
+    i=\$((i+1)); [ "\$i" -lt ${cdc_wait_seconds} ] || { echo "order 6 did not arrive after ${cdc_wait_seconds}s; the view holds \$(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.countDocuments())') orders (it started with 5). Look at: docker compose logs --tail 50 server"; break; }
+    sleep 1
+  done; [ "\$i" -lt ${cdc_wait_seconds} ] || false
   docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:6}).pretty()'
-
-  # update it, and watch the mapped label follow the change
-  docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET customer='franky' WHERE id=6;"
-  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:6})||{}).customer_name=="franky"?0:1)'; do sleep 1; done
-  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:6}).pretty()'
-
-  # delete it, and watch it leave the target too
-  docker compose exec mysql mysql -uroot -psecret appdb -e "DELETE FROM orders WHERE id=6;"
-  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?1:0)'; do sleep 1; done
-  echo "row 6 is gone from MongoDB, too"
-
-The second engine, the same way. This is the one worth trying if you only try one: a different
-database, reached by a different change mechanism, arriving in the same target collection.
-
-  # insert a shipment in PostgreSQL, then wait for it to appear in the target
-  docker compose exec postgres psql -U postgres -d appdb -c "INSERT INTO shipments VALUES (7,4,'ups','pending');"
-  until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.shipments.countDocuments({id:7})?0:1)'; do sleep 1; done
-  docker compose exec mongo mongosh --quiet "$uri" --eval 'db.shipments.find({id:7}).pretty()'
 
 Reach the store from your own machine (optional -- the reads above go through the container):
   The store's port is not published, so nothing on your host can see it by default. To point a GUI or
@@ -380,7 +423,7 @@ main() {
     # the one failure that cascades -- every verb after it reports cli.not-authenticated, so the real
     # cause ends up at the top of a screen of consequences.
     admin_pw="$(sed -n 's/^TAPSTATE_ADMIN_PASSWORD=//p' .env)"
-    repl_out="$(printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\nregister ../postgres-connector.jar\napply source/db_src.tap.yml\napply source/db_shipments.tap.yml\ndiscover-schema db_src\ndiscover-schema db_shipments\napply\nstart sync_orders\nstart sync_shipments\nexit\n' "$admin_pw" \
+    repl_out="$(printf 'connect http://127.0.0.1:8080\nlogin admin\n%s\nregister ../mysql-connector.jar\nregister ../mongodb-connector.jar\nregister ../postgres-connector.jar\napply source/orders_db.tap.yml\napply source/fulfillment_db.tap.yml\ndiscover-schema orders_db\ndiscover-schema fulfillment_db\napply\nstart order_pipeline\nexit\n' "$admin_pw" \
         | ./tapstate -w work 2>&1)"
     printf '%s\n' "$repl_out"
     case "$repl_out" in
@@ -411,17 +454,17 @@ main() {
     # Snapshot verification, printed automatically: the demo's payoff is a real row count in the target,
     # not an "it should have worked". A fresh snapshot of the seeded rows is quick, but the read still
     # retries so a slow first run is not misreported as an empty target.
-    echo 'quickstart: waiting for the snapshot to reach the target'
+    echo 'quickstart: waiting for the two engines to be assembled into one object'
     seeded_orders=5      # rows the demo seed puts in MySQL
-    seeded_shipments=6   # rows the demo seed puts in PostgreSQL
-    # Both halves are waited on, and both are named if the wait runs out. A demo wired to only one of
-    # its two engines fills that engine's collection and leaves the other empty, so a check on a single
-    # count reports it as success - and the half left out would be the second engine, which is the whole
-    # reason there is a second one.
+    seeded_shipments=6   # rows the demo seed puts in PostgreSQL, spread unevenly across four orders
+    # Both halves are waited on, and both are named if the wait runs out. The second number is the one
+    # that sees the second engine: an assembly wired to MySQL alone writes all five orders, each with an
+    # empty array, so a check on the document count alone reports that as a success - and the half left
+    # out would be the second engine, which is the whole reason there is a second one.
     orders=0; shipments=0; i=0
     while [ "$i" -lt 30 ]; do
-        orders="$(count_target order_state)"
-        shipments="$(count_target shipments)"
+        orders="$(count_orders)"
+        shipments="$(count_embedded_shipments)"
         [ "$orders" -ge "$seeded_orders" ] && [ "$shipments" -ge "$seeded_shipments" ] && break
         i=$((i + 1)); sleep 2
     done
@@ -432,8 +475,8 @@ main() {
     # only evidence the script has that a pipeline is moving data. The stack is left standing rather
     # than torn down -- the server log is the next thing to read, and a teardown would take it along.
     { [ "$orders" -ge "$seeded_orders" ] && [ "$shipments" -ge "$seeded_shipments" ]; } \
-        || die "the snapshot did not reach the target (orders $orders of $seeded_orders, shipments $shipments of $seeded_shipments); inspect it with: docker compose logs server"
-    printf 'quickstart: the target now holds %s orders from MySQL and %s shipments from PostgreSQL\n' \
+        || die "the two engines were not assembled (orders $orders of $seeded_orders, embedded shipments $shipments of $seeded_shipments); inspect it with: docker compose logs server"
+    printf 'quickstart: %s orders from MySQL, each carrying its shipments from PostgreSQL -- %s of them, in one object per order\n' \
         "$orders" "$shipments"
 
     print_next_steps

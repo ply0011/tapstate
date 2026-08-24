@@ -47,7 +47,7 @@ setup:
     shipments: { kind: postgres }
     store: { kind: mongo }
   connectors: [mysql, postgres, mongodb]
-  apply: [src_orders.tap.yml, src_shipments.tap.yml, warehouse.tap.yml, pipeline.tap.yml]
+  apply: [src_orders.tap.yml, src_shipments.tap.yml, views.tap.yml, pipeline.tap.yml]
   discover: [src_orders, src_shipments]
 pipeline: pipeline.tap.yml
 seed:
@@ -66,7 +66,7 @@ seed:
       - { id: 6, order_id: 3, carrier: fedex }
 steps:
   - start
-  - await: { count: { warehouse.order_state: 3 } }
-  - await: { doc: { warehouse.order_state: { where: { id: 1 }, expect: { customer: alice }, size: { shipments: 2 } } } }
-  - await: { doc: { warehouse.order_state: { where: { id: 2 }, expect: { customer: bob }, size: { shipments: 1 } } } }
-  - await: { doc: { warehouse.order_state: { where: { id: 3 }, expect: { customer: carol }, size: { shipments: 3 } } } }
+  - await: { count: { views.order_state: 3 } }
+  - await: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alice }, size: { shipments: 2 } } } }
+  - await: { doc: { views.order_state: { where: { id: 2 }, expect: { customer: bob }, size: { shipments: 1 } } } }
+  - await: { doc: { views.order_state: { where: { id: 3 }, expect: { customer: carol }, size: { shipments: 3 } } } }

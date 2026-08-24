@@ -26,8 +26,8 @@ import java.util.function.Supplier;
  */
 @Command(name = "tapstate", mixinStandardHelpOptions = true, version = Cli.VERSION,
         subcommands = {
-                ValidateCmd.class, NewCmd.class, ExplainCmd.class, LsCmd.class, DescCmd.class, McpCmd.class,
-                AliasCmd.class},
+                ValidateCmd.class, NewCmd.class, DemoCmd.class, ExplainCmd.class, LsCmd.class,
+                DescCmd.class, McpCmd.class, AliasCmd.class},
         // the second line is indented by hand under the "Usage: " heading picocli prints before the first
         customSynopsis = {
                 "tapstate [LAUNCH]                   open a session (interactive)",
@@ -95,7 +95,8 @@ public final class Cli implements Runnable {
      * The connected-verb derivation below and the registration-vs-whitelist guard test both read it,
      * so the declared list can never drift from the verbs actually wired up.
      */
-    static final List<String> OFFLINE_VERBS = List.of("validate", "new", "explain", "ls", "desc");
+    static final List<String> OFFLINE_VERBS =
+            List.of("validate", "new", "demo", "explain", "ls", "desc");
 
     /**
      * How this face spells each operation it projects: operation id → verb name. The spelling is not

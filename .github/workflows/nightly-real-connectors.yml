@@ -72,6 +72,20 @@ jobs:
           -Dtest=ZzzNoSuchSurefireSelector -Dsurefire.failIfNoSpecifiedTests=false
           -Dit.test=PublishedExamplesIT,RealMysqlToMongo*IT,Nest*IT,DataBrowser*IT,Watch*IT
           -Dfailsafe.failIfNoSpecifiedTests=false
+      # The scene each failing example left behind, before its containers went away. This lane is where
+      # the examples actually run - the default CI build skips them for want of connector jars - so it is
+      # the lane whose failures are worth a scene, and the one where a second run to add a print statement
+      # costs another connector build. Uploaded on failure only, and the collector writes no address: these
+      # artifacts leave a public repository and a connection uri carries its credentials inside it.
+      - name: The scene where an end-to-end case failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-scenes
+          path: e2e/target/failure-scenes/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Witness gate
         # Aggregate counts cannot see a witness that never ran; this reads the manifest name by name
         # against the ledger the sweep wrote, and fails on absence. It covers the swept examples only -
