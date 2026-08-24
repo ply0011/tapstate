@@ -62,6 +62,23 @@ final class DemoCmd implements Callable<Integer> {
                     "pipeline/order_pipeline.tap.yml");
 
     /**
+     * The read-shell calls step 4 shows, each with the note printed beside it.
+     *
+     * <p>Held apart from the prose rather than written into it, so that a test can parse the command
+     * exactly as printed. This is not tidiness: a wrong command here is indistinguishable from a right
+     * one to anybody reading the file, and it reaches a stranger as an error on the first thing they
+     * were told to type. One shipped that way - the watched row was written as a {@code find} call on
+     * the collection, which the shell reads as a collection whose name contains the call.
+     */
+    static final List<String[]> READS = List.of(
+            new String[] {"show collections", "one collection: views.order_state"},
+            new String[] {"views.order_state.find({id:1})", "one order, with its shipments inside it"},
+            new String[] {"watch views.order_state {id:1}", "the same object, redrawn as it changes"});
+
+    /** Column the notes beside step 4's calls start at, so they line up under each other. */
+    private static final int NOTE_COLUMN = 38;
+
+    /**
      * The walkthrough, in the order the recording follows it. Kept here rather than in a document
      * because this is the copy a user can ask for at any moment, on the machine they are on.
      */
@@ -70,15 +87,14 @@ final class DemoCmd implements Callable<Integer> {
             "     curl -sSL https://install.tapstate.dev | sh",
             "2. Write the demo workspace - orders in MySQL, shipments in PostgreSQL:",
             "     tapstate demo -w work",
-            "3. Go online and apply it:",
+            "3. Go online, register the connectors this demo reads, and apply it:",
             "     tapstate -w work   then: connect http://127.0.0.1:8080 ; login admin",
+            "     register ../mysql-connector.jar ; register ../postgres-connector.jar",
+            "     register ../mongodb-connector.jar",
             "     apply source/orders_db.tap.yml ; apply source/fulfillment_db.tap.yml",
             "     discover-schema orders_db ; discover-schema fulfillment_db ; apply",
             "     start order_pipeline",
             "4. Look at what was assembled:",
-            "     show collections                       one collection: views.order_state",
-            "     views.order_state.find({id:1})         one order, with its shipments inside it",
-            "     watch views.order_state.find({id:1})   the same object, redrawn as it changes",
             "5. Change either database and watch that object follow:",
             "     docker compose exec postgres psql -U postgres -d appdb \\",
             "       -c \"INSERT INTO shipments VALUES (7,1,'ups','pending');\"",
@@ -168,15 +184,32 @@ final class DemoCmd implements Callable<Integer> {
         }
     }
 
+    /** The walkthrough as printed: the prose, with step 4's calls rendered under their heading. */
+    static List<String> walkthrough() {
+        List<String> lines = new ArrayList<>();
+        for (String step : STEPS) {
+            lines.add(step);
+            if (step.startsWith("4. ")) {
+                READS.forEach(read -> lines.add("     " + pad(read[0]) + read[1]));
+            }
+        }
+        return lines;
+    }
+
+    private static String pad(String call) {
+        return call.length() >= NOTE_COLUMN ? call + "  " : call + " ".repeat(NOTE_COLUMN - call.length());
+    }
+
     private void emitSteps() {
         PrintWriter out = CliIo.out(spec);
+        List<String> lines = walkthrough();
         switch (output) {
-            case JSON -> out.println(JsonOut.write(Map.of("status", "ok", "steps", STEPS)));
-            case YAML -> out.println(YamlOut.write(Map.of("status", "ok", "steps", STEPS)));
+            case JSON -> out.println(JsonOut.write(Map.of("status", "ok", "steps", lines)));
+            case YAML -> out.println(YamlOut.write(Map.of("status", "ok", "steps", lines)));
             default -> {
                 out.println("The demo, end to end:");
                 out.println();
-                STEPS.forEach(out::println);
+                lines.forEach(out::println);
             }
         }
         out.flush();

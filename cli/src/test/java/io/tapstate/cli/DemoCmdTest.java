@@ -126,6 +126,103 @@ class DemoCmdTest {
                 .doesNotExist();
     }
 
+    /**
+     * The walkthrough prints commands for a person to type, and a wrong one is not caught by anything
+     * that reads it: it looks like a command. This one was wrong in the shipped text - it wrote the
+     * watched row as {@code watch views.order_state.find({id:1})}, which the read shell accepts as a
+     * *collection literally named* {@code order_state.find({id:1})} and the server then refuses. So the
+     * line is parsed here by the same reader the shell uses, and held to naming the collection the demo
+     * materializes.
+     */
+    @Test
+    void theWatchLineNamesACollectionRatherThanACallOnOne() {
+        String line = DemoCmd.READS.stream()
+                .map(read -> read[0])
+                .filter(l -> l.startsWith("watch "))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the walkthrough no longer shows the live view"));
+
+        DataBrowserCall parsed = readShellCall(line);
+
+        assertThat(parsed).isInstanceOf(DataBrowserCall.Live.class);
+        DataBrowserCall.Live live = (DataBrowserCall.Live) parsed;
+        assertThat(live.sourceId()).isEqualTo("views");
+        assertThat(live.collection())
+                .as("a collection is a name; a call on one belongs after it, as the filter")
+                .isEqualTo("order_state");
+        assertThat(live.filter())
+                .as("the demo watches one order, not the whole collection")
+                .isNotNull();
+    }
+
+    /**
+     * Every read the walkthrough prints has to be one the read shell can read. The failure this guards
+     * is silent in review - a malformed call is still a plausible-looking line - and it reaches a
+     * stranger as an error on the first thing they were told to type.
+     */
+    @Test
+    void everyReadTheWalkthroughPrintsIsOneTheShellAccepts() {
+        List<DataBrowserCall> reads = DemoCmd.READS.stream()
+                .map(read -> readShellCall(read[0]))
+                .toList();
+
+        assertThat(reads).as("the walkthrough shows the read shell at all").isNotEmpty();
+        assertThat(reads)
+                .as("each of these is printed for somebody to type; the shell has to take it")
+                .noneMatch(DataBrowserCall.Malformed.class::isInstance)
+                .doesNotContainNull();
+    }
+
+    /** What is printed is what is checked: the calls reach the page through this list, not beside it. */
+    @Test
+    void theCallsCheckedAboveAreTheOnesPrinted() {
+        String printed = String.join("\n", DemoCmd.walkthrough());
+
+        assertThat(DemoCmd.READS).isNotEmpty();
+        DemoCmd.READS.forEach(read -> assertThat(printed).contains(read[0]).contains(read[1]));
+    }
+
+    /**
+     * A demo whose connectors are never registered fails on its first apply, and the walkthrough was
+     * missing that step - found by a person following it on a real machine, which is the only place it
+     * could have been found.
+     */
+    @Test
+    void theWalkthroughRegistersTheConnectorsItReads() {
+        String walkthrough = String.join("\n", commandLines());
+
+        assertThat(walkthrough).contains("register ").contains("mysql-connector.jar")
+                .contains("postgres-connector.jar").contains("mongodb-connector.jar");
+        assertThat(walkthrough.indexOf("register "))
+                .as("registering comes before applying, or the apply is refused")
+                .isLessThan(walkthrough.indexOf("apply source/"));
+    }
+
+    /**
+     * One printed line as the read shell would take it, or null when the shell has no claim on it.
+     * The two live views are read by their own entry point because the verb is matched before the
+     * operands are - the same split the REPL makes.
+     */
+    private static DataBrowserCall readShellCall(String line) {
+        for (String verb : List.of("watch", "tail")) {
+            if (line.startsWith(verb + " ")) {
+                return DataBrowserCall.parseLive(verb, line.substring(verb.length() + 1).trim());
+            }
+        }
+        return DataBrowserCall.parse(line);
+    }
+
+    /** The indented command lines of the printed walkthrough, trimmed, prose lines dropped. */
+    private static List<String> commandLines() {
+        Run r = run("demo", "--print-steps");
+        assertThat(r.code()).isZero();
+        return r.out().lines()
+                .filter(l -> l.startsWith("     "))
+                .map(String::trim)
+                .filter(l -> !l.isBlank())
+                .toList();
+    }
+
     @Test
     void reportsAStructuredEnvelopeForScriptsAndAgents(@TempDir Path dir) {
         Run r = run("demo", "-w", dir.toString(), "-o", "json");
