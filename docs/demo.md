@@ -51,9 +51,8 @@ Timestamps are filled in from the finished recording; they are also what the REA
 | 5 | 00:34 | `watch views.order_state {id:1}` | The same object, held on screen and redrawn in place | Criterion 5 — the live view starts and holds |
 | 6 | 00:40 | *(second pane)* `INSERT INTO shipments …` in PostgreSQL | The watched object gains an array element **while you are looking at it** | Criteria 2 and 5 — a change in one engine ripples into the object rooted in the other |
 | 7 | 00:48 | *(second pane)* `UPDATE orders SET customer=… ` in MySQL | The same object's own column flips, and the array stays where it is | Criterion 2 — both directions ripple, and neither rebuild drops the other's half |
-| 8 | 00:56 | Cut the fulfillment database off from the server, write two rows into it, reconnect it | The object does not move while the stream is cut, then takes both rows at once when it is reconnected — and is correct afterwards | Criterion 9 — **see the two notes below: what this proves, and why this shot needs a rehearsal** |
-| 9 | 01:12 | An MCP client asking "current state of order 1?" | The agent answers out of the same materialized object, through `data_browser_collections` / `data_browser_find` | Criterion 6 — the state-query MCP reaches the same object |
-| 10 | 01:20 | — | Closing frame: what this was, and the one-line install again | — |
+| 8 | 01:12 | An MCP client asking "current state of order 1?" | The agent answers out of the same materialized object, through `data_browser_collections` / `data_browser_find` | Criterion 6 — the state-query MCP reaches the same object |
+| 9 | 01:20 | — | Closing frame: what this was, and the one-line install again | — |
 
 ## Which shots a test is watching, and which are only watched here
 
@@ -63,28 +62,31 @@ shows. Three do not, and saying which is the point of writing this down:
 | Shot | Watched by |
 |---|---|
 | 1, 3, 4, 6, 7 | The golden-path end-to-end case, which runs the same pipeline file this demo generates |
-| 8 | The held-stream end-to-end case, on the terms in the next section |
 | 2, 5 | **Nothing automated.** A test can assert that `watch` sent the right escape sequences; only a person can see whether the screen redraws in place. This is what the [browsing live data by hand](tutorials/browsing-live-data-by-hand/) walkthrough is for |
-| 9 | **Partly.** The MCP read tools, and their answers following newly applied sources without restarting the session, are covered. That the agent reaches *this demo's* assembled object is shown here and nowhere else |
-| 10 | Nothing. It is a closing frame |
+| 8 | **Partly.** The MCP read tools, and their answers following newly applied sources without restarting the session, are covered. That the agent reaches *this demo's* assembled object is shown here and nowhere else |
+| 9 | Nothing. It is a closing frame |
 
-## Shot 8 is the one that needs a rehearsal
+## The shot that is not here: holding one stream
 
-**There is no command that pauses one source.** A pipeline is a single job and a job suspends whole, so
-`pause` takes a pipeline and stops everything — which is the opposite of what this shot is about. The
-end-to-end case behind it holds the stream at a level below the product, in the test harness, and that
-instrument does not exist outside it.
+An earlier draft of this page had a ninth shot in which one source is held while the other keeps
+running — the demo's evidence for "a stream arriving late does not change the result". **It is not in
+the recording, and this is the reason.**
 
-So this shot is staged at the level a person can reach: the fulfillment database is cut off from the
-server while still accepting writes of its own, and then reconnected. **Rehearse it before recording.**
-Two things have to be true and neither is obvious in advance: that the database still takes writes while
-cut off, and that the connector picks up where it left off instead of failing the pipeline. If the second
-does not hold, this shot changes — do not record around it, and do not describe it as the same thing the
-end-to-end case does. It is a stand-in for that instrument, not the instrument.
+There is no command that pauses one source. A pipeline is a single job and a job suspends whole, so
+`pause` takes a pipeline and stops everything. The closest a person can get from outside is to cut that
+database off from the server, and that was tried on a real stack: the first half worked — the other
+engine's changes kept arriving, on screen, while the cut engine's did not — and then the pipeline
+failed, `connector.capture-failed`. A connector that loses its database fails the run rather than
+waiting it out, which is defensible behaviour and fatal to this as a demonstration.
 
-## What shot 8 proves, and what it does not
+So the claim keeps its evidence, and the evidence is a test rather than a shot: the end-to-end case
+`holding-one-stream-does-not-stop-the-other` holds the stream below the product, where a hold can be a
+hold instead of an outage, and it runs on both fidelity tiers. **The recording does not demonstrate
+this, and no shot here should be read as if it did.**
 
-It proves two things: **only the named stream stops** — the other one keeps moving on screen, which is
+## What the held-stream case proves, and what it does not
+
+That case proves two things: **only the named stream stops** — the other one keeps moving on screen, which is
 the whole reason a per-stream hold exists — and **nothing written during the hold is lost**: the rows
 were already in PostgreSQL and could not cross, and letting go delivers them onto the order they
 belong to.
@@ -106,4 +108,4 @@ Two carriers, because they are for different readers:
   the commands out of it and paste them, which no video allows.
 
 The README's index under the recording points at the shots above: `00:24 the assembled object` /
-`00:40 a change in either engine ripples` / `00:56 holding one stream`.
+`00:40 a change in either engine ripples` / `01:12 an agent reads the same object`.
