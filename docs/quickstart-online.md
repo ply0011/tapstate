@@ -511,9 +511,10 @@ Change either database and watch the same object follow. This is the part worth 
 hand: the two halves are in engines that cannot see each other, and both of them reach one
 document.
 
-Each wait below gives up after 60 tries and says what it saw. That matters more than it
-looks: an unbounded wait returns in a second when the change arrives and hangs forever, in
-silence, when it does not.
+Each wait below gives up after 60 tries, says what it saw, and answers non-zero. That matters more
+than it looks: an unbounded wait returns in a second when the change arrives and hangs forever, in
+silence, when it does not — and a bounded one that gave up quietly would pass in any script that
+pasted it. The give-up is `false` rather than `exit` so that a shell you are standing in survives it.
 
 ```sh
 uri="mongodb://mongo:27017/views?directConnection=true"
@@ -523,7 +524,7 @@ docker compose exec postgres psql -U postgres -d appdb -c "INSERT INTO shipments
 i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) >= 3 ? 0 : 1)'; do
   i=$((i+1)); [ "$i" -lt 60 ] || { echo "not assembled after 60s; order 1 holds $(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.shipments?.length ?? 0)') shipments (it started with 2). Look at: docker compose logs --tail 50 server"; break; }
   sleep 1
-done
+done; [ "$i" -lt 60 ] || false
 docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:1}).pretty()'
 
 # the order itself changes in MySQL: the parent column moves, the array stays put
@@ -531,14 +532,14 @@ docker compose exec mysql mysql -uroot -psecret appdb -e "UPDATE orders SET cust
 i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.findOne({id:1})?.customer=="alicia"?0:1)'; do
   i=$((i+1)); [ "$i" -lt 60 ] || { echo "not updated after 60s; order 1 still reads $(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.customer ?? "nothing")'). Look at: docker compose logs --tail 50 server"; break; }
   sleep 1
-done
+done; [ "$i" -lt 60 ] || false
 
 # and removing that shipment shrinks the array back, in the same document
 docker compose exec postgres psql -U postgres -d appdb -c "DELETE FROM shipments WHERE id=7;"
 i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) <= 2 ? 0 : 1)'; do
   i=$((i+1)); [ "$i" -lt 60 ] || { echo "still there after 60s. Look at: docker compose logs --tail 50 server"; break; }
   sleep 1
-done
+done; [ "$i" -lt 60 ] || false
 ```
 
 A new order inserted into MySQL arrives with no shipments yet, and gains them as the

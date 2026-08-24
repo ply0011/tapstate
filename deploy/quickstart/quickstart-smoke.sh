@@ -561,6 +561,17 @@ if printf '%s' "$RUN_OUT" | grep -q 'docker compose logs --tail 50 server'; then
 else
   bad "a wait can run out with nothing actionable printed: $RUN_OUT"
 fi
+# ...and it has to answer non-zero, or the same lines pasted into a script pass having waited out a
+# change that never came. `false` rather than `exit`: the reader may be standing in that shell, and
+# `exit` would close it. Counted against the loops so a bound left without one is not summed away.
+# The $i here is the reader's shell variable in the printed text, not this script's -- single quotes.
+# shellcheck disable=SC2016
+gaveup="$(printf '%s' "$RUN_OUT" | grep -c 'done; \[ "$i" -lt 60 \] || false' || true)"
+if [ "$gaveup" = "$loops" ] && [ "$loops" -ge 1 ]; then
+  ok "every bounded wait answers non-zero when it gives up ($gaveup of $loops)"
+else
+  bad "$gaveup of $loops bounded waits answer non-zero when they give up"
+fi
 # The demo names the collection a reader should find, beside the command that lists it. The whole
 # "no second client, no URI to configure" claim is about what they find when they look, so the name
 # has to be in front of them rather than left to be recognised in a listing.

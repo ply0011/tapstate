@@ -198,14 +198,16 @@ Look at it (from this directory):
     status order_pipeline --watch          the pipeline behind it
 
 See change-data-capture: change either database, watch the same object follow. Each wait below gives
-up after ${cdc_wait_seconds}s and says what it saw, rather than hanging.
+up after ${cdc_wait_seconds}s, says what it saw, and answers non-zero -- so pasted into a script it
+fails rather than passing quietly. It ends in \`false\` and not \`exit\` on purpose: \`exit\` would close
+the shell you are standing in.
 
   # add a shipment in PostgreSQL -- it joins the array on order 1, which already has two
   docker compose exec postgres psql -U postgres -d appdb -c "INSERT INTO shipments VALUES (7,1,'ups','pending');"
   i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) >= 3 ? 0 : 1)'; do
     i=\$((i+1)); [ "\$i" -lt ${cdc_wait_seconds} ] || { echo "not assembled after ${cdc_wait_seconds}s; order 1 now holds \$(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.shipments?.length ?? 0)') shipments (it started with 2). Look at: docker compose logs --tail 50 server"; break; }
     sleep 1
-  done
+  done; [ "\$i" -lt ${cdc_wait_seconds} ] || false
   docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:1}).pretty()'
 
   # change the order itself in MySQL -- the parent column moves, the array stays where it is
@@ -213,7 +215,7 @@ up after ${cdc_wait_seconds}s and says what it saw, rather than hanging.
   i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.findOne({id:1})?.customer=="alicia"?0:1)'; do
     i=\$((i+1)); [ "\$i" -lt ${cdc_wait_seconds} ] || { echo "not updated after ${cdc_wait_seconds}s; order 1 still reads \$(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.customer ?? "nothing")'). Look at: docker compose logs --tail 50 server"; break; }
     sleep 1
-  done
+  done; [ "\$i" -lt ${cdc_wait_seconds} ] || false
   docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:1}).pretty()'
 
   # remove that shipment again -- the array shrinks back, in the same object
@@ -221,14 +223,14 @@ up after ${cdc_wait_seconds}s and says what it saw, rather than hanging.
   i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) <= 2 ? 0 : 1)'; do
     i=\$((i+1)); [ "\$i" -lt ${cdc_wait_seconds} ] || { echo "still there after ${cdc_wait_seconds}s; order 1 holds \$(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.shipments?.length ?? 0)') shipments. Look at: docker compose logs --tail 50 server"; break; }
     sleep 1
-  done
+  done; [ "\$i" -lt ${cdc_wait_seconds} ] || false
 
   # and a whole new order in MySQL, which arrives with no shipments yet
   docker compose exec mysql mysql -uroot -psecret appdb -e "INSERT INTO orders VALUES (6,'frank',60.00);"
   i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit(db.order_state.countDocuments({id:6})?0:1)'; do
     i=\$((i+1)); [ "\$i" -lt ${cdc_wait_seconds} ] || { echo "order 6 did not arrive after ${cdc_wait_seconds}s; the view holds \$(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.countDocuments())') orders (it started with 5). Look at: docker compose logs --tail 50 server"; break; }
     sleep 1
-  done
+  done; [ "\$i" -lt ${cdc_wait_seconds} ] || false
   docker compose exec mongo mongosh --quiet "$uri" --eval 'db.order_state.find({id:6}).pretty()'
 
 Reach the store from your own machine (optional -- the reads above go through the container):
