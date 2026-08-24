@@ -52,6 +52,7 @@ final class CatalogAssembler {
         List<String> notDerived = new ArrayList<>();
         List<String> notBuilt = new ArrayList<>();
         List<String> unverifiedModes = new ArrayList<>();
+        List<String> overlayAlone = new ArrayList<>();
         List<String> overlayDivergences = new ArrayList<>();
         List<String> overlayNotDerivable = new ArrayList<>();
         List<String> sinkDefaultedNoSignal = new ArrayList<>();
@@ -91,7 +92,12 @@ final class CatalogAssembler {
             }
             List<String> ourModes = overlay.modesFor(source.id());
             if (ourModes != null) {
-                if (spec.declaredModes() != null && !spec.declaredModes().equals(ourModes)) {
+                if (spec.declaredModes() == null) {
+                    // Upstream says nothing about modes, so this one lives in exactly one place: our
+                    // overlay. The entry that results is indistinguishable from one both sides agree
+                    // on, and the divergence check below cannot speak when only one side does.
+                    overlayAlone.add(entry.id() + ": upstream declares nothing, ours " + ourModes);
+                } else if (!spec.declaredModes().equals(ourModes)) {
                     // Only when they actually differ. Reporting agreement too would print every
                     // connector we declare, on every run, and bury the one line that matters.
                     overlayDivergences.add(entry.id()
@@ -113,7 +119,7 @@ final class CatalogAssembler {
         }
 
         IngestReport report = new IngestReport(specSha, capabilitySha, ingestedIds, unclassified, notDerived, notBuilt,
-                unverifiedModes, overlayDivergences, overlayNotDerivable, sinkDefaultedNoSignal,
+                unverifiedModes, overlayAlone, overlayDivergences, overlayNotDerivable, sinkDefaultedNoSignal,
                 unknownTypeFields, unresolvedLabelRefs, walk.exemptions());
         return new Assembly(entries, report);
     }

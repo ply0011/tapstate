@@ -41,6 +41,8 @@ final class ReportRenderer {
                 report.notDerived()));
         sections.add(section("Unverified modes — derived for a non-database connector nobody declared",
                 report.unverifiedModes()));
+        sections.add(section("Overlay carrying it alone — upstream declares nothing, the mode is ours only",
+                report.overlayAlone()));
         sections.add(section("Overlay divergences — our declaration differs from the connector's own",
                 report.overlayDivergences()));
         sections.add(section("Overlay not derivable — we declare a mode the capabilities do not support",

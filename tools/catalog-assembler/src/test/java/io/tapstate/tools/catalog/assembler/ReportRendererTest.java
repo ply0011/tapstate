@@ -23,6 +23,7 @@ class ReportRendererTest {
                 List.of("hazelcast"),
                 List.of("yashandb: driver published only to the upstream project's private repository"),
                 List.of("kafka"),
+                List.of("kafka: upstream declares nothing, ours [stream]"),
                 List.of("rabbitmq: upstream [cdc], ours [stream]"),
                 List.of("selectdb: snapshot needs batch_read_function"),
                 List.of("kafka"),
@@ -51,6 +52,9 @@ class ReportRendererTest {
                 ## Unverified modes — derived for a non-database connector nobody declared
                 - kafka
 
+                ## Overlay carrying it alone — upstream declares nothing, the mode is ours only
+                - kafka: upstream declares nothing, ours [stream]
+
                 ## Overlay divergences — our declaration differs from the connector's own
                 - rabbitmq: upstream [cdc], ours [stream]
 
@@ -78,7 +82,7 @@ class ReportRendererTest {
         // that line is the only warning that every capability below was read at another revision.
         IngestReport report = new IngestReport("samesha", "samesha", List.of("mysql"),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of());
 
         assertThat(ReportRenderer.render(report))
                 .contains("Spec SHA: `samesha`")

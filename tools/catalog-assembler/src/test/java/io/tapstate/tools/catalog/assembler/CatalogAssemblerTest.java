@@ -178,6 +178,28 @@ class CatalogAssemblerTest {
         assertThat(assembly.report().overlayNotDerivable()).isEmpty();
     }
 
+    @Test
+    void reportsAModeOnlyOurOverlayDeclares() {
+        // The upstream spec says nothing about modes, so this connector's mode exists in exactly one
+        // place: our overlay. Nothing else shows that state -- the entry it produces is identical to one
+        // both sides agree on, and the divergence check is silent by design when only one side speaks.
+        Assembly assembly = assemble(overlayDeclaring("kafka", "stream"));
+
+        assertThat(assembly.report().overlayAlone())
+                .singleElement(org.assertj.core.api.InstanceOfAssertFactories.STRING)
+                .contains("kafka").contains("stream");
+    }
+
+    @Test
+    void aModeUpstreamAlsoDeclaresIsNotCarriedAlone() {
+        // The discriminating half. Upstream speaks too, so we are not carrying it alone, and saying so
+        // would print every connector whose declaration upstream also has, on every run.
+        Assembly assembly = assemble(overlayDeclaring("kafka", "cdc"),
+                Map.of(KAFKA_SPEC_PATH, KAFKA_SPEC_DECLARING_CDC));
+
+        assertThat(assembly.report().overlayAlone()).isEmpty();
+    }
+
     private static ConnectorOverlay noOverlay() {
         return ConnectorOverlay.read(Map.of("/catalog/overlay/pdk/index.json", "[]")::get);
     }
