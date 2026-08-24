@@ -33,15 +33,16 @@ make_shim() {
   cat > "$shim/mvn" <<'STUB'
 #!/usr/bin/env bash
 set -u
-checkout=""; modules=""
+checkout=""; modules=""; settings=""
 next=""
 for arg in "$@"; do
-  case "$next" in f) checkout="$(dirname "$arg")" ;; pl) modules="$arg" ;; esac
+  case "$next" in f) checkout="$(dirname "$arg")" ;; pl) modules="$arg" ;; s) settings="$arg" ;; esac
   next=""
-  case "$arg" in -f) next=f ;; -pl) next=pl ;; esac
+  case "$arg" in -f) next=f ;; -pl) next=pl ;; -s) next=s ;; esac
 done
 echo "$modules" > "$SMOKE_MODULES_SEEN"
 echo "${JAVA_HOME:-}" > "$SMOKE_JAVA_HOME_SEEN"
+echo "$settings" > "${SMOKE_SETTINGS_SEEN:-/dev/null}"
 case " $* " in *" clean "*) cleans=yes ;; *) cleans=no ;; esac
 IFS=',' read -r -a mods <<< "$modules"
 for module in "${mods[@]}"; do
@@ -88,8 +89,10 @@ expect() {
   shim="$(make_shim)"
   : > "$scratch/modules-seen"
   : > "$scratch/java-home-seen"
+  : > "$scratch/settings-seen"
   out="$(env PATH="$shim:$PATH" SMOKE_MODULES_SEEN="$scratch/modules-seen" \
       SMOKE_JAVA_HOME_SEEN="$scratch/java-home-seen" \
+      SMOKE_SETTINGS_SEEN="$scratch/settings-seen" \
       "${env_pairs[@]}" bash "$builder" "$@" 2>&1)"
   code=$?
   if [ "$code" = "$want_code" ] && printf '%s' "$out" | grep -qF -- "$want_text"; then
@@ -138,6 +141,23 @@ expect_java_home() {
     passed=$((passed + 1))
   else
     printf '  FAIL  %s: wanted JAVA_HOME "%s", got "%s"\n' "$name" "$want" "$seen"
+    failed=$((failed + 1))
+  fi
+}
+
+# Pins which settings file the connector build was handed, which no message on stdout reports. The
+# connectors resolve io.confluent, published to no repository their own pom names that a build off
+# the upstream project's network can reach; this repository checks one in. Whether it arrives is
+# invisible from the outside until it does not, and then it is a read timeout against a host that
+# will never answer, ninety seconds in, naming neither the artifact nor the missing repository.
+expect_settings() {
+  local name="$1" want="$2"
+  local seen; seen="$(cat "$scratch/settings-seen" 2>/dev/null)"
+  if [ "$seen" = "$want" ]; then
+    printf '  ok    %s\n' "$name"
+    passed=$((passed + 1))
+  else
+    printf '  FAIL  %s: wanted settings "%s", got "%s"\n' "$name" "$want" "$seen"
     failed=$((failed + 1))
   fi
 }
@@ -281,6 +301,48 @@ fresh_checkout
 expect "a JDK too new for the pinned Lombok is refused" 2 "Lombok" \
   JAVA_HOME="$jdk21" JAVA_HOME_17_X64= JAVA_HOME_17_ARM64= \
   --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest"
+
+# The repository's own settings file, supplied by default rather than by an environment variable a
+# single workflow happened to set. That arrangement built fine on the runner and nowhere else, which
+# is the wrong way round: this script is meant to be run by a developer on their own machine.
+repo_settings="$(cd "$(dirname "$builder")/.." && pwd)/.github/maven-settings-connectors.xml"
+
+fresh_checkout
+expect "the checked-in settings is supplied without being asked for" 0 "Connector jars staged" \
+  --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest"
+expect_settings "the connectors' settings, by default" "$repo_settings"
+
+# A caller who named one keeps it. Two -s on one command line is a precedence nobody here has
+# established, and the way to find out is not to guess on a build that takes an hour.
+fresh_checkout
+expect "a caller's own settings is not doubled" 0 "Connector jars staged" \
+  "MAVEN_ARGS=-s $scratch/mine.xml" \
+  --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest"
+expect_settings "nothing added on top of the caller's" ""
+
+# Missing, it refuses here and says so. The alternative is handing Maven a path to nothing, whose
+# behaviour nobody here has established - and the one outcome that must not happen is the build
+# proceeding without the repository and dying later on the timeout this whole arrangement exists to
+# remove. Driven against a copy of the script whose settings file is absent, since the real one is
+# checked in beside it.
+rm -rf "$scratch/norepo"
+mkdir -p "$scratch/norepo/scripts"
+cp "$builder" "$scratch/norepo/scripts/"
+fresh_checkout
+if out="$(env PATH="$(make_shim):$PATH" SMOKE_MODULES_SEEN="$scratch/modules-seen" \
+    SMOKE_JAVA_HOME_SEEN="$scratch/java-home-seen" \
+    bash "$scratch/norepo/scripts/$(basename "$builder")" \
+    --modules "mysql=connectors/mysql-connector" --checkout "$scratch/checkout" "$scratch/dest" 2>&1)"; then
+  printf '  FAIL  %s: the build proceeded with no settings file\n' "a missing settings file is refused"
+  failed=$((failed + 1))
+elif printf '%s' "$out" | grep -qF "settings file is missing"; then
+  printf '  ok    %s\n' "a missing settings file is refused"
+  passed=$((passed + 1))
+else
+  printf '  FAIL  %s: refused for some other reason:\n' "a missing settings file is refused"
+  printf '%s\n' "$out" | sed 's/^/        /'
+  failed=$((failed + 1))
+fi
 
 help_prints_no_shell "--help prints documentation, not source" bash "$builder"
 

@@ -82,16 +82,16 @@ jobs:
         run: git clone --depth 1 "$UPSTREAM" upstream
 
       - name: Rebuild the catalog, connectors and all
-        # The settings file supplies the one public repository the connectors' own build does not
-        # name; without it resolution dies minutes in, against a host only the upstream project's
-        # network can reach.
+        # Nothing about the connectors' extra repository is set here any more. It used to be an env
+        # var on this step alone, which meant this lane and a development machine ran two different
+        # builds - the one that worked was the one nobody could reproduce, and this lane's acceptance
+        # asks a person to run it on their own machine. The connector build now supplies it itself,
+        # so both take the same path and the path CI exercises is the one a developer gets.
         #
         # No module list here: the refresh derives it from the probe manifest it writes, so a
         # connector added upstream is built without anyone editing this file. A fixed list would
         # silently derive nothing for it, and a connector with no jar is not an error - it is a line
         # in the report's "not derived" section, which is where such an omission would go to hide.
-        env:
-          MAVEN_ARGS: -s ${{ github.workspace }}/.github/maven-settings-connectors.xml
         run: scripts/refresh-catalog.sh --connectors upstream
 
       - name: What changed

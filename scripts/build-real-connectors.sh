@@ -37,6 +37,10 @@
 #   --checkout <path>                   build from an existing checkout instead of cloning; a refresh
 #                                       already has one, and cloning a second copy of a 469MB
 #                                       repository to build the same commit is pure cost
+#   MAVEN_ARGS                          env var: read by Maven itself. Naming a settings file in it
+#                                       keeps this script from supplying the connectors' own, which
+#                                       it otherwise does without being asked - they need a public
+#                                       repository their pom does not name.
 #   TAPSTATE_CONNECTOR_JAVA_HOME        env var: the JDK to compile the connectors with. They pin a
 #                                       Lombok that JDK 21 breaks, so this falls back to the ambient
 #                                       JDK when that is old enough, and refuses rather than failing
@@ -45,6 +49,19 @@
 set -euo pipefail
 
 readonly SOURCE_REPOSITORY="https://github.com/tapdata/tapdata-connectors.git"
+
+# The connectors resolve io.confluent artifacts. Maven Central does not carry them, and the
+# connectors' own root pom names one private Nexus reachable from the upstream project's network and
+# from nowhere else - so a build anywhere else dies about ninety seconds in on a read timeout against
+# a host that will never answer, naming neither the artifact nor the repository that is missing. This
+# repository checks in a settings file supplying the one public repository that does answer.
+#
+# It is supplied here rather than by the caller because for a while only one workflow set it, through
+# an environment variable written down nowhere else. The lane built on the runner and refused on
+# every development machine - so the build that worked was the one nobody could reproduce, and the
+# person following the instructions for this script hit a wall the instructions did not mention.
+CONNECTOR_SETTINGS="$(cd "$(dirname "$0")/.." && pwd)/.github/maven-settings-connectors.xml"
+readonly CONNECTOR_SETTINGS
 
 # The witness lane's connectors, as the specifications name them, paired with the module that builds
 # each one. This is the default rather than the only option - see --modules above.
@@ -184,6 +201,25 @@ if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
     fi
 fi
 
+# A caller who named their own settings keeps it, and gets no second -s: which of two would win is a
+# precedence nobody here has established, and an hour-long build is the wrong place to find out. The
+# same guard is why this stays quiet for anyone already working around the old arrangement by hand.
+settings_flags=()
+case " ${MAVEN_ARGS:-} " in
+    *" -s "*|*" --settings "*)
+        echo "MAVEN_ARGS already names a settings file; leaving it alone" ;;
+    *)
+        if [ ! -f "$CONNECTOR_SETTINGS" ]; then
+            echo "the connectors' settings file is missing: $CONNECTOR_SETTINGS" >&2
+            echo "it supplies the public repository holding io.confluent, which the connectors need" >&2
+            echo "and their own pom names no reachable source for. Without it this build dies minutes" >&2
+            echo "in on a read timeout that points at neither. Restore it, or name your own through" >&2
+            echo "MAVEN_ARGS." >&2
+            exit 2
+        fi
+        settings_flags=(-s "$CONNECTOR_SETTINGS") ;;
+esac
+
 modules="$(IFS=,; echo "${CONNECTOR_MODULES[*]}")"
 echo "Building $modules with the JDK at $connector_java_home (Java $major)"
 # No exec.skip here, and that is load-bearing rather than an omission: the postgres connector used to
@@ -204,6 +240,7 @@ echo "Building $modules with the JDK at $connector_java_home (Java $major)"
 # developer running a refresh locally sees both.
 JAVA_HOME="$connector_java_home" \
     mvn -B -f "$checkout/pom.xml" -pl "$modules" -am -DskipTests \
+    ${settings_flags[@]+"${settings_flags[@]}"} \
     ${protoc_flags[@]+"${protoc_flags[@]}"} clean package
 
 # Stage one jar per connector, and insist on exactly one.
