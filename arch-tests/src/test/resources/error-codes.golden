@@ -46,6 +46,7 @@ cli.resource-not-found
 cli.unknown-connector
 cli.verb-not-implemented
 cli.watch-needs-a-terminal
+cli.workspace-not-writable
 connector.ambiguous-connector-class
 connector.ambiguous-registration
 connector.api-level-incompatible

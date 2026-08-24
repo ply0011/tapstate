@@ -11,8 +11,8 @@ import picocli.CommandLine.Spec;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.PrintWriter;
 import java.io.UncheckedIOException;
+import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -166,18 +166,58 @@ final class DemoCmd implements Callable<Integer> {
                 }
             }
         }
+        // Every directory first, before any file. Creating one can fail on its own - a workspace holding
+        // a plain file called `pipeline` passes the check above and fails here - and doing it up front
+        // means that failure lands before the first byte rather than between two of them.
+        for (String resource : RESOURCES) {
+            Path directory = root.resolve(resource).getParent();
+            try {
+                Files.createDirectories(directory);
+            } catch (IOException cannotCreate) {
+                throw new TapstateException(
+                        CliError.WORKSPACE_NOT_WRITABLE,
+                        Map.of("path", directory.toString(), "reason", reason(cannotCreate)), null);
+            }
+        }
         List<Path> written = new ArrayList<>();
         for (String resource : RESOURCES) {
             Path target = root.resolve(resource);
             try {
-                Files.createDirectories(target.getParent());
                 Files.writeString(target, bundled(resource));
             } catch (IOException cannotWrite) {
-                throw new UncheckedIOException("cannot write " + target, cannotWrite);
+                // All or none, kept as a promise rather than as an intention. What this invocation
+                // wrote is taken back, so a reader is left with the workspace they had - which for the
+                // ordinary case is no workspace at all, and never two files out of three. Files that
+                // were already there under --force are not ours to restore and are left alone.
+                undo(written);
+                throw new TapstateException(
+                        CliError.WORKSPACE_NOT_WRITABLE,
+                        Map.of("path", target.toString(), "reason", reason(cannotWrite)), null);
             }
             written.add(target);
         }
         return written;
+    }
+
+    /**
+     * Removes what this invocation created. Best effort by necessity: it runs while a write has already
+     * failed, so the filesystem is not answering, and a second failure here must not replace the first
+     * one in front of the reader.
+     */
+    private static void undo(List<Path> written) {
+        for (Path path : written) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException leaveIt) {
+                // Reported through the diagnostic below, as the state the reader is actually in.
+            }
+        }
+    }
+
+    /** What the filesystem said, in one line, for the diagnostic's named parameter. */
+    private static String reason(IOException failure) {
+        String message = failure.getMessage();
+        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
     }
 
     /**

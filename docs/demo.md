@@ -20,9 +20,9 @@ not.**
 
 **One setting on the PostgreSQL side is load-bearing and easy to miss.** A table whose rows are embedded
 somewhere needs `REPLICA IDENTITY FULL`; PostgreSQL otherwise publishes only the primary key on an update
-or a delete, and a key alone does not say which parent the row was under. The demo's seed sets it. Shot 8's
-"remove that shipment again" is the shot that fails without it — and it fails quietly, with every other
-reading healthy.
+or a delete, and a key alone does not say which parent the row was under. The demo's seed sets it. Shot 8
+is where it shows: without it a shipment removed in PostgreSQL leaves the array it was in unchanged, and
+it fails quietly, with every other reading healthy.
 
 Fixed before the first take, because changing any of them afterwards means recording again:
 
@@ -51,8 +51,9 @@ Timestamps are filled in from the finished recording; they are also what the REA
 | 5 | 00:34 | `watch views.order_state {id:1}` | The same object, held on screen and redrawn in place | Criterion 5 — the live view starts and holds |
 | 6 | 00:40 | *(second pane)* `INSERT INTO shipments …` in PostgreSQL | The watched object gains an array element **while you are looking at it** | Criteria 2 and 5 — a change in one engine ripples into the object rooted in the other |
 | 7 | 00:48 | *(second pane)* `UPDATE orders SET customer=… ` in MySQL | The same object's own column flips, and the array stays where it is | Criterion 2 — both directions ripple, and neither rebuild drops the other's half |
-| 8 | 01:12 | An MCP client asking "current state of order 1?" | The agent answers out of the same materialized object, through `data_browser_collections` / `data_browser_find` | Criterion 6 — the state-query MCP reaches the same object |
-| 9 | 01:20 | — | Closing frame: what this was, and the one-line install again | — |
+| 8 | 00:56 | *(second pane)* `DELETE FROM shipments WHERE id=7` in PostgreSQL | The array shrinks back to what it was, in the same object | Criterion 2 — a removal crosses too, which is the half a growing array never shows |
+| 9 | 01:12 | An MCP client asking "current state of order 1?" | The agent answers out of the same materialized object, through `data_browser_collections` / `data_browser_find` | Criterion 6 — the state-query MCP reaches the same object |
+| 10 | 01:20 | — | Closing frame: what this was, and the one-line install again | — |
 
 ## Which shots a test is watching, and which are only watched here
 
@@ -61,10 +62,10 @@ shows. Three do not, and saying which is the point of writing this down:
 
 | Shot | Watched by |
 |---|---|
-| 1, 3, 4, 6, 7 | The golden-path end-to-end case, which runs the same pipeline file this demo generates |
+| 1, 3, 4, 6, 7, 8 | The golden-path end-to-end case, which runs the same pipeline file this demo generates |
 | 2, 5 | **Nothing automated.** A test can assert that `watch` sent the right escape sequences; only a person can see whether the screen redraws in place. This is what the [browsing live data by hand](tutorials/browsing-live-data-by-hand/) walkthrough is for |
-| 8 | **Partly.** The MCP read tools, and their answers following newly applied sources without restarting the session, are covered. That the agent reaches *this demo's* assembled object is shown here and nowhere else |
-| 9 | Nothing. It is a closing frame |
+| 9 | **Partly.** The MCP read tools, and their answers following newly applied sources without restarting the session, are covered. That the agent reaches *this demo's* assembled object is shown here and nowhere else |
+| 10 | Nothing. It is a closing frame |
 
 ## The shot that is not here: holding one stream
 

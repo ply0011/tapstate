@@ -113,6 +113,54 @@ class DemoCmdTest {
                 .doesNotExist();
     }
 
+    /**
+     * The all-or-none promise, at the one place it was only an intention. The existence check passes -
+     * nothing is there yet - and then a plain file sitting where a kind directory belongs fails the
+     * write. Before this, two of the three had already been written by then, and the reader got an
+     * uncoded stack trace on top of a half-made workspace.
+     */
+    @Test
+    void leavesNothingBehindWhenADirectoryCannotBeMade(@TempDir Path dir) throws IOException {
+        Files.writeString(dir.resolve("pipeline"), "not a directory\n");
+
+        Run r = run("demo", "-w", dir.toString());
+
+        assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
+        assertThat(r.all()).contains("cli.workspace-not-writable");
+        assertThat(dir.resolve("source/orders_db.tap.yml"))
+                .as("the sources must not survive a failure that came after them")
+                .doesNotExist();
+        assertThat(dir.resolve("source"))
+                .as("an empty kind directory is acceptable; a file in it is not")
+                .satisfiesAnyOf(
+                        d -> assertThat(d).doesNotExist(),
+                        d -> assertThat(d.toFile().list()).isEmpty());
+    }
+
+    /**
+     * And the rollback itself, which the test above does not reach: making the directories up front
+     * means that failure lands before any file, so nothing needs taking back. This one fails on the
+     * last write instead - the target is a directory, so the write cannot land - and the two files
+     * already written by this invocation have to go with it.
+     *
+     * <p>Driven under {@code --force} because that is the only way past the existence check to a write
+     * that fails partway. What --force may not do is take back files it did not write, which is why
+     * the source it overwrote is asserted gone rather than restored: it was this invocation's.
+     */
+    @Test
+    void takesBackWhatItWroteWhenALaterWriteFails(@TempDir Path dir) throws IOException {
+        Files.createDirectories(dir.resolve("pipeline/order_pipeline.tap.yml"));
+
+        Run r = run("demo", "-w", dir.toString(), "--force");
+
+        assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
+        assertThat(r.all()).contains("cli.workspace-not-writable");
+        assertThat(dir.resolve("source/orders_db.tap.yml"))
+                .as("written before the failure, so taken back after it")
+                .doesNotExist();
+        assertThat(dir.resolve("source/fulfillment_db.tap.yml")).doesNotExist();
+    }
+
     @Test
     void printsTheWalkthroughAndWritesNothing(@TempDir Path dir) {
         Run r = run("demo", "-w", dir.toString(), "--print-steps");

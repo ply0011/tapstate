@@ -337,7 +337,8 @@
           "properties": {
             "pause": {
               "type": "string",
-              "description": "The id of the source whose stream this holds or releases, leaving every other stream of the same pipeline running."
+              "description": "The id of the source whose stream this holds or releases, leaving every other stream of the same pipeline running.",
+              "minLength": 1
             }
           }
         },
@@ -350,7 +351,8 @@
           "properties": {
             "resume": {
               "type": "string",
-              "description": "The id of the source whose stream this holds or releases, leaving every other stream of the same pipeline running."
+              "description": "The id of the source whose stream this holds or releases, leaving every other stream of the same pipeline running.",
+              "minLength": 1
             }
           }
         }

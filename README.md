@@ -80,8 +80,10 @@ not current guarantees.
 Run the preview locally as a Docker Compose stack. The quickstart brings up MySQL,
 PostgreSQL, the tapstate server and a MongoDB-backed preview store, then assembles an
 order in one engine and its shipments in the other into a single object that stays
-fresh as either side changes -- something no SQL view or join can produce, because
-neither database can see the other's table. One command does the whole flow in a
+fresh as either side changes. Neither database can see the other's table, so there is no
+view to write and no join to run: reaching across takes federation set up in advance, or
+an application that queries both and stitches the result on every request. One command
+does the whole flow in a
 `tapstate-demo` directory it creates:
 
 ```sh

@@ -1,7 +1,6 @@
 package io.tapstate.e2e;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -28,7 +27,23 @@ import java.util.Set;
  */
 final class FailureScene {
 
+    /**
+     * Anything shaped like an address, in text this class did not compose.
+     *
+     * <p>Not collecting an address covers what is written deliberately; it does not cover what is
+     * echoed. A driver's exception message can name the endpoint it failed to reach, and a document
+     * read back can hold a uri in a column - both arrive here as somebody else's text and would be
+     * appended verbatim. One filter over every such value keeps the promise the header makes.
+     */
+    private static final java.util.regex.Pattern ADDRESS =
+            java.util.regex.Pattern.compile("[a-zA-Z][a-zA-Z0-9+.-]*://\\S*");
+
     private FailureScene() {
+    }
+
+    /** One value from outside, with anything address-shaped taken out of it. */
+    private static String scrubbed(Object value) {
+        return value == null ? "null" : ADDRESS.matcher(value.toString()).replaceAll("<address elided>");
     }
 
     /**
@@ -55,7 +70,7 @@ final class FailureScene {
                 scene.append(binding.count(table));
             } catch (RuntimeException couldNotRead) {
                 scene.append("unreadable (").append(couldNotRead.getClass().getSimpleName()).append(": ")
-                        .append(couldNotRead.getMessage()).append(')');
+                        .append(scrubbed(couldNotRead.getMessage())).append(')');
             }
             scene.append('\n');
         }
@@ -78,18 +93,21 @@ final class FailureScene {
             Files.createDirectories(file.getParent());
             Files.writeString(file, scene);
         } catch (IOException cannotWrite) {
-            throw new UncheckedIOException("cannot write the failure scene to " + file, cannotWrite);
+            // Never thrown on. This runs from a failure path, and a collector that raises its own
+            // problem replaces the failure it was called to describe - the reader then debugs the
+            // scene writer instead of the case that went red. Said on stderr and dropped.
+            System.err.println("could not write the failure scene to " + file + ": " + cannotWrite);
         }
     }
 
     private static void document(StringBuilder scene, TierBinding binding, Matcher.Doc doc) {
         TableAlias table = doc.table();
-        scene.append("  ").append(table).append(" where ").append(doc.where()).append(" -> ");
+        scene.append("  ").append(table).append(" where ").append(scrubbed(doc.where())).append(" -> ");
         try {
             Optional<Map<String, Object>> found = binding.fetch(table, doc.where());
-            scene.append(found.map(Object::toString).orElse("no document matches"));
+            scene.append(found.map(FailureScene::scrubbed).orElse("no document matches"));
         } catch (RuntimeException couldNotRead) {
-            scene.append("unreadable (").append(couldNotRead.getMessage()).append(')');
+            scene.append("unreadable (").append(scrubbed(couldNotRead.getMessage())).append(')');
         }
         scene.append('\n');
     }
@@ -123,9 +141,9 @@ final class FailureScene {
     private static void reading(StringBuilder scene, String what, Reading reading) {
         scene.append("  ").append(what).append(" = ");
         try {
-            scene.append(reading.take().map(Object::toString).orElse("nothing published yet"));
+            scene.append(reading.take().map(FailureScene::scrubbed).orElse("nothing published yet"));
         } catch (RuntimeException couldNotRead) {
-            scene.append("unreadable (").append(couldNotRead.getMessage()).append(')');
+            scene.append("unreadable (").append(scrubbed(couldNotRead.getMessage())).append(')');
         }
         scene.append('\n');
     }
