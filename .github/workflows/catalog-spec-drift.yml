@@ -45,6 +45,16 @@ on:
   schedule:
     # Off the hour: scheduled runs queue, and the top of an hour is where everyone else's are.
     - cron: "20 2 * * *"
+  pull_request:
+    # A workflow_dispatch only becomes dispatchable once the file is on the default branch, so until
+    # this lane merges there is no way to run it at all - and the change that most needs a run is the
+    # one that introduces it. Running on pull requests that touch the lane closes that gap, and keeps
+    # it closed: whoever next edits it finds out then, rather than on the following night's schedule.
+    paths:
+      - ".github/workflows/catalog-spec-drift.yml"
+      - ".github/scripts/catalog-age-days.sh"
+      - "scripts/refresh-catalog.sh"
+      - "tools/catalog-assembler/**"
 
 concurrency:
   # Not per-ref, and not cancelling: two of these must not both be regenerating the catalog, and a
@@ -61,6 +71,10 @@ env:
 
 jobs:
   scan:
+    # A pull request from a fork is handed none of the secrets, so the app token cannot be minted and
+    # the run would be red for a reason its author has no way to fix. Same-repository ones only; the
+    # schedule covers what a fork's change would otherwise have exercised.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -153,7 +167,10 @@ jobs:
           scripts/refresh-catalog.sh --connectors upstream --spec-only
 
       - name: Open the pull request
-        if: steps.drift.outputs.decision == 'OPEN'
+        # Not on a pull request: that run is here to exercise the lane, not to act on what it finds,
+        # and opening a second pull request from inside one is not exercising it. Everything above
+        # this step still runs there, which is the whole lane bar this call.
+        if: steps.drift.outputs.decision == 'OPEN' && github.event_name != 'pull_request'
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ steps.token.outputs.token }}

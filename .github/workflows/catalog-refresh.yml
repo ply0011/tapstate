@@ -28,6 +28,12 @@ on:
     # Weekly. Off the hour, and on a Tuesday rather than a weekend, so a rebuild that fails is looked
     # at within a working day rather than on the following Monday alongside everything else.
     - cron: "50 1 * * 2"
+  pull_request:
+    # By label, not by path: this lane builds 60-odd connector modules and is given three hours to do
+    # it, so on a pull request it runs only when someone asks for it by name. It can be asked for at
+    # all because workflow_dispatch does not exist until the file is on the default branch, which
+    # would otherwise leave the pull request introducing this lane with no way to run it once.
+    types: [labeled]
 
 concurrency:
   group: catalog-refresh
@@ -41,6 +47,13 @@ env:
 
 jobs:
   refresh:
+    # The label is the ask; the fork check is because a fork's pull request is handed none of the
+    # secrets, so the app token cannot be minted and the run would be red for a reason its author has
+    # no way to fix.
+    if: >-
+      github.event_name != 'pull_request'
+      || (github.event.label.name == 'catalog-full-rebuild'
+          && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -106,7 +119,9 @@ jobs:
           fi
 
       - name: Open the pull request
-        if: steps.diff.outputs.changed == 'yes'
+        # Not on a pull request: that run is here to prove the rebuild works, not to act on what it
+        # produced, and opening a second pull request from inside one is not that.
+        if: steps.diff.outputs.changed == 'yes' && github.event_name != 'pull_request'
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ steps.token.outputs.token }}
