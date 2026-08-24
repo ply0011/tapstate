@@ -37,6 +37,8 @@ class ControlOperationsTest {
                         "data-browser.find",
                         "data-browser.stats",
                         "cluster.members",
+                        "pipeline.list",
+                        "pipeline.get",
                         "pipeline.start",
                         "pipeline.stop",
                         "pipeline.pause",
@@ -98,9 +100,10 @@ class ControlOperationsTest {
         for (String id : List.of("pipeline.start", "pipeline.stop", "pipeline.pause", "pipeline.resume")) {
             assertThat(registry.resolve(id).scope()).as(id).isEqualTo(Scope.WRITE);
         }
-        // the pipeline observation reads (status/metrics/snapshot store-backed, logs node-local) are all
+        // the static Pipeline projection and observation reads are all
         // read faces; read-scoped, unaudited.
-        for (String id : List.of("pipeline.status", "pipeline.metrics", "pipeline.snapshot", "pipeline.logs")) {
+        for (String id : List.of(
+                "pipeline.list", "pipeline.get", "pipeline.status", "pipeline.metrics", "pipeline.snapshot", "pipeline.logs")) {
             assertThat(registry.resolve(id).scope()).as(id).isEqualTo(Scope.READ);
         }
         for (String id : List.of("user.create", "user.passwd", "user.list", "token.create", "token.revoke", "token.list")) {
@@ -148,6 +151,8 @@ class ControlOperationsTest {
                 "cluster.members",
                 "user.list",
                 "token.list",
+                "pipeline.list",
+                "pipeline.get",
                 "pipeline.status",
                 "pipeline.metrics",
                 "pipeline.snapshot",
@@ -161,7 +166,7 @@ class ControlOperationsTest {
         // A scope statement about the registry alone: the CLI face opens every registered operation and
         // clips none of them. Whether each one has a verb behind it is not knowable from here
         // — control-core cannot see the CLI — and is gated where both are visible, in arch-tests.
-        assertThat(registry.exposedOn(Frontend.CLI)).hasSize(37);
+        assertThat(registry.exposedOn(Frontend.CLI)).hasSize(39);
         assertThat(registry.all()).allSatisfy(op ->
                 assertThat(op.exposure()).as(op.id()).containsEntry(Frontend.CLI, Maturity.CURRENT));
     }
