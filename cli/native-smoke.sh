@@ -415,6 +415,34 @@ else
   bad "a one-line command that failed still exited 0"
 fi
 
+# --- 11. kafka.modes — the overlay-declared set survived into the image --------------------------
+# kafka has no derivable mode signal: its modes come from the repo overlay and are baked into
+# catalog/kafka.json when the snapshot is assembled. The image keeps that resource only because
+# -H:IncludeResources matches catalog/.*\.json, and losing it does NOT fail loudly — an entry with
+# no modes counts as "no trustworthy offline signal", so every mode is accepted and the CLI just
+# quietly stops rejecting. [2] reddens on that too, since the invalid corpus carries a kafka + cdc
+# scenario, but only incidentally: nothing there says that scenario stands in for the overlay, so
+# re-pointing it at another connector would take the evidence away without a word. Pin the set by
+# name here instead. The JVM side of the same claim is pinned by the same value in the checked-in
+# catalog and the corpus gate over it, so this deliberately does not A/B a second process: two
+# independent pins cannot drift together, one live comparison of two drifting shapes can.
+# `validate` is the probe rather than `new` because `new` refuses kafka one guard earlier (it is not
+# in this release's installed set) and would never reach the mode check at all.
+bold "[11] kafka.modes — the overlay-declared set survived into the image"
+KAFKA_DIR="$REPO_ROOT/cli/target/native-smoke-kafka"
+rm -rf "$KAFKA_DIR" && mkdir -p "$KAFKA_DIR"
+printf 'version: tapstate/v1\nkind: source\nid: smoke_kafka\nconnector: kafka\nmode: cdc\n' > "$KAFKA_DIR/kafka.tap.yml"
+# the rejection names the connector's modes; empty means the binary did not reject at all
+KAFKA_MODES="$({ "$BINARY" validate "$KAFKA_DIR" 2>&1 || true; } | strip_ansi | sed -n 's/.*supported modes: \(.*\)\.$/\1/p' | head -1)"
+if [[ "$KAFKA_MODES" == "stream" ]]; then
+  ok "kafka + cdc rejected, naming exactly the overlay-declared modes: [stream]"
+elif [[ -z "$KAFKA_MODES" ]]; then
+  bad "the image accepted kafka + cdc — kafka.modes is empty in the binary, so the catalog resource or its overlay-declared modes did not survive the build"
+else
+  bad "kafka.modes in the image is [$KAFKA_MODES], not the overlay-declared [stream]"
+fi
+rm -rf "$KAFKA_DIR"
+
 # --- summary ------------------------------------------------------------------------------------
 echo
 bold "native smoke: ${PASS} passed, ${FAIL} failed"
