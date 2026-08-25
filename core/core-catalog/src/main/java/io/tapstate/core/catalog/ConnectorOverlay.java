@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -158,10 +159,27 @@ public final class ConnectorOverlay {
                     "connector overlay entry '" + id + "' declares a sink that is not capable: "
                             + entryPath + " - a connector that cannot sink declares no sink block");
         }
+        // Refused for the same reason a false capable flag is: a capable sink with no write
+        // semantics is a shape derivation can never produce - SinkRules always yields at least
+        // append once write_record is present - so it would ship as fact while matching nothing any
+        // other path could have written. A non-list here is the ordinary slip of declaring one
+        // semantic without the brackets, and reading it leniently drops it without a word.
+        if (!(sink.get("writeSemantics") instanceof List<?> declaredSemantics) || declaredSemantics.isEmpty()) {
+            throw new IllegalStateException(
+                    "connector overlay entry '" + id + "' declares a sink with no writeSemantics array: "
+                            + entryPath + " - a capable sink names at least one write semantic");
+        }
         List<WriteMode> semantics = new ArrayList<>();
-        if (sink.get("writeSemantics") instanceof List<?> declaredSemantics) {
-            for (Object mode : declaredSemantics) {
-                semantics.add(WriteMode.valueOf(String.valueOf(mode).toUpperCase(java.util.Locale.ROOT)));
+        for (Object mode : declaredSemantics) {
+            String token = String.valueOf(mode);
+            try {
+                semantics.add(WriteMode.valueOf(token.toUpperCase(Locale.ROOT)));
+            } catch (IllegalArgumentException unknown) {
+                // Named with the file to open, like every other refusal here: the bare valueOf
+                // message carries the token alone, which says nothing about which entry wrote it.
+                throw new IllegalStateException(
+                        "connector overlay entry '" + id + "' declares an unknown write semantic '"
+                                + token + "': " + entryPath, unknown);
             }
         }
         return new SinkCapability(true, semantics);

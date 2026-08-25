@@ -136,4 +136,46 @@ class ConnectorOverlayTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("greenplum");
     }
+
+    @Test
+    void aSinkWhoseWriteSemanticsAreNotAnArrayIsRefused() {
+        // The slip is declaring one semantic without the brackets. Read leniently it produces a
+        // capable sink with an empty semantics list - a row SinkRules can never produce, since a
+        // capable sink always carries at least append - so nothing downstream finds it suspicious
+        // and it ships as fact.
+        assertThatThrownBy(() -> ConnectorOverlay.read(files(
+                INDEX, "[\"greenplum\"]",
+                "/catalog/overlay/pdk/greenplum.json",
+                "{\"modes\": [\"snapshot\"], \"sink\": {\"capable\": true,"
+                        + " \"writeSemantics\": \"upsert\"}}")::get))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("greenplum")
+                .hasMessageContaining("writeSemantics");
+    }
+
+    @Test
+    void aSinkDeclaringNoWriteSemanticsAtAllIsRefused() {
+        assertThatThrownBy(() -> ConnectorOverlay.read(files(
+                INDEX, "[\"greenplum\"]",
+                "/catalog/overlay/pdk/greenplum.json",
+                "{\"modes\": [\"snapshot\"], \"sink\": {\"capable\": true,"
+                        + " \"writeSemantics\": []}}")::get))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("greenplum");
+    }
+
+    @Test
+    void anUnknownWriteSemanticNamesTheEntryThatWroteIt() {
+        // valueOf's own message carries the token alone, which sends the reader looking for a file
+        // it does not name - the only refusal here that would not say which entry to open.
+        assertThatThrownBy(() -> ConnectorOverlay.read(files(
+                INDEX, "[\"greenplum\"]",
+                "/catalog/overlay/pdk/greenplum.json",
+                "{\"modes\": [\"snapshot\"], \"sink\": {\"capable\": true,"
+                        + " \"writeSemantics\": [\"merge\"]}}")::get))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("greenplum")
+                .hasMessageContaining("merge")
+                .hasMessageContaining("/catalog/overlay/pdk/greenplum.json");
+    }
 }
