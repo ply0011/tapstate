@@ -84,10 +84,19 @@ try:
     # follow, so this smoke asked for one tool fewer than the server offered -- and since no lane but
     # the release run executes it, the whole release lane was what reported the mismatch. A set names
     # the tool that appeared or vanished, which is the part a number cannot say.
+    #
+    # It happened again, the same way, with the three data-browser tools: they were added on 2026-08-20
+    # and this list was not, and nothing said so until a release was cut five days later. Naming the
+    # tool rather than counting it made the failure legible in one line -- but a legible failure that
+    # only a release can produce still costs a release to find. The list below is not the fix for that;
+    # running this smoke on every pull request is, and it is not done here.
     expected = {
         "artifact_get",
         "artifact_validate",
         "connection_schema",
+        "data_browser_collections",
+        "data_browser_find",
+        "data_browser_stats",
         "connection_test_result",
         "connector_get",
         "connector_list",
