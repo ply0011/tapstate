@@ -179,35 +179,61 @@ final class DemoCmd implements Callable<Integer> {
                         Map.of("path", directory.toString(), "reason", reason(cannotCreate)), null);
             }
         }
-        List<Path> written = new ArrayList<>();
+        // Under --force a target may already hold something, and that something is the user's. Read it
+        // before overwriting it, so the rollback below can put it back; a target that cannot be read is
+        // refused here, while nothing has been written yet, rather than after it is already gone.
+        List<Touched> touched = new ArrayList<>();
         for (String resource : RESOURCES) {
             Path target = root.resolve(resource);
+            String existing = null;
+            if (Files.exists(target)) {
+                try {
+                    existing = Files.readString(target);
+                } catch (IOException cannotRead) {
+                    throw new TapstateException(
+                            CliError.WORKSPACE_NOT_WRITABLE,
+                            Map.of("path", target.toString(), "reason", reason(cannotRead)), null);
+                }
+            }
+            touched.add(new Touched(target, existing));
+        }
+        List<Touched> done = new ArrayList<>();
+        for (int i = 0; i < RESOURCES.size(); i++) {
+            Touched target = touched.get(i);
             try {
-                Files.writeString(target, bundled(resource));
+                Files.writeString(target.path(), bundled(RESOURCES.get(i)));
             } catch (IOException cannotWrite) {
                 // All or none, kept as a promise rather than as an intention. What this invocation
                 // wrote is taken back, so a reader is left with the workspace they had - which for the
-                // ordinary case is no workspace at all, and never two files out of three. Files that
-                // were already there under --force are not ours to restore and are left alone.
-                undo(written);
+                // ordinary case is no workspace at all, and never two files out of three. A file that
+                // --force overwrote is put back with the bytes it held, because deleting it would make
+                // this command destroy content on a path where it wrote nothing that survived.
+                undo(done);
                 throw new TapstateException(
                         CliError.WORKSPACE_NOT_WRITABLE,
-                        Map.of("path", target.toString(), "reason", reason(cannotWrite)), null);
+                        Map.of("path", target.path().toString(), "reason", reason(cannotWrite)), null);
             }
-            written.add(target);
+            done.add(target);
         }
-        return written;
+        return done.stream().map(Touched::path).toList();
     }
 
+    /** A target this invocation is about to write, and what it held first - {@code null} if nothing. */
+    private record Touched(Path path, String existing) {}
+
     /**
-     * Removes what this invocation created. Best effort by necessity: it runs while a write has already
-     * failed, so the filesystem is not answering, and a second failure here must not replace the first
-     * one in front of the reader.
+     * Puts back what this invocation changed: a file it created is removed, a file it overwrote is
+     * restored. Best effort by necessity: it runs while a write has already failed, so the filesystem is
+     * not answering, and a second failure here must not replace the first one in front of the reader.
      */
-    private static void undo(List<Path> written) {
-        for (Path path : written) {
+    private static void undo(List<Touched> done) {
+        for (Touched target : done) {
             try {
-                Files.deleteIfExists(path);
+                if (target.existing() == null) {
+                    Files.deleteIfExists(target.path());
+                } else {
+                    Files.writeString(target.path(), target.existing());
+                }
             } catch (IOException leaveIt) {
                 // Reported through the diagnostic below, as the state the reader is actually in.
             }

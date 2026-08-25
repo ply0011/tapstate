@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * {@code demo} exists to save a stranger from transcribing three files before they can see anything.
@@ -138,17 +139,13 @@ class DemoCmdTest {
     }
 
     /**
-     * And the rollback itself, which the test above does not reach: making the directories up front
-     * means that failure lands before any file, so nothing needs taking back. This one fails on the
-     * last write instead - the target is a directory, so the write cannot land - and the two files
-     * already written by this invocation have to go with it.
-     *
-     * <p>Driven under {@code --force} because that is the only way past the existence check to a write
-     * that fails partway. What --force may not do is take back files it did not write, which is why
-     * the source it overwrote is asserted gone rather than restored: it was this invocation's.
+     * Under {@code --force} every target that is already there is read before any of them is written,
+     * so that the rollback below has something to put back. A target that cannot be read at all - a
+     * directory sitting on the path - is therefore refused while the workspace is still untouched,
+     * which is a better outcome than writing two files and taking them back again.
      */
     @Test
-    void takesBackWhatItWroteWhenALaterWriteFails(@TempDir Path dir) throws IOException {
+    void writesNothingWhenATargetCannotEvenBeRead(@TempDir Path dir) throws IOException {
         Files.createDirectories(dir.resolve("pipeline/order_pipeline.tap.yml"));
 
         Run r = run("demo", "-w", dir.toString(), "--force");
@@ -156,9 +153,41 @@ class DemoCmdTest {
         assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
         assertThat(r.all()).contains("cli.workspace-not-writable");
         assertThat(dir.resolve("source/orders_db.tap.yml"))
-                .as("written before the failure, so taken back after it")
+                .as("the refusal came before the first byte, so this was never written")
                 .doesNotExist();
         assertThat(dir.resolve("source/fulfillment_db.tap.yml")).doesNotExist();
+    }
+
+    /**
+     * The rollback itself, with both of its halves in one run. The last target is readable and not
+     * writable, so the first two land and the third cannot: the file this invocation created is taken
+     * back, and the file it overwrote is put back with the bytes it held. That second half is the one
+     * that matters - deleting it would make a command whose writes did not survive still destroy
+     * content on that path, which is the one outcome {@code --force} may not have.
+     */
+    @Test
+    void putsBackWhatItOverwroteAndTakesBackWhatItCreated(@TempDir Path dir) throws IOException {
+        Files.createDirectories(dir.resolve("source"));
+        Files.createDirectories(dir.resolve("pipeline"));
+        Path theirs = dir.resolve("source/orders_db.tap.yml");
+        String mine = "# mine, edited\nkind: source\nid: orders_db\n";
+        Files.writeString(theirs, mine);
+        Path readOnly = dir.resolve("pipeline/order_pipeline.tap.yml");
+        Files.writeString(readOnly, "kind: pipeline\n");
+        readOnly.toFile().setWritable(false, false);
+        // Root can write a file with no write bit, and then there is no failure to roll back from.
+        assumeTrue(!Files.isWritable(readOnly), "needs a filesystem that enforces the write bit");
+
+        Run r = run("demo", "-w", dir.toString(), "--force");
+
+        assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
+        assertThat(r.all()).contains("cli.workspace-not-writable");
+        assertThat(theirs)
+                .as("it was theirs before the run, so the run may not end with it gone or replaced")
+                .hasContent(mine);
+        assertThat(dir.resolve("source/fulfillment_db.tap.yml"))
+                .as("this one the invocation did create, so it goes")
+                .doesNotExist();
     }
 
     @Test

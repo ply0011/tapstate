@@ -636,11 +636,12 @@ the server and databases are hosted changes.
 5. **Resources.** Use the same three resources as [step 5](#5-author-the-resources),
    with one change: the server now runs on the host, not in the compose network, so
    the connectors address the databases by their host ports instead of the compose
-   service names — `config: { host: 127.0.0.1, port: 3306, … }` in `orders_db`,
-   `config: { host: 127.0.0.1, port: 5432, … }` in `fulfillment_db`, and
-   `uri: "mongodb://127.0.0.1:27017/views"` in `views`. All three, not one: a source left
-   pointing at a compose service name resolves to nothing from the host, and the pipeline
-   names every source it reads.
+   service names — `config: { host: 127.0.0.1, port: 3306, … }` in `orders_db` and
+   `config: { host: 127.0.0.1, port: 5432, … }` in `fulfillment_db`. Both of them, not one:
+   a source left pointing at a compose service name resolves to nothing from the host, and
+   the pipeline names every source it reads. The pipeline itself needs no change — the
+   managed store it materializes into is addressed by the server, through the
+   `--tapstate.store.mongo.uri` you passed in step 3, not by a resource here.
 
 6. **Online verbs, observe, CDC** are identical to steps 6–8, except you reach the
    databases with your own client (`docker exec tapstate-mysql …` /

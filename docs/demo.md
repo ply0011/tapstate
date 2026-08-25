@@ -20,9 +20,9 @@ not.**
 
 **One setting on the PostgreSQL side is load-bearing and easy to miss.** A table whose rows are embedded
 somewhere needs `REPLICA IDENTITY FULL`; PostgreSQL otherwise publishes only the primary key on an update
-or a delete, and a key alone does not say which parent the row was under. The demo's seed sets it. Shot 8
-is where it shows: without it a shipment removed in PostgreSQL leaves the array it was in unchanged, and
-it fails quietly, with every other reading healthy.
+or a delete, and a key alone does not say which parent the row was under. The demo's seed sets it, so Shot 8
+shows a shipment deleted in PostgreSQL leaving the array it was in. The recording does not show the other
+half: without the setting that array stays as it was, quietly, with every other reading healthy.
 
 Fixed before the first take, because changing any of them afterwards means recording again:
 

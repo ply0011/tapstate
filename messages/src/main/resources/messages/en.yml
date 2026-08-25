@@ -86,7 +86,7 @@ cli.demo-workspace-exists:
   solution: "Use a different workspace with -w, or pass --force to overwrite the demo files there."
 cli.workspace-not-writable:
   message: "Could not write {path}: {reason}"
-  solution: "Check that the directory exists, is writable, and that no plain file is sitting where a directory is needed. Nothing was left behind - re-run once it is."
+  solution: "Check that the directory exists, is writable, and that no plain file is sitting where a directory is needed. Demo files this run wrote were removed and any it overwrote were put back, though empty directories it created can remain."
 cli.unknown-connector:
   message: "No connector '{connector}' in the catalog."
   solution: "Pick a connector id from the catalog; run `tapstate new` interactively to choose one."
