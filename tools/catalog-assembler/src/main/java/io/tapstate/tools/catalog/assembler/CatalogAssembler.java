@@ -1,8 +1,5 @@
 package io.tapstate.tools.catalog.assembler;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -13,8 +10,10 @@ import io.tapstate.core.catalog.CatalogEntryAssembler;
 import io.tapstate.core.catalog.ConnectorOverlay;
 import io.tapstate.core.catalog.CatalogJson;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
+import io.tapstate.core.catalog.DerivedCapability;
 import io.tapstate.core.catalog.NormalizedSpec;
 import io.tapstate.core.catalog.SpecNormalizer;
+import io.tapstate.core.model.SourceMode;
 
 /**
  * Drives the catalog assembly: for each walked connector it parses the spec (reusing core-catalog's
@@ -33,11 +32,18 @@ final class CatalogAssembler {
      * same names is one nobody reads. What this catches is a mode we claimed that the connector's own
      * capabilities contradict, which no other gate sees: an entry that exists is trusted, so a wrong
      * cdc here is admitted by validation rather than refused.
+     *
+     * <p>Both halves are read off the enums that own them rather than spelled again here. Spelled
+     * again, a rename is silent in either direction: a moved capability id leaves the lookup
+     * permanently false, so every declared snapshot reports as underivable, and a moved mode code
+     * leaves it null, so the check stops flagging anything at all. Both are green builds under a
+     * heading that quietly stopped meaning what it says.
      */
-    private static final Map<String, String> DERIVABLE_FROM =
-            Map.of("snapshot", "batch_read_function", "cdc", "stream_read_function");
+    private static final Map<String, String> DERIVABLE_FROM = Map.of(
+            SourceMode.SNAPSHOT.yaml(), DerivedCapability.BATCH_READ.capabilityId(),
+            SourceMode.CDC.yaml(), DerivedCapability.STREAM_READ.capabilityId());
 
-    private static final String WRITE_RECORD = "write_record_function";
+    private static final String WRITE_RECORD = DerivedCapability.WRITE_RECORD.capabilityId();
 
     private CatalogAssembler() {
     }
@@ -66,7 +72,7 @@ final class CatalogAssembler {
             Map<String, Object> tree = asMap(CatalogJson.parse(content));
             NormalizedSpec spec = SpecNormalizer.normalize(tree);
             Set<String> caps = bitmap.getOrDefault(source.id(), Set.of());
-            String hash = sha256(content);
+            String hash = SpecHash.of(content);
 
             ConnectorCatalogEntry entry =
                     CatalogEntryAssembler.assemble(spec, caps, overlay, source.specPath(), hash);
@@ -135,20 +141,5 @@ final class CatalogAssembler {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> asMap(Object value) {
         return value instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
-    }
-
-    /** First 16 hex chars of the spec's SHA-256 — enough to detect any upstream content change. */
-    private static String sha256(String content) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(content.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder();
-            for (int i = 0; i < 8; i++) {
-                hex.append(String.format("%02x", digest[i]));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
     }
 }
