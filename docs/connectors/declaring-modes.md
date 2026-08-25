@@ -1,3 +1,9 @@
+---
+status: engineering-draft
+publication: handoff
+target: https://tapstate.dev/docs/connectors/declaring-modes
+---
+
 # Declaring modes
 
 Most rows in the catalog get their modes **derived**: the connector is classloaded, the functions it

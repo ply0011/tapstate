@@ -1,3 +1,9 @@
+---
+status: engineering-draft
+publication: handoff
+target: https://tapstate.dev/docs/connectors/refreshing-the-catalog
+---
+
 # Refreshing the catalog
 
 Every connector this release knows about is described by a row in a catalog that ships inside the

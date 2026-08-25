@@ -1,3 +1,9 @@
+---
+status: engineering-draft
+publication: handoff
+target: https://tapstate.dev/docs/connectors
+---
+
 # Connectors
 
 A connector becomes known to Tapstate along one of two paths, and they answer to different rules.
