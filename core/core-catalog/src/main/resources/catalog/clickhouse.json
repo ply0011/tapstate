@@ -266,7 +266,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/clickhouse-connector/src/main/resources/spec_clickhouse.json",
     "specContentHash": "fa7b4641798898aa",
     "pdkApiVersion": null,

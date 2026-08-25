@@ -53,7 +53,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/vika-connector/src/main/resources/spec_vika.json",
     "specContentHash": "f3028f7a4ff04dfd",
     "pdkApiVersion": null,

@@ -28,13 +28,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/ali1688-connector/src/main/resources/spec.json",
     "specContentHash": "454a3bfdba444f82",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "api": "declared"
+      "api": "overlay"
     }
   }
 }

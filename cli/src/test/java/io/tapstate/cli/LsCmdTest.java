@@ -50,8 +50,10 @@ class LsCmdTest {
     private static void scaffold(Path ws) {
         assertThat(run("new", "--non-interactive", "--kind", "source",
                 "--connector", "mysql", "--id", "src_a", "--mode", "cdc", "-w", ws.toString()).code()).isZero();
+        // No --mode: src_b stays a connection supplier, which is what the summary assertions below
+        // distinguish from src_a. It has to be a connector this release installs, or new refuses it.
         assertThat(run("new", "--non-interactive", "--kind", "source",
-                "--connector", "postgres", "--id", "src_b", "-w", ws.toString()).code()).isZero();
+                "--connector", "mongodb", "--id", "src_b", "-w", ws.toString()).code()).isZero();
         assertThat(run("new", "--non-interactive", "--kind", "pipeline",
                 "--id", "p1", "--source", "src_a", "--source", "src_b", "--sync-to", "src_b",
                 "-w", ws.toString()).code()).isZero();
@@ -89,7 +91,7 @@ class LsCmdTest {
         // shape so inverting the mode ternary (always append a mode) cannot pass: no trailing separator
         // after the connector, and no leaked "null"
         assertThat(r.out()).contains("mysql").contains("cdc");
-        assertThat(r.out()).contains("postgres").doesNotContain("postgres,").doesNotContain("null");
+        assertThat(r.out()).contains("mongodb").doesNotContain("mongodb,").doesNotContain("null");
     }
 
     @Test
@@ -132,7 +134,7 @@ class LsCmdTest {
                 .contains("\"mode\": \"cdc\"");
         // the no-mode source carries its connector but NO mode key — exactly one "mode" in the whole
         // envelope (src_a's), so the omit-when-null branch cannot be replaced by an always-emit
-        assertThat(r.out()).contains("\"id\": \"src_b\"").contains("\"connector\": \"postgres\"");
+        assertThat(r.out()).contains("\"id\": \"src_b\"").contains("\"connector\": \"mongodb\"");
         assertThat(countOf(r.out(), "\"mode\"")).isEqualTo(1);
         // the pipeline entry carries a numeric source count and BOTH boolean surfaces (view is false)
         assertThat(r.out()).contains("\"kind\": \"pipeline\"")

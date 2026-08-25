@@ -36,7 +36,7 @@ class ConnectorCatalogViewTest {
               "id": "acme", "name": "Acme", "displayName": "Acme", "icon": null,
               "group": "database", "modes": ["snapshot"], "discovery": "catalog",
               "sink": {"capable": false, "writeSemantics": []}, "pushOut": false, "config": [],
-              "provenance": {"connectorRepoSha": null, "specPath": "spec.json", "specContentHash": "h",
+              "provenance": {"specPath": "spec.json", "specContentHash": "h",
                 "pdkApiVersion": "1.0.0", "requiredLevel": null, "modeSource": {"snapshot": "derived"}}
             }
             """;

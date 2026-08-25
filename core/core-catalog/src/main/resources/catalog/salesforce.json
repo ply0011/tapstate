@@ -28,13 +28,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/salesforce-connector/src/main/resources/spec.json",
     "specContentHash": "a7389586eca6b0c6",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "api": "declared"
+      "api": "overlay"
     }
   }
 }

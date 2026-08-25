@@ -17,7 +17,7 @@ class ModeResolverTest {
         ModeResolution resolution = ModeResolver.resolve(
                 EnumSet.of(DerivedCapability.BATCH_READ, DerivedCapability.STREAM_READ,
                         DerivedCapability.WRITE_RECORD),
-                null);
+                null, null);
 
         assertThat(resolution.modes()).containsExactlyInAnyOrder(SourceMode.SNAPSHOT, SourceMode.CDC);
         assertThat(resolution.source(SourceMode.SNAPSHOT)).isEqualTo(ModeSource.DERIVED);
@@ -31,7 +31,7 @@ class ModeResolverTest {
         ModeResolution resolution = ModeResolver.resolve(
                 EnumSet.of(DerivedCapability.BATCH_READ, DerivedCapability.STREAM_READ,
                         DerivedCapability.WRITE_RECORD),
-                List.of("stream"));
+                List.of("stream"), null);
 
         assertThat(resolution.modes()).containsExactly(SourceMode.STREAM);
         assertThat(resolution.source(SourceMode.STREAM)).isEqualTo(ModeSource.DECLARED);
@@ -41,14 +41,14 @@ class ModeResolverTest {
 
     @Test
     void snapshotOnlySourceDerivesOnlySnapshot() {
-        ModeResolution resolution = ModeResolver.resolve(EnumSet.of(DerivedCapability.BATCH_READ), null);
+        ModeResolution resolution = ModeResolver.resolve(EnumSet.of(DerivedCapability.BATCH_READ), null, null);
 
         assertThat(resolution.modes()).containsExactly(SourceMode.SNAPSHOT);
     }
 
     @Test
     void sinkOnlyConnectorHasNoSourceModes() {
-        ModeResolution resolution = ModeResolver.resolve(EnumSet.of(DerivedCapability.WRITE_RECORD), null);
+        ModeResolution resolution = ModeResolver.resolve(EnumSet.of(DerivedCapability.WRITE_RECORD), null, null);
 
         assertThat(resolution.modes()).isEmpty();
     }
@@ -58,7 +58,7 @@ class ModeResolverTest {
         // A SaaS connector registers batch/stream reads but is semantically an API pull.
         ModeResolution resolution = ModeResolver.resolve(
                 EnumSet.of(DerivedCapability.BATCH_READ, DerivedCapability.STREAM_READ),
-                List.of("api"));
+                List.of("api"), null);
 
         assertThat(resolution.modes()).containsExactly(SourceMode.API);
         assertThat(resolution.source(SourceMode.API)).isEqualTo(ModeSource.DECLARED);
@@ -68,7 +68,7 @@ class ModeResolverTest {
     void multipleDeclaredModesAreAllMarkedDeclared() {
         ModeResolution resolution = ModeResolver.resolve(
                 EnumSet.of(DerivedCapability.BATCH_READ, DerivedCapability.STREAM_READ),
-                List.of("snapshot", "cdc"));
+                List.of("snapshot", "cdc"), null);
 
         assertThat(resolution.modes()).containsExactlyInAnyOrder(SourceMode.SNAPSHOT, SourceMode.CDC);
         assertThat(resolution.source(SourceMode.SNAPSHOT)).isEqualTo(ModeSource.DECLARED);
@@ -78,7 +78,7 @@ class ModeResolverTest {
     @Test
     void unknownDeclaredModeIsRejectedRatherThanSilentlyDropped() {
         assertThatThrownBy(() -> ModeResolver.resolve(
-                EnumSet.of(DerivedCapability.BATCH_READ), List.of("steam")))
+                EnumSet.of(DerivedCapability.BATCH_READ), List.of("steam"), null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("steam");
     }

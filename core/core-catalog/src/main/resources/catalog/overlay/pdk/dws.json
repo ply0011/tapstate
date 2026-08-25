@@ -1,0 +1,12 @@
+{
+  "modes": [
+    "snapshot"
+  ],
+  "sink": {
+    "capable": true,
+    "writeSemantics": [
+      "upsert",
+      "append"
+    ]
+  }
+}

@@ -3,9 +3,7 @@ package io.tapstate.core.dsl;
 import io.tapstate.core.catalog.ConfigField;
 import io.tapstate.core.catalog.ConfigType;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
-import io.tapstate.core.catalog.ConnectorGroup;
 import io.tapstate.core.catalog.EnumOption;
-import io.tapstate.core.catalog.ModeSource;
 import io.tapstate.core.catalog.TapstateCatalog;
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceMode;
@@ -67,25 +65,12 @@ public final class CapabilityRules {
         if (s.mode() == null) {
             return;   // a pure connection supplier (write target) has no read mode to check
         }
-        if (entry.modes().isEmpty() || !modesAreTrustworthy(entry)) {
+        if (entry.modes().isEmpty() || !entry.modesAreTrustworthy()) {
             return;   // catalog has no reliable mode signal for this connector → defer to server
         }
         if (!entry.modes().contains(s.mode())) {
             throw unsupportedMode(s.connector(), s.mode(), entry.modes());
         }
-    }
-
-    /**
-     * Whether the catalog's modes for {@code entry} can be trusted as the connector's full matrix.
-     * Capability derivation only yields {@code snapshot} / {@code cdc}; the unbounded {@code stream}
-     * / {@code api} / {@code file} modes must be declared. So derivation is authoritative only for a
-     * database (its real modes are exactly the derivable ones); a non-database connector is trusted
-     * only once it carries an explicit declaration — otherwise its derived modes are an artifact and
-     * its true mode is simply undeclared, which offline cannot reject.
-     */
-    private static boolean modesAreTrustworthy(ConnectorCatalogEntry entry) {
-        return entry.group() == ConnectorGroup.DATABASE
-                || entry.provenance().modeSource().containsValue(ModeSource.DECLARED);
     }
 
     private static void checkConfig(SourceResource s, ConnectorCatalogEntry entry, boolean requireRequired) {

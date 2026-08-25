@@ -10,7 +10,7 @@ import java.util.List;
  * {@code id\tmodule\tclass} — the id (the bitmap key), the module (so derive resolves the built dist
  * jar) and the fully-qualified connector class (what derive classloads). A line-oriented hand-off
  * keeps derive dependency-free: it parses with a split, no JSON library. JavaScript connectors have
- * no class and are omitted. Lines are sorted by id with the same comparator the walk and assembler
+ * no class and are omitted, as are the connectors this repository cannot build. Lines are sorted by id with the same comparator the walk and assembler
  * use, so the file is deterministic. The shape is the contract between the two tools; catalog-derive
  * reads these same fields.
  */
@@ -26,6 +26,9 @@ final class ManifestWriter {
         for (ConnectorSource source : ordered) {
             if (source.connectorClassFqn() == null) {
                 continue; // no class to classload (a JavaScript connector); nothing to probe
+            }
+            if (UnbuildableConnectors.contains(source.id())) {
+                continue; // named unbuildable: on the worklist it stops the reactor, deriving nothing
             }
             sb.append(source.id()).append('\t')
                     .append(source.moduleName()).append('\t')
