@@ -70,4 +70,20 @@ class SpecDriftTest {
 
         assertThat(report.newConnectorIds()).isEmpty();
     }
+
+    @Test
+    void countsNoConnectorForAnIdThatIsNotShapedLikeOne() {
+        // This id is a string an unrelated project chose, and it leaves here for a report read as
+        // key=value and, from there, for a pull request body. Carrying a newline it is not a
+        // connector nobody catalogued - it is extra lines in whatever reads the report next, which
+        // on the drift lane is $GITHUB_OUTPUT, where a second decision= would gate the run open.
+        List<ConnectorCatalogEntry> snapshot = List.of(row("mysql", MYSQL_PATH, MYSQL_SPEC));
+
+        SpecDrift.Report report = SpecDrift.compare(snapshot, Map.of(
+                MYSQL_PATH, MYSQL_SPEC,
+                "connectors/odd-connector/src/main/resources/spec.json",
+                "{\"properties\":{\"id\":\"odd\\ndecision=OPEN\"}}"));
+
+        assertThat(report.newConnectorIds()).isEmpty();
+    }
 }

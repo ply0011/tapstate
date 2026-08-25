@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 import io.tapstate.core.catalog.CatalogJson;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
@@ -16,6 +17,15 @@ import io.tapstate.core.catalog.ConnectorCatalogEntry;
  * is, and a connector upstream carries that no row mentions at all.
  */
 final class SpecDrift {
+
+    /**
+     * The shape a connector id is allowed to have. Nothing upstream enforces this, and everything
+     * this method returns is a string an unrelated project chose: it flows into the catalog, into a
+     * scan report read as key=value, and from there into a pull request body. An id carrying a
+     * newline would not be a connector nobody catalogued - it would be extra lines in whatever reads
+     * the report next.
+     */
+    private static final Pattern CONNECTOR_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._\\-]*");
 
     /**
      * @param changedIds      catalogued connectors whose specification content no longer matches the
@@ -70,7 +80,7 @@ final class SpecDrift {
             // shape and decides here, so a resource that merely sits where a specification would is
             // passed over rather than announced as a connector nobody catalogued.
             String id = connectorId(fetched.getValue());
-            if (id != null && !id.isBlank() && !catalogued.contains(id)) {
+            if (id != null && !catalogued.contains(id)) {
                 discovered.add(id);
             }
         }
@@ -84,9 +94,9 @@ final class SpecDrift {
         } catch (RuntimeException malformed) {
             return null; // not parseable, so not a specification this scan can speak for
         }
-        if (tree instanceof Map<?, ?> root && root.get("properties") instanceof Map<?, ?> properties) {
-            Object id = properties.get("id");
-            return id instanceof String s ? s : null;
+        if (tree instanceof Map<?, ?> root && root.get("properties") instanceof Map<?, ?> properties
+                && properties.get("id") instanceof String id && CONNECTOR_ID.matcher(id).matches()) {
+            return id;
         }
         return null;
     }
