@@ -63,6 +63,16 @@ public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
         return OfficialConnectors.IDS;
     }
 
+    /**
+     * The same overlay the checked-in snapshot was assembled against, so a connector registered at
+     * runtime lands on the same catalog row the offline path would have produced for it.
+     *
+     * <p>Read once for the process rather than per registration: it is an immutable object rebuilt
+     * from the same bundled resources every time, and registering a directory of artifacts would
+     * otherwise re-read and re-parse the whole overlay once per connector.
+     */
+    private static final ConnectorOverlay OVERLAY = ConnectorOverlay.load();
+
     private final ConnectorRegistry registry;
     private final ConnectorIntrospector introspector;
     private final CapabilityDeriver capabilityDeriver;
@@ -286,10 +296,8 @@ public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
             return;
         }
         NormalizedSpec normalized = SpecNormalizer.normalize(asSpecObject(specTree));
-        // The same overlay the checked-in snapshot was assembled against, so a connector registered at
-        // runtime lands on the same catalog row the offline path would have produced for it.
         ConnectorCatalogEntry row = CatalogEntryAssembler.assemble(
-                normalized, capabilities.capabilityIds(), ConnectorOverlay.load(),
+                normalized, capabilities.capabilityIds(), OVERLAY,
                 introspected.specPath(), specHash);
         catalogStore.upsert(row);
     }
