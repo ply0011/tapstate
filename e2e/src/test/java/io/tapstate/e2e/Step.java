@@ -21,6 +21,22 @@ public sealed interface Step {
     /** Drives one lifecycle verb and returns once the intent is recorded, not once it converges. */
     record Lifecycle(LifecycleVerb verb) implements Step {}
 
+    /**
+     * Holds or releases one source stream, leaving every other stream of the same pipeline running.
+     *
+     * <p>The same two words the whole-pipeline form uses, carrying the source they apply to - so a
+     * reader learns the scope from whether a source is named, not from a second pair of verbs. Held
+     * means the source's bytes stop reaching the product while the source itself keeps accepting
+     * writes; releasing lets what was written meanwhile through, in the order the source recorded it.
+     * That ordering is the whole reason the hold is worth having: it is how a specification produces
+     * an arrival order that disagrees with the source order, which no amount of waiting can arrange.
+     *
+     * <p>Holding is a state and not a count, so holding a held stream is nothing rather than an error,
+     * and a stream still held when the steps run out is released by the run that held it - the gate
+     * belongs to the harness and dies with it either way.
+     */
+    record StreamLifecycle(StreamVerb verb, String sourceId) implements Step {}
+
     /** Produces changes against a seeded table while the pipeline is running. */
     record Cdc(TableAlias table, Change change) implements Step {}
 

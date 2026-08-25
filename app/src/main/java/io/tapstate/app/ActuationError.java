@@ -69,6 +69,14 @@ enum ActuationError implements TapstateErrorCode {
     VIEW_STORE_NOT_CONFIGURED("actuation.view-store-not-configured", Set.of("store")),
 
     /**
+     * A pipeline declares a view and the managed state store it materializes into is configured but does
+     * not answer; {@code store} is the source id and {@code reason} what the probe reported. Distinct
+     * from {@link #VIEW_STORE_NOT_CONFIGURED} on purpose: that one says nobody set the store up, this one
+     * says it is set up and unreachable, and the two send an operator to different places.
+     */
+    VIEW_STORE_UNREACHABLE("actuation.view-store-unreachable", Set.of("store", "reason")),
+
+    /**
      * A view's declared key is not the identity of what feeds it; {@code view} is its id, {@code key}
      * the view's key, {@code identity} the feed's - a nest's root key, or a table's discovered key.
      * The sink upserts on the view's key and indexes it uniquely, so records that differ only on the

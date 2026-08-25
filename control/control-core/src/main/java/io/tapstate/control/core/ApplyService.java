@@ -8,6 +8,7 @@ import io.tapstate.core.dsl.DslParser;
 import io.tapstate.core.dsl.DiscoveredTable;
 import io.tapstate.core.dsl.RowExpressionTypeRules;
 import io.tapstate.core.dsl.Workspace;
+import io.tapstate.core.dsl.WriteKeyRules;
 import io.tapstate.core.model.PipelineResource;
 import io.tapstate.core.model.Resource;
 import io.tapstate.core.model.SourceResource;
@@ -125,6 +126,7 @@ public final class ApplyService {
         // advises on the same reading rather than paying a second round trip for a possibly different one.
         Map<String, List<DiscoveredTable>> discovered = discoveredTables(resources);
         RowExpressionTypeRules.validate(resources, discovered);
+        WriteKeyRules.validate(resources, discovered);
         List<Resource> validated = List.copyOf(workspace.resources());
         List<PreparedArtifact> prepared = new ArrayList<>();
         for (Resource resource : validated) {
@@ -260,8 +262,12 @@ public final class ApplyService {
                             }
                             // The row count travels with the columns, absence and all: a table nobody
                             // counted has to stay distinguishable from one counted and found empty.
+                            // The declared key travels the same way, and for the same reason a rule
+                            // about writes needs it: whether a write can be matched to an existing
+                            // row is a property of the table, decided where the table is described.
                             tables.add(new DiscoveredTable(
-                                    table.name(), columns, table.approximateRowCount()));
+                                    table.name(), columns, table.primaryKey(),
+                                    table.approximateRowCount()));
                         }
                         bySource.put(source.id(), tables);
                     });

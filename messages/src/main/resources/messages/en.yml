@@ -26,6 +26,9 @@ actuation.view-storage-tier-unsupported:
 actuation.view-store-not-configured:
   message: "The managed state store `{store}` a view materializes into is not configured."
   solution: "Start the deployment's managed state store, or register a source under that id for views to materialize into."
+actuation.view-store-unreachable:
+  message: "The managed state store `{store}` a view materializes into did not answer: {reason}"
+  solution: "Check that the state store is running and reachable from the server, then start the pipeline again."
 actuation.view-key-not-feed-identity:
   message: "View `{view}` declares key `{key}`, but what feeds it is identified by `{identity}`."
   solution: "Declare the view's primaryKey as that identity column. An identity spanning several columns cannot be served by a view today - a view's key is a single column, and materializing on fewer columns than the identity collapses distinct records."
@@ -66,9 +69,24 @@ capture.start-from-unparsable:
 capture.event-table-not-selected:
   message: "The capture stream emitted table `{table}`, which this pipeline did not select."
   solution: "Update the source table selection or verify the connector emits the configured table names."
+cli.alias-install-dir-unknown:
+  message: "No installed `tapstate` was found in `{path}`."
+  solution: "Run this where tapstate is installed, or set TAPSTATE_INSTALL_DIR to that directory - the same variable the installer honours."
+cli.alias-link-failed:
+  message: "The `tap` shortcut at `{path}` could not be created or removed: {reason}"
+  solution: "Check that the directory exists and you can write to it, then run `tapstate alias install` again. tapstate itself works without the shortcut."
+cli.alias-name-taken:
+  message: "`{path}` already exists and is not the tapstate shortcut."
+  solution: "Leave it in place - tapstate works without the shortcut. Remove that file yourself if you want the `tap` name, then run `tapstate alias install` again."
 cli.artifact-exists:
   message: "An artifact already exists at {path}."
   solution: "Choose a different id or --out, or pass --force to overwrite."
+cli.demo-workspace-exists:
+  message: "The workspace already holds a demo resource at {path}."
+  solution: "Use a different workspace with -w, or pass --force to overwrite the demo files there."
+cli.workspace-not-writable:
+  message: "Could not write {path}: {reason}"
+  solution: "Check that the directory exists, is writable, and that no plain file is sitting where a directory is needed. Demo files this run wrote were removed and any it overwrote were put back, though empty directories it created can remain."
 cli.unknown-connector:
   message: "No connector '{connector}' in the catalog."
   solution: "Pick a connector id from the catalog; run `tapstate new` interactively to choose one."
@@ -138,6 +156,9 @@ dsl.row-expression-type-unsupported:
 dsl.row-expression-type-unknown:
   message: "Expression `{expr}` at {path} reads column `{column}` of table `{table}`, which nothing resolved a type for."
   solution: "Whether this expression can run is unknown; drop the reference to `{column}`, or read a column whose type the source declares."
+dsl.upsert-needs-key:
+  message: "The sync at {path} upserts table `{table}` of source `{source}`, but that table declares no key, so no write can be matched to the row it belongs to."
+  solution: "Give `{table}` a primary key and discover `{source}` again, or write with `write_mode: append`, which adds rows instead of matching them. A unique index is not enough: only a primary key is read as the key here."
 dsl.composition:
   message: "Composition rule broken at {path}: {detail}."
   solution: "Review how the resources are wired together."
@@ -453,3 +474,66 @@ nest.state-far-exceeds-memory-budget:
 nest.capacity-estimate-incomplete:
   message: "Nest level {embedPath} of pipeline {pipeline} could be sized from {counted} of the {total} inputs feeding it; the rest report no row count, so what was estimated is a floor."
   solution: "Discover the sources feeding that level so their tables report row counts, then apply again to have it sized on all of them."
+# Connector-supplied connection-test diagnostics.
+#
+# The connector API's typed test exceptions carry translation keys rather than sentences, and the
+# bundle that resolves them belongs to the platform those connectors were written for. These entries
+# supply the wording here instead, so a check that fails tells the reader what to do about it.
+#
+# They sit under a reserved pdk.testitem. prefix, constructionally disjoint from first-party
+# <domain>.<symbol> codes: a connector cannot collide with one, and they are not first-party codes,
+# so they are not in the codes golden. The set is fixed by the connector API, not open-ended.
+pdk.testitem.check.cdc.privilege.reason:
+  message: "The account does not hold the privileges a change stream needs."
+pdk.testitem.check.cdc.privilege.solution:
+  message: "Grant the replication privileges your database requires for change data capture, then test again."
+pdk.testitem.read.privilege.reason:
+  message: "The account cannot read one or more of the selected tables."
+pdk.testitem.read.privilege.solution:
+  message: "Grant read access on the tables this source selects, then test again."
+pdk.testitem.write.privilege.reason:
+  message: "The account cannot write to the target."
+pdk.testitem.write.privilege.solution:
+  message: "Grant insert, update and delete on the target tables, then test again."
+pdk.testitem.create.table.privilege.reason:
+  message: "The account cannot create tables, so a target table that does not exist yet cannot be created."
+pdk.testitem.create.table.privilege.solution:
+  message: "Either grant table creation, or create the target tables yourself before starting the pipeline."
+pdk.testitem.pdk.version.reason:
+  message: "The server version is outside the range this connector is verified against."
+pdk.testitem.pdk.version.solution:
+  message: "Check the connector's supported versions; outside them it is untested rather than certain to fail."
+pdk.testitem.pdk.connection.reason:
+  message: "The database could not be reached with these settings."
+pdk.testitem.pdk.connection.solution:
+  message: "Check the host, port, database and credentials, and that the server accepts connections from this machine."
+pdk.testitem.check.host.port.reason:
+  message: "The host and port did not accept a connection."
+pdk.testitem.check.host.port.solution:
+  message: "Check the address is reachable from where tapstate runs; firewalls and container networking are the usual causes."
+pdk.testitem.time.consistent.reason:
+  message: "The database clock differs noticeably from this machine's."
+pdk.testitem.time.consistent.solution:
+  message: "Sync the clocks; a large difference makes timestamps and change ordering hard to reason about."
+pdk.testitem.stream.read.reason:
+  message: "The change stream could not be started."
+pdk.testitem.stream.read.solution:
+  message: "Check that change data capture is enabled on the server and any required log or replication settings are in place."
+pdk.testitem.check.cdc.privilege.fail:
+  message: "The change-stream privilege check did not pass."
+pdk.testitem.read.privilege.fail:
+  message: "The read privilege check did not pass."
+pdk.testitem.write.privilege.fail:
+  message: "The write privilege check did not pass."
+pdk.testitem.create.table.privilege.fail:
+  message: "The table-creation privilege check did not pass."
+pdk.testitem.pdk.version.fail:
+  message: "The server version check did not pass."
+pdk.testitem.pdk.connection.fail:
+  message: "The connection could not be established."
+pdk.testitem.check.host.port.fail:
+  message: "The host and port did not accept a connection."
+pdk.testitem.time.consistent.fail:
+  message: "The clock comparison did not pass."
+pdk.testitem.stream.read.fail:
+  message: "The change stream could not be started."

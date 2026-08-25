@@ -327,6 +327,34 @@
               "$ref": "#/$defs/matcher"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pause"
+          ],
+          "properties": {
+            "pause": {
+              "type": "string",
+              "description": "The id of the source whose stream this holds or releases, leaving every other stream of the same pipeline running.",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "resume"
+          ],
+          "properties": {
+            "resume": {
+              "type": "string",
+              "description": "The id of the source whose stream this holds or releases, leaving every other stream of the same pipeline running.",
+              "minLength": 1
+            }
+          }
         }
       ]
     },

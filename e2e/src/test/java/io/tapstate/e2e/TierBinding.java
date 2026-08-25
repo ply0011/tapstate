@@ -57,6 +57,21 @@ public interface TierBinding {
     /** Records a lifecycle intent. Returns once the intent is recorded, not once it converges. */
     void drive(String pipelineId, LifecycleVerb verb);
 
+    /**
+     * Holds or releases one source's stream, leaving the pipeline and its other streams alone.
+     *
+     * <p>Not a lifecycle intent and not sent to the product at all: a job is suspended whole, so there
+     * is no product verb that could mean this. The harness holds the stream where it owns the ground -
+     * between the source and whatever is reading it - which is why the source keeps accepting writes
+     * while it is held, and why releasing delivers them in the order the source recorded them rather
+     * than the order they were held in. That is the one arrangement a specification cannot reach by
+     * waiting: an arrival order that disagrees with the source order.
+     *
+     * <p>Holding is a state. Holding a held stream is nothing, releasing a running one is nothing, and
+     * a stream left held when a run ends is released with the run.
+     */
+    void driveStream(String sourceId, StreamVerb verb);
+
     /** Produces changes against a table while the pipeline runs. */
     void cdc(TableAlias table, CdcOp op, long rows);
 

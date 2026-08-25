@@ -88,6 +88,20 @@ class ViewTargetResolverTest {
     }
 
     @Test
+    void the_managed_store_is_named_views() {
+        // Pin the literal, not just the constant's self-consistency. The test above proves every view
+        // lands in the *same* store, which stays true under any rename and so cannot notice one. This
+        // name is not internal: the demo workspace declares a source under it, the walkthrough addresses
+        // the database by it, and a reader of `show collections` sees it as the prefix on every listing.
+        // Those live outside this module and no compiler relates them, so the coupling needs an assertion
+        // that fails when the name moves and sends whoever moved it to look at the other three.
+        assertThat(ViewTargetResolver.STATE_STORE_SOURCE_ID)
+                .as("the managed state store's user-visible name, also spelled in the demo workspace, "
+                        + "the walkthrough, and every collection listing")
+                .isEqualTo("views");
+    }
+
+    @Test
     void the_primary_key_is_indexed_by_default_and_uniquely() {
         // Nothing else makes the key a viable sort key: a non-unique index leaves a range start
         // ambiguous, and no index at all fails only once the data outgrows an in-memory sort.

@@ -712,6 +712,38 @@ class HttpControlPlaneClientTest {
         }
     }
 
+    /**
+     * A refusal is a refusal even when one of its named parameters came down as JSON null.
+     *
+     * <p>Nothing on the way here rejects a null value - the server's error carries its arguments in a
+     * map that permits them, and this client decodes them into one that permits them too - so the
+     * first thing that refused was the copy taken when the outcome was built, one frame outside the
+     * catch that turns a malformed body into a refusal. The result was an uncaught crash out of
+     * {@code apply} on a path whose whole posture is that a bad error body is still an error, not a
+     * stack trace.
+     */
+    @Test
+    void applyReturnsRejectedEvenWhenAParameterCameDownAsNull() throws Exception {
+        HttpServer server = apiServer("/api/artifacts:apply", 400,
+                "{\"code\":\"dsl.upsert-needs-key\",\"message\":\"No key.\","
+                        + "\"params\":{\"table\":\"events\",\"source\":null}}",
+                new AtomicReference<>());
+        try {
+            ApplyOutcome outcome = new HttpControlPlaneClient()
+                    .apply(baseOf(server), "tok", List.of(new LocalDraft("bad.tap.yml", "kind: nope\n")));
+
+            assertThat(outcome).isInstanceOfSatisfying(ApplyOutcome.Rejected.class, rejected -> {
+                assertThat(rejected.code()).isEqualTo("dsl.upsert-needs-key");
+                assertThat(rejected.params()).containsEntry("table", "events");
+                assertThat(rejected.params())
+                        .as("the null value is carried, not dropped and not fatal")
+                        .containsEntry("source", null);
+            });
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test
     void applyReturnsUnreachableWhenTheServerIsDownWithoutThrowing() throws Exception {
         int closedPort;

@@ -1,0 +1,7 @@
+version: tapstate/v1
+kind: source
+id: orders_db
+connector: mysql
+config: { host: ${ORDERS_HOST}, port: ${ORDERS_PORT}, database: ${ORDERS_DATABASE}, username: ${ORDERS_USERNAME}, password: ${ORDERS_PASSWORD} }
+mode: cdc
+tables: [ orders ]

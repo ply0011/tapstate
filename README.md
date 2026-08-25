@@ -78,9 +78,12 @@ not current guarantees.
 ## Try the current preview
 
 Run the preview locally as a Docker Compose stack. The quickstart brings up MySQL,
-the tapstate server, and a MongoDB-backed preview store, then drives a real snapshot
-and CDC flow. One command does the whole flow in a `tapstate-demo` directory it
-creates:
+PostgreSQL, the tapstate server and a MongoDB-backed preview store, then assembles an
+order in one engine and its shipments in the other into a single object that stays
+fresh as either side changes. Neither database can see the other's table, so there is
+no SQL view to write and no cross-database join to run: reaching across takes federation
+set up in advance, or an application that queries both and stitches the result on every
+request. One command does the whole flow in a `tapstate-demo` directory it creates:
 
 ```sh
 curl -sSL https://install.tapstate.dev | sh
@@ -99,6 +102,20 @@ Everything it installs stays inside that one directory; tearing down is
 `docker compose down -v` in it, and `rm -rf` of the directory removes the rest.
 See [docs/quickstart-online.md](docs/quickstart-online.md) for the full walkthrough
 and the manual `docker compose` steps behind it.
+
+The recording of this demo, and what each shot is evidence for, is written down shot
+by shot in [docs/demo.md](docs/demo.md) — including what the recording does *not*
+prove, and the fact that its images were pulled beforehand so your first run includes
+a download it does not.
+
+Already have the stack up and just want the workspace back? `tapstate demo` writes
+the same three resources the quickstart generates, and `tapstate demo --print-steps`
+prints the walkthrough they belong to:
+
+```sh
+tapstate demo -w work            # write the demo workspace
+tapstate demo --print-steps      # the walkthrough, without writing anything
+```
 
 > **Preview.** The runtime is single-node and not production-ready. Runtime state is
 > in memory, and a restart replays from the source rather than resuming a durable
@@ -188,6 +205,19 @@ or that MongoDB is the only future deployment option.
 The preview does not provide high availability, durable offset resume, exactly-once
 delivery, a stable State Data API, or push/subscription delivery. It is not intended
 for production-critical paths.
+
+That instance is also not a security boundary, and this one is worth stating as a
+mechanism rather than a caveat. It runs without authentication, and the server's own
+control-plane data — users, tokens, audit records, connection configuration, applied
+artifacts — sits in it alongside whatever your pipelines write. Anyone holding a
+Tapstate token can declare an ordinary source pointing at the control-plane database
+and read it back: that is valid `tapstate/v1`, not a bypass, and no confinement on the
+query surface reaches a source the user declared. The container publishes no host
+port, so the threshold is holding a token rather than reaching the network. Treat the
+bundled store as sharing Tapstate's trust domain, and do not put data in it that the
+users of this deployment should not see. Separating the two means adding
+authentication or a second instance; the preview does neither, deliberately, because
+both would cost the property that you need no MongoDB of your own to run it.
 
 This repository is for developers, platform engineers, and data infrastructure
 teams who want to try the engine, follow development, and help shape the project.

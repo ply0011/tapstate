@@ -190,13 +190,14 @@ class PipelineLogsApiTest {
 
     /**
      * A focused boot config: auto-configures Web MVC + the embedded servlet container, imports the path
-     * configuration, the logs controller and the coded-error advice, and supplies the {@link AuthInterceptor}
-     * (so the read surface is guarded) over an in-memory token graph. The logs read side is the real
+     * configuration, Spring Security, the logs controller and the coded-error advice over an in-memory token
+     * graph. The logs read side is the real
      * {@link PipelineLogQueryService} over a fake, seedable node-local sink.
      */
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({RestApiConfiguration.class, PipelineLogsController.class, ApiExceptionHandler.class})
+    @Import({RestApiConfiguration.class, RestApiSecurityConfiguration.class,
+            PipelineLogsController.class, ApiExceptionHandler.class})
     static class TestApp {
 
         @Bean
@@ -239,15 +240,6 @@ class PipelineLogsApiTest {
             return ControlOperations.registry();
         }
 
-        @Bean
-        CredentialAuthenticator credentialAuthenticator(TokenService tokens, TokenSigner signer) {
-            return new CredentialAuthenticator(tokens, signer);
-        }
-
-        @Bean
-        AuthInterceptor authInterceptor(OperationRegistry registry, CredentialAuthenticator credentials) {
-            return new AuthInterceptor(registry, credentials);
-        }
     }
 
     // ---- fakes ----

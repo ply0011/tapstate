@@ -172,7 +172,7 @@ class NestStateOutlivesARunAndIsDiscardedBetweenThemIT {
         Map<String, String> resources = new LinkedHashMap<>();
         resources.put("src_parents.tap.yml", sourceYaml("src_parents", source, PARENTS));
         resources.put("src_children.tap.yml", sourceYaml("src_children", source, CHILDREN));
-        resources.put("warehouse.tap.yml", warehouseYaml(warehouseUri));
+        resources.put("views.tap.yml", viewsYaml(warehouseUri));
         resources.put("pipeline.tap.yml", pipelineYaml(pipelineId, view));
         control.apply(resources);
         control.discoverSchema("src_parents", "mysql", source);
@@ -238,11 +238,11 @@ class NestStateOutlivesARunAndIsDiscardedBetweenThemIT {
                         config.get("username"), config.get("password"), table);
     }
 
-    private static String warehouseYaml(String uri) {
+    private static String viewsYaml(String uri) {
         return """
                 version: tapstate/v1
                 kind: source
-                id: warehouse
+                id: views
                 connector: mongodb
                 config: { uri: "%s" }
                 """

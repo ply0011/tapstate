@@ -17,12 +17,12 @@
 name: a-view-and-a-serve-block-each-receive-the-rows
 setup:
   connectors: [e2e_file]
-  apply: [src_file.tap.yml, warehouse.tap.yml, tgt_file.tap.yml, pipeline.tap.yml]
+  apply: [src_file.tap.yml, views.tap.yml, tgt_file.tap.yml, pipeline.tap.yml]
   discover: [src_file]
 pipeline: pipeline.tap.yml
 seed:
   src_file.orders: { rows: 4 }
 steps:
   - start
-  - await: { count: { warehouse.order_state: 4 } }
+  - await: { count: { views.order_state: 4 } }
   - await: { count: { tgt_file.orders: 4 } }

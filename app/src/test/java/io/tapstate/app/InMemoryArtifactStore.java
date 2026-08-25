@@ -1,6 +1,7 @@
 package io.tapstate.app;
 
 import io.tapstate.core.model.Resource;
+import io.tapstate.spi.store.ArtifactMutation;
 import io.tapstate.spi.store.ArtifactStore;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,6 +22,20 @@ final class InMemoryArtifactStore implements ArtifactStore {
         for (Resource artifact : artifacts) {
             byId.put(artifact.id(), artifact);
         }
+    }
+
+    /**
+     * Inserts only when the id is free, mirroring the backing store's atomic create. The distinction from
+     * {@code saveAll} is the whole point for a caller that must not overwrite what somebody else declared,
+     * so a double that upserted here would let such a caller pass while overwriting in production.
+     */
+    @Override
+    public ArtifactMutation create(Resource artifact) {
+        if (byId.containsKey(artifact.id())) {
+            return ArtifactMutation.ALREADY_EXISTS;
+        }
+        byId.put(artifact.id(), artifact);
+        return ArtifactMutation.CREATED;
     }
 
     @Override

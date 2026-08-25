@@ -37,7 +37,7 @@ setup:
     src: { kind: mysql }
     store: { kind: mongo }
   connectors: [mysql, mongodb]
-  apply: [src_ripple_orders.tap.yml, src_ripple_items.tap.yml, warehouse.tap.yml, pipeline.tap.yml]
+  apply: [src_ripple_orders.tap.yml, src_ripple_items.tap.yml, views.tap.yml, pipeline.tap.yml]
   discover: [src_ripple_orders, src_ripple_items]
 pipeline: pipeline.tap.yml
 seed:
@@ -53,7 +53,7 @@ seed:
       - { id: 4, order_id: 2, sku: sku-4 }
 steps:
   - start
-  - await: { count: { warehouse.ripple_state: 2 } }
-  - assert: { doc: { warehouse.ripple_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
+  - await: { count: { views.ripple_state: 2 } }
+  - assert: { doc: { views.ripple_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
   - cdc: { src_ripple_orders.ripple_orders: { update: { where: { id: 1 }, set: { customer: hopper } } } }
-  - await: { doc: { warehouse.ripple_state: { where: { id: 1 }, expect: { customer: hopper }, size: { items: 3 } } } }
+  - await: { doc: { views.ripple_state: { where: { id: 1 }, expect: { customer: hopper }, size: { items: 3 } } } }

@@ -38,7 +38,7 @@ setup:
     src: { kind: mysql }
     store: { kind: mongo }
   connectors: [mysql, mongodb]
-  apply: [src_shrink_orders.tap.yml, src_shrink_items.tap.yml, warehouse.tap.yml, pipeline.tap.yml]
+  apply: [src_shrink_orders.tap.yml, src_shrink_items.tap.yml, views.tap.yml, pipeline.tap.yml]
   discover: [src_shrink_orders, src_shrink_items]
 pipeline: pipeline.tap.yml
 seed:
@@ -54,10 +54,10 @@ seed:
       - { id: 4, order_id: 2, sku: sku-4 }
 steps:
   - start
-  - await: { count: { warehouse.shrink_state: 2 } }
-  - await: { doc: { warehouse.shrink_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
-  - await: { doc: { warehouse.shrink_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
+  - await: { count: { views.shrink_state: 2 } }
+  - await: { doc: { views.shrink_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
+  - await: { doc: { views.shrink_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
   - cdc: { src_shrink_items.shrink_items: { delete: { where: { id: 2 } } } }
-  - await: { doc: { warehouse.shrink_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 2 } } } }
-  - assert: { doc: { warehouse.shrink_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
-  - assert: { count: { warehouse.shrink_state: 2 } }
+  - await: { doc: { views.shrink_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 2 } } } }
+  - assert: { doc: { views.shrink_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }
+  - assert: { count: { views.shrink_state: 2 } }

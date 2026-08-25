@@ -251,6 +251,12 @@ public final class EnvelopeParser {
             throw new EnvelopeException("a step carries exactly one verb, found: " + mapping.keySet());
         }
         Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
+        // A lifecycle word carrying a body is the same verb scoped to one stream. Checked before the
+        // keyword enum so that the refusal an author reads names their word rather than reporting it
+        // unknown - it is a word they may write, just not one every verb may carry a source with.
+        if (Vocabulary.LIFECYCLE_STEPS.contains(only.getKey().toLowerCase(Locale.ROOT))) {
+            return streamLifecycle(only.getKey(), only.getValue());
+        }
         // Exhaustive over the keyword enum: a keyword added to the vocabulary does not compile until
         // it means something here.
         return switch (keyword(only.getKey())) {
@@ -267,6 +273,23 @@ public final class EnvelopeParser {
                             + Vocabulary.LIFECYCLE_STEPS);
         }
         return LifecycleVerb.valueOf(verb.toUpperCase(Locale.ROOT));
+    }
+
+    /**
+     * One lifecycle word applied to a single source stream. The source is written as a plain scalar
+     * because that is what it is - one name - and because the alternative flow-mapping spelling puts a
+     * key with no value in front of a reader, which every reader has to stop and decode.
+     */
+    private static Step streamLifecycle(String word, Object node) {
+        StreamVerb verb = word(StreamVerb.values(), StreamVerb::word, word.toLowerCase(Locale.ROOT),
+                word + " applies to the whole pipeline and cannot be scoped to one stream; "
+                        + "the words that can are " + Vocabulary.STREAM_SCOPED_STEPS);
+        if (!(node instanceof String sourceId) || sourceId.isBlank()) {
+            throw new EnvelopeException(
+                    word + " scoped to a stream names the source it holds, as in \"" + word
+                            + ": src_shipments\"; found: " + describe(node));
+        }
+        return new Step.StreamLifecycle(verb, sourceId);
     }
 
     private static StepKeyword keyword(String word) {

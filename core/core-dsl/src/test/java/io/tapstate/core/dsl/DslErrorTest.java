@@ -44,7 +44,10 @@ class DslErrorTest {
                 // but the verdict turns on a source's discovered column types, which it does not carry
                 "dsl.row-expression-needs-discovery",
                 "dsl.row-expression-type-unsupported",
-                "dsl.row-expression-type-unknown");
+                "dsl.row-expression-type-unknown",
+                // post-semantic too - whether a table declares a key is a property of the table,
+                // carried only by a discovered model and never by the document naming it
+                "dsl.upsert-needs-key");
     }
 
     @Test
@@ -80,6 +83,8 @@ class DslErrorTest {
                 .containsExactlyInAnyOrder("expr", "column", "type", "table", "path");
         assertThat(DslError.ROW_EXPRESSION_TYPE_UNKNOWN.placeholders())
                 .containsExactlyInAnyOrder("expr", "column", "table", "path");
+        assertThat(DslError.UPSERT_NEEDS_KEY.placeholders())
+                .containsExactlyInAnyOrder("table", "source", "path");
     }
 
     @Test

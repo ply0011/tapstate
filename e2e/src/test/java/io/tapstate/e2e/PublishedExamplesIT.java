@@ -155,19 +155,27 @@ class PublishedExamplesIT {
             ControlPlane control = new ControlPlane(server.baseUrl());
             control.bootstrapAndLogin("e2e", "e2e-password");
             HttpTierBinding binding = new HttpTierBinding(
-                    control, workspace, drivers(files, stores), env(stores));
+                    control, workspace, drivers(files, stores), env(stores),
+                    stores::driveStream, stores::behindTheGate);
 
-            new E2eExecutor(binding, new FilePipelineLoader(workspace), TIMEOUT, POLL).execute(envelope);
-
-            if (envelope.setup().databases().isEmpty()) {
-                settled.forEach((alias, rows) -> assertThat(
-                                files.count(EndpointAddress.uri(targetDirectory.toString()), alias.table()))
-                        .as("%s settles on %s rows in %s, read there by the address it named; this reads the "
-                                + "target this run handed out, which it cannot name", specification, rows, alias)
-                        .isEqualTo(rows));
-            } else {
-                theSettledCountIsInAStoreTheSeedNeverTouched(specification, envelope, settled, binding, stores);
+            // The scene covers the readings after the run as well as the run itself. Those assertions
+            // are the ones that read the store through an address the specification could not name, and
+            // a failure there is exactly the kind whose explanation dies with the containers.
+            try {
+                new E2eExecutor(binding, new FilePipelineLoader(workspace), TIMEOUT, POLL).execute(envelope);
+                verifyWhereItSettled(specification, envelope, settled, binding, stores, files);
+            } catch (RuntimeException | AssertionError failed) {
+                // Before the containers go away. Everything that would explain this failure is inside
+                // them, and a second run to add a print statement costs two database engines again.
+                FailureScene.write(
+                        FAILURE_SCENES.resolve(specification + "-" + tier.name().toLowerCase(Locale.ROOT) + ".txt"),
+                        envelope,
+                        binding,
+                        new FilePipelineLoader(workspace).resolvePipelineId(envelope.pipeline()));
+                throw failed;
             }
+
+            // moved into verifyWhereItSettled, inside the try above
         }
         // Last line on purpose: the ledger vouches only for a run that held every assertion above,
         // including the independent read. The release gate reads absence from it, so nothing may be
@@ -223,6 +231,30 @@ class PublishedExamplesIT {
     }
 
     /**
+     * Where the run settled, read back over an address the specification could not have named.
+     *
+     * <p>Extracted so it sits inside the same try that writes the failure scene: read outside it, a
+     * wrong count would report itself with no scene, which is the one failure most worth a scene.
+     */
+    private void verifyWhereItSettled(
+            Path specification,
+            Envelope envelope,
+            Map<TableAlias, Long> settled,
+            HttpTierBinding binding,
+            ProvisionedStores stores,
+            Endpoints files) {
+        if (envelope.setup().databases().isEmpty()) {
+            settled.forEach((alias, rows) -> assertThat(
+                            files.count(EndpointAddress.uri(targetDirectory.toString()), alias.table()))
+                    .as("%s settles on %s rows in %s, read there by the address it named; this reads the "
+                            + "target this run handed out, which it cannot name", specification, rows, alias)
+                    .isEqualTo(rows));
+        } else {
+            theSettledCountIsInAStoreTheSeedNeverTouched(specification, envelope, settled, binding, stores);
+        }
+    }
+
+    /**
      * The file driver plus one per store the example asked for. The file driver is always present because
      * the synthetic connector needs no provisioning - it reads a directory this run made.
      */
@@ -244,6 +276,7 @@ class PublishedExamplesIT {
                 case Step.Await await -> await.matcher();
                 case Step.Assertion assertion -> assertion.matcher();
                 case Step.Lifecycle ignored -> null;
+                case Step.StreamLifecycle ignored -> null;
                 case Step.Cdc ignored -> null;
             };
             if (matcher instanceof Matcher.Count count) {
@@ -252,6 +285,12 @@ class PublishedExamplesIT {
         }
         return Map.of();
     }
+
+    /**
+     * Where a failing run leaves what it saw, for the workflow to upload. Under target/ so a clean
+     * rebuilds it away, and named per example and tier so a matrix does not overwrite itself.
+     */
+    private static final Path FAILURE_SCENES = Path.of("target", "failure-scenes");
 
     /** Mongo refuses a database name longer than this, and says so only once a run is already underway. */
     private static final int NAME_LIMIT = 63;

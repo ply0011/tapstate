@@ -41,6 +41,20 @@ jobs:
       - name: Build and test
         run: mvn -B verify
 
+      # What the end-to-end run saw at the moment it failed, written before its containers went away.
+      # Without it a red specification leaves one assertion message and everything that would explain it
+      # is already gone, so the next move is to add a print statement and start two database engines
+      # again. The collector writes no address, and a test holds it to that: these files leave a public
+      # repository, and a connection uri carries its credentials inside it.
+      - name: The scene where an end-to-end case failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-scenes
+          path: e2e/target/failure-scenes/
+          if-no-files-found: ignore
+          retention-days: 7
+
   installer:
     # The install and quickstart scripts are shell, not Java: shellcheck them (ubuntu-latest ships
     # shellcheck) and run their smokes. Both drive platform detection, the unsupported-platform refusals,
@@ -56,10 +70,15 @@ jobs:
           shellcheck -s sh deploy/quickstart/quickstart.sh
           shellcheck deploy/quickstart/quickstart-smoke.sh
           shellcheck deploy/docker/image-smoke.sh
+          shellcheck -s sh deploy/install-site/assemble.sh
+          shellcheck -s sh deploy/install-site/verify-published.sh
+          shellcheck deploy/install-site/verify-smoke.sh
       - name: installer smoke
         run: bash install/install-smoke.sh
       - name: quickstart smoke
         run: bash deploy/quickstart/quickstart-smoke.sh
+      - name: install-site verifier smoke
+        run: bash deploy/install-site/verify-smoke.sh
 
   catalog-scripts:
     # The catalog refresh driver and the connector build it calls are shell, and the driver is a gate:

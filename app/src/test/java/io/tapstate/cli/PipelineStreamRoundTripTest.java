@@ -35,6 +35,9 @@ import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.web.SecurityFilterChain;
 
 import java.net.URI;
 import java.time.Clock;
@@ -44,6 +47,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -208,6 +213,14 @@ class PipelineStreamRoundTripTest {
     static class TestApp {
 
         @Bean
+        SecurityFilterChain streamOnlyTestSecurity(HttpSecurity http) throws Exception {
+            return http
+                    .csrf(AbstractHttpConfigurer::disable)
+                    .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+                    .build();
+        }
+
+        @Bean
         MessageCatalog messageCatalog() {
             return MessageCatalog.bundled();
         }
@@ -286,7 +299,7 @@ class PipelineStreamRoundTripTest {
             throw new UnsupportedOperationException("removal is not exercised by this double");
         }
 
-        private final Map<String, Observation> byId = new LinkedHashMap<>();
+        private final Map<String, Observation> byId = new ConcurrentHashMap<>();
 
         void clear() {
             byId.clear();
@@ -304,7 +317,7 @@ class PipelineStreamRoundTripTest {
     }
 
     static final class FakeLogSink implements LogSink {
-        private final Map<String, List<LogLine>> byId = new LinkedHashMap<>();
+        private final Map<String, List<LogLine>> byId = new ConcurrentHashMap<>();
 
         void clear() {
             byId.clear();
@@ -312,7 +325,7 @@ class PipelineStreamRoundTripTest {
 
         @Override
         public void append(String pipelineId, LogLine line) {
-            byId.computeIfAbsent(pipelineId, k -> new ArrayList<>()).add(line);
+            byId.computeIfAbsent(pipelineId, k -> new CopyOnWriteArrayList<>()).add(line);
         }
 
         @Override
@@ -322,7 +335,7 @@ class PipelineStreamRoundTripTest {
     }
 
     static final class FakeTokenStore implements TokenStore {
-        private final Map<String, TokenRecord> byId = new LinkedHashMap<>();
+        private final Map<String, TokenRecord> byId = new ConcurrentHashMap<>();
 
         @Override
         public void save(TokenRecord record) {

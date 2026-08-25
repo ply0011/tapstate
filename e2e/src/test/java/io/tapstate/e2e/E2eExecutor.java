@@ -38,6 +38,17 @@ public final class E2eExecutor {
     /** The table the last cdc step changed, until an await confirms the change arrived. */
     private TableAlias lastChanged;
 
+    /**
+     * The streams this run is holding, so it can let them go when the steps run out.
+     *
+     * <p>A specification that holds a stream and never releases it is not an error - the interesting
+     * assertions often sit while a stream is held, and requiring a release afterwards would be
+     * ceremony that changes nothing about what was proven. So the run releases what it held, rather
+     * than leaving that to a teardown some binding may not have: whoever held it is the one party
+     * that certainly knows it was held.
+     */
+    private final java.util.Set<String> heldStreams = new java.util.LinkedHashSet<>();
+
     public E2eExecutor(
             TierBinding binding, PipelineLoader pipelineLoader, Duration timeout, Duration pollInterval) {
         this.binding = binding;
@@ -48,6 +59,7 @@ public final class E2eExecutor {
 
     public void execute(Envelope envelope) {
         lastChanged = null;
+        heldStreams.clear();
         String pipelineId = pipelineLoader.resolvePipelineId(envelope.pipeline());
         provision(envelope.setup());
         for (Seed seed : envelope.seed()) {
@@ -57,8 +69,39 @@ public final class E2eExecutor {
         // what puts it there.
         envelope.setup().discover().forEach(binding::discoverSchema);
         applyResources(envelope.setup(), envelope.pipeline());
-        for (Step step : envelope.steps()) {
-            execute(step, pipelineId);
+        try {
+            for (Step step : envelope.steps()) {
+                execute(step, pipelineId);
+            }
+        } finally {
+            releaseHeldStreams();
+        }
+    }
+
+    /**
+     * Lets go of every stream still held, including after a failing step - a run that fails while
+     * holding must not leave the hold behind it, or the next thing to touch that store waits on a gate
+     * nobody remembers closing.
+     */
+    private void releaseHeldStreams() {
+        // Every one of them, even after one refuses. Stopping at the first failure would leave the rest
+        // gated, and a gate outliving the run that made it is the failure this method exists to prevent
+        // - so the refusals are collected and raised once the last stream has had its turn.
+        RuntimeException firstRefusal = null;
+        for (String sourceId : heldStreams) {
+            try {
+                binding.driveStream(sourceId, StreamVerb.RESUME);
+            } catch (RuntimeException refused) {
+                if (firstRefusal == null) {
+                    firstRefusal = refused;
+                } else {
+                    firstRefusal.addSuppressed(refused);
+                }
+            }
+        }
+        heldStreams.clear();
+        if (firstRefusal != null) {
+            throw firstRefusal;
         }
     }
 
@@ -122,6 +165,13 @@ public final class E2eExecutor {
     private void execute(Step step, String pipelineId) {
         switch (step) {
             case Step.Lifecycle lifecycle -> binding.drive(pipelineId, lifecycle.verb());
+            case Step.StreamLifecycle stream -> {
+                binding.driveStream(stream.sourceId(), stream.verb());
+                switch (stream.verb()) {
+                    case PAUSE -> heldStreams.add(stream.sourceId());
+                    case RESUME -> heldStreams.remove(stream.sourceId());
+                }
+            }
             case Step.Cdc cdc -> {
                 switch (cdc.change()) {
                     case Step.Change.Generated generated ->

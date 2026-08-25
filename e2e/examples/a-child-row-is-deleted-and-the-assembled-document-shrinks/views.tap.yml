@@ -1,5 +1,5 @@
 version: tapstate/v1
 kind: source
-id: warehouse
+id: views
 connector: mongodb
 config: { uri: "${STORE_URI}" }

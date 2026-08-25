@@ -28,8 +28,15 @@ INSERT INTO shipments (id, order_id, carrier, status) VALUES
   (5, 3, 'ups',   'delivered'),
   (6, 4, 'fedex', 'in_transit');
 
--- Replication needs a way to identify the row a change belongs to. A primary key already provides
--- it, so this is not a fix for these tables - it is here because the demo advertises the replication
--- posture it documents, and because a user who copies this file for a table without a primary key
--- hits the failure at seed time rather than mid-stream.
-ALTER TABLE shipments REPLICA IDENTITY DEFAULT;
+-- Publish the whole previous row on an update or a delete, not the primary key alone, which is all
+-- PostgreSQL sends by default.
+--
+-- This is load-bearing for what the demo does, not a posture. These shipments are embedded inside the
+-- orders they belong to, so a change has to be placeable by what the row *was* as well as by what it
+-- became - and a delete has nothing else at all: the key alone does not say which order the shipment
+-- was hanging under. Left at the default, the demo's own walkthrough breaks exactly once: you can add
+-- a shipment and watch the array grow, then delete it and watch nothing happen, with every other
+-- reading healthy.
+--
+-- A reader pointing Tapstate at their own PostgreSQL needs the same setting on any table they embed.
+ALTER TABLE shipments REPLICA IDENTITY FULL;

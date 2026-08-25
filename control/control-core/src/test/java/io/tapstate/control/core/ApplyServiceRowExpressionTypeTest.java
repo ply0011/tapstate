@@ -99,8 +99,11 @@ class ApplyServiceRowExpressionTypeTest {
     }
 
     private static SourceTable table(String name, String column, TapstateType type) {
+        // Keyed on its first column, because these pipelines upsert and an upsert needs a key. What
+        // is under test here is the type verdict; a keyless table would be refused before reaching it.
         return new SourceTable(
-                name, List.of(new SourceField(column, column + "_native", type)), List.of(), List.of());
+                name, List.of(new SourceField(column, column + "_native", type)), List.of(column),
+                List.of());
     }
 
     /** Records the discovery of one table's columns for a connection, as discovery would have. */
@@ -113,8 +116,10 @@ class ApplyServiceRowExpressionTypeTest {
             String connectionId, String connectorId, String table, Map<String, TapstateType> columns) {
         List<SourceField> fields = new ArrayList<>();
         columns.forEach((name, type) -> fields.add(new SourceField(name, name + "_native", type)));
+        // Keyed on its first column, for the same reason as table(): these pipelines upsert.
+        List<String> key = fields.isEmpty() ? List.of() : List.of(fields.get(0).name());
         schemas.save(new DiscoveredSourceModel(connectionId, connectorId, 0L,
-                new SourceModel(List.of(new SourceTable(table, fields, List.of(), List.of())))));
+                new SourceModel(List.of(new SourceTable(table, fields, key, List.of())))));
     }
 
     @Test
