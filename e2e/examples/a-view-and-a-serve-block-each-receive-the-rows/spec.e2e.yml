@@ -1,0 +1,28 @@
+# A pipeline that both materializes a view and delivers to an external target. Each output receives
+# every row, and neither is diminished by the other's presence.
+#
+# The two counts together are the assertion, and each one alone would miss a real regression. Wiring a
+# view as a link in the chain rather than a branch off it leaves the serve sink reading from a terminal
+# vertex and starves it, so the view fills and the target stays empty. Treating the view as a special
+# case that replaces the serve block instead starves the view. Only asserting both catches both.
+#
+# The serve block deliberately omits `from:`. Left out, it defaults to the view's id - which is what an
+# author writing this pipeline actually gets - and a view id names data rather than a vertex that can
+# be read from. So this is also the case that pins that default resolving to what the view reads,
+# rather than to the view's own terminal sink.
+#
+# One directory backs both endpoints. That is safe here and not a shortcut: the two outputs write under
+# different names - the view under its own id, the sink under the source table - so a run that confused
+# them would collide in one file rather than quietly passing.
+name: a-view-and-a-serve-block-each-receive-the-rows
+setup:
+  connectors: [e2e_file]
+  apply: [src_file.tap.yml, views.tap.yml, tgt_file.tap.yml, pipeline.tap.yml]
+  discover: [src_file]
+pipeline: pipeline.tap.yml
+seed:
+  src_file.orders: { rows: 4 }
+steps:
+  - start
+  - await: { count: { views.order_state: 4 } }
+  - await: { count: { tgt_file.orders: 4 } }

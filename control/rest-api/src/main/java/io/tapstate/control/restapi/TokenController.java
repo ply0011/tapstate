@@ -7,7 +7,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,9 +25,7 @@ class TokenController {
 
     @Verb("token.create")
     @PostMapping("/tokens")
-    ResponseEntity<CreatedToken> create(
-            @RequestBody(required = false) TokenCreateRequest request,
-            @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) String principal) {
+    ResponseEntity<CreatedToken> create(@RequestBody(required = false) TokenCreateRequest request) {
         TokenCreateRequest body = MalformedRequest.require(
                 request, "the request must carry a token scope");
         MalformedRequest.requireText(body.scope(), "a `scope` is required");
@@ -38,7 +35,7 @@ class TokenController {
         } catch (IllegalArgumentException error) {
             throw MalformedRequest.rejecting("`scope` must be read, write, or admin", error);
         }
-        CreatedToken created = tokens.create(principal, scope);
+        CreatedToken created = tokens.create(AuthenticatedCaller.subject(), scope);
         return ResponseEntity.created(URI.create("/api/tokens/" + created.tokenId())).body(created);
     }
 
@@ -50,10 +47,8 @@ class TokenController {
 
     @Verb("token.revoke")
     @PostMapping("/tokens/{id}:revoke")
-    ResponseEntity<Void> revoke(
-            @PathVariable("id") String id,
-            @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) String principal) {
-        tokens.revoke(principal, id);
+    ResponseEntity<Void> revoke(@PathVariable("id") String id) {
+        tokens.revoke(AuthenticatedCaller.subject(), id);
         return ResponseEntity.noContent().build();
     }
 }

@@ -3,7 +3,9 @@ package io.tapstate.e2e;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Generates the specification schema and the vocabulary listing from the executor's own vocabulary.
@@ -173,6 +175,19 @@ final class SpecGenerator {
                         case ASSERT -> keyed(keyword.word(), Map.of("$ref", "#/$defs/matcher"));
                     });
         }
+        // The same two words again, this time carrying a source: one lifecycle word means the whole
+        // pipeline when written on its own and that source's stream alone when it names one. Exhaustive
+        // over the enum, so a word added to it does not compile until its shape is here.
+        for (StreamVerb verb : StreamVerb.values()) {
+            Map<String, Object> sourceId = new LinkedHashMap<>(scalar("string",
+                    "The id of the source whose stream this holds or releases, leaving every other "
+                            + "stream of the same pipeline running."));
+            // A blank id names no source, and the parser refuses it. The schema is allowed to be the
+            // looser of the two, but not here: an author who wrote one would be told it is fine right
+            // up until the run, which is the direction this pair exists to prevent.
+            sourceId.put("minLength", 1);
+            forms.add(keyed(verb.word(), sourceId));
+        }
         Map<String, Object> step = new LinkedHashMap<>();
         step.put("description", "One stage. Steps run in declaration order; the order is the scenario.");
         step.put("oneOf", forms);
@@ -203,10 +218,17 @@ final class SpecGenerator {
     }
 
     private static Map<String, Object> cdcBody() {
+        Map<String, Object> generated = new LinkedHashMap<>();
+        generated.put("type", "string");
+        generated.put("description", "A change, written '<operation> <rows>'.");
+        generated.put("pattern", "^(" + String.join("|", Vocabulary.CDC_OPERATIONS) + ")\\s+\\d+$");
+
         Map<String, Object> change = new LinkedHashMap<>();
-        change.put("type", "string");
-        change.put("description", "A change, written '<operation> <rows>'.");
-        change.put("pattern", "^(" + String.join("|", Vocabulary.CDC_OPERATIONS) + ")\\s+\\d+$");
+        change.put(
+                "description",
+                "A change. Written '<operation> <rows>' the driver chooses the rows; written as an "
+                        + "operation with where (and set, for an update) the specification chooses them.");
+        change.put("oneOf", List.of(generated, valuedChange()));
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", "object");
@@ -229,6 +251,69 @@ final class SpecGenerator {
         body.put("propertyNames", Map.of("pattern", ALIAS_PATTERN));
         body.put("additionalProperties", rows);
         return body;
+    }
+
+    /**
+     * A change the specification aims itself: one operation word, the row it moves, and for an update
+     * the value it writes. Which operations have this form comes from the vocabulary rather than a
+     * second list here, so an operation that grows or loses one cannot drift out of the schema.
+     */
+    private static Map<String, Object> valuedChange() {
+        List<Map<String, Object>> forms = new ArrayList<>();
+        for (String operation : Vocabulary.CDC_OPERATIONS) {
+            Set<String> keys = Vocabulary.valuedChangeKeys(CdcOp.valueOf(operation.toUpperCase(Locale.ROOT)));
+            if (keys.isEmpty()) {
+                continue;
+            }
+            // LinkedHashMap on purpose, for the reason docBody gives: a salted key order would make the
+            // generated artifact differ from its checked-in copy between runs.
+            Map<String, Object> properties = new LinkedHashMap<>();
+            if (keys.contains("where")) {
+                Map<String, Object> where = new LinkedHashMap<>();
+                where.put("type", "object");
+                where.put("description", "Equality settings locating exactly one row. Identity is spelled "
+                        + "id whatever the store calls it.");
+                where.put("minProperties", 1);
+                where.put("additionalProperties", scalarValue());
+                properties.put("where", where);
+            }
+            if (keys.contains("set")) {
+                Map<String, Object> set = new LinkedHashMap<>();
+                set.put("type", "object");
+                set.put("description", "Columns to write on the located row, by name.");
+                set.put("minProperties", 1);
+                set.put("additionalProperties", scalarValue());
+                properties.put("set", set);
+            }
+            if (keys.contains("values")) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("type", "object");
+                row.put("description", "One row: its columns and their values, carrying id.");
+                row.put("minProperties", 1);
+                // The parser refuses a row without id, so the schema has to as well - a schema that
+                // accepts what the parser refuses validates specifications that cannot run.
+                row.put("required", List.of("id"));
+                row.put("additionalProperties", scalarValue());
+
+                Map<String, Object> values = new LinkedHashMap<>();
+                values.put("type", "array");
+                values.put("description", "The rows to add, spelled the way a seed spells them.");
+                values.put("minItems", 1);
+                values.put("items", row);
+                properties.put("values", values);
+            }
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("type", "object");
+            body.put("additionalProperties", false);
+            body.put("required", List.copyOf(properties.keySet()));
+            body.put("properties", properties);
+            forms.add(keyed(operation, body));
+        }
+        Map<String, Object> valued = new LinkedHashMap<>();
+        valued.put("description", "A change against rows the specification names.");
+        valued.put("oneOf", forms);
+        return valued;
     }
 
     private static Map<String, Object> docBody() {
@@ -329,7 +414,10 @@ final class SpecGenerator {
     private static List<Object> stepListing() {
         List<Object> steps = new ArrayList<>();
         for (String verb : Vocabulary.LIFECYCLE_STEPS) {
-            steps.add(word(verb, "A lifecycle verb, driven on the pipeline. Written on its own."));
+            steps.add(word(verb, Vocabulary.STREAM_SCOPED_STEPS.contains(verb)
+                    ? "A lifecycle verb. Written on its own it drives the pipeline; written with one "
+                            + "source id it holds or releases that stream alone."
+                    : "A lifecycle verb, driven on the pipeline. Written on its own."));
         }
         for (String keyword : Vocabulary.BODIED_STEPS) {
             steps.add(word(keyword, bodiedStepDescription(keyword)));

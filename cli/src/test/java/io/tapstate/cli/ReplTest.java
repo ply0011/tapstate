@@ -138,6 +138,29 @@ class ReplTest {
         final List<String> watchCalls = new ArrayList<>();
         final List<String> followCalls = new ArrayList<>();
 
+        /** The canned read-shell outcomes, the calls made, and the request the last read carried. */
+        DataBrowserOutcome.Collections collectionsOutcome = new DataBrowserOutcome.Collections.Unreachable();
+        DataBrowserOutcome.Stats statsOutcome = new DataBrowserOutcome.Stats.Unreachable();
+        DataBrowserOutcome.Find findOutcome = new DataBrowserOutcome.Find.Unreachable();
+        final List<String> dataBrowserCalls = new ArrayList<>();
+
+        /** Changes the fake streams to a follow, delivered in order before the stream ends. */
+        final List<TailChange> tailFrames = new ArrayList<>();
+
+        /** A refusal the follow ends with, or null when it ends because the caller stopped it. */
+        String tailRefusal;
+
+        @Override
+        public String tail(URI baseUrl, String credential, String sourceId, String collection,
+                           Object filter, TailStream sink, java.util.function.BooleanSupplier stop) {
+            dataBrowserCalls.add("tail " + sourceId + "." + collection + " filter=" + filter);
+            tailFrames.forEach(sink::change);
+            return tailRefusal;
+        }
+        Object lastFindFilter;
+        DataBrowserCall.Order lastFindSort;
+        Integer lastFindLimit;
+
         FakeControlPlane(URI... healthy) {
             this.healthy = new LinkedHashSet<>(List.of(healthy));
         }
@@ -158,6 +181,32 @@ class ReplTest {
         public LoginOutcome login(URI baseUrl, String username, String password) {
             loginCalls.add(username + ":" + password + "@" + baseUrl);
             return loginOutcome;
+        }
+
+        @Override
+        public DataBrowserOutcome.Collections collections(URI baseUrl, String credential, String sourceId) {
+            dataBrowserCalls.add("collections " + sourceId);
+            return healthy.contains(baseUrl)
+                    ? collectionsOutcome : new DataBrowserOutcome.Collections.Unreachable();
+        }
+
+        @Override
+        public DataBrowserOutcome.Stats stats(
+                URI baseUrl, String credential, String sourceId, String collection) {
+            dataBrowserCalls.add("stats " + sourceId + "." + collection);
+            return healthy.contains(baseUrl) ? statsOutcome : new DataBrowserOutcome.Stats.Unreachable();
+        }
+
+        @Override
+        public DataBrowserOutcome.Find find(URI baseUrl, String credential, String sourceId,
+                                            String collection, Object filter,
+                                            DataBrowserCall.Order sort, Integer limit) {
+            dataBrowserCalls.add("find " + sourceId + "." + collection
+                    + " filter=" + filter + " sort=" + sort + " limit=" + limit);
+            lastFindFilter = filter;
+            lastFindSort = sort;
+            lastFindLimit = limit;
+            return healthy.contains(baseUrl) ? findOutcome : new DataBrowserOutcome.Find.Unreachable();
         }
 
         @Override
@@ -892,6 +941,219 @@ class ReplTest {
         return h;
     }
 
+    // ---- the read shell ----
+
+    @Test
+    void showCollectionsNamesEveryDeclaredSourcesCollectionsAsSomethingYouCanType() {
+        // The answer to "what can I read" is only useful as the full <source>.<collection> names, because
+        // those are exactly what the next line has to say.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.listOutcome = new ListOutcome.Listed(List.of(new RemoteArtifact("views", "source", "")));
+        client.collectionsOutcome =
+                new DataBrowserOutcome.Collections.Listed(List.of("order_state", "customers"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("show collections")).isTrue();
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("views.order_state").contains("views.customers");
+        assertThat(client.dataBrowserCalls).containsExactly("collections views");
+        assertThat(h.repl().lastExitCode()).isZero();
+    }
+
+    @Test
+    void showCollectionsSaysTheListIsWhatTheDatabaseHoldsRatherThanWhatWasDeclared() {
+        // The two are different sets and the declared one is the wrong answer, so the list says which it
+        // is. A source referenced purely as a connection supplier declares no tables at all.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.collectionsOutcome = new DataBrowserOutcome.Collections.Listed(List.of("order_state"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("show collections views");
+
+        assertThat(h.sink().toString().substring(mark))
+                .contains("what each source's database holds, not what the workspace declares");
+        assertThat(client.dataBrowserCalls).containsExactly("collections views");
+    }
+
+    @Test
+    void findSendsTheVocabularyRatherThanTheDocumentThatWasTyped() {
+        // The filter is written in the shell's syntax and leaves as Tapstate's vocabulary. Sending the
+        // typed document instead would be a passthrough with a friendly parser in front of it, which is
+        // the one thing this face is not.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(), null, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch(
+                "views.order_state.find({status: 'Paid'}).sort({field:'total', dir:'desc'}).limit(5)");
+
+        assertThat(client.lastFindFilter)
+                .isEqualTo(Map.of("field", "status", "op", "eq", "value", "Paid"));
+        assertThat(client.lastFindSort).isEqualTo(new DataBrowserCall.Order("total", "desc"));
+        assertThat(client.lastFindLimit).isEqualTo(5);
+    }
+
+    @Test
+    void findSaysHowManyThereAreAndThatMoreRemain() {
+        // The read is one-shot, so nothing in the rows separates a preview of ten from a collection of
+        // ten. This line is the whole of what does.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(
+                List.of(Map.of("order_id", "ord_123")), 512L, true);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("\"order_id\": \"ord_123\"");
+        assertThat(output).contains("showing 1 of ~512").contains("more rows remain");
+    }
+
+    @Test
+    void findWritesEachRowFormattedRatherThanFlattenedOntoOneLine() {
+        // A row with anything embedded in it is unreadable on one line: the reader is scanning for one
+        // leaf and the whole tree is punctuation between them. The rows are complete either way -- what
+        // changes is whether a person can find anything in them.
+        java.util.Map<String, Object> item = new java.util.LinkedHashMap<>();
+        item.put("sku", "A-1");
+        item.put("qty", 2);
+        java.util.Map<String, Object> order = new java.util.LinkedHashMap<>();
+        order.put("id", "ord_1");
+        order.put("items", List.of(item));
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(order), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).as("an embedded field starts its own indented block rather than continuing "
+                        + "the same line")
+                .contains("\n  \"items\": [");
+        assertThat(output).as("formatting is not allowed to cost content -- every leaf still arrives")
+                .contains("\"sku\": \"A-1\"").contains("\"qty\": 2").contains("\"id\": \"ord_1\"");
+    }
+
+    @Test
+    void findSaysAnUnorderedReadIsNotInAStableOrder() {
+        // Asking for no order leaves it to the database, which does not promise the same one twice. A
+        // reader who is not told reads the first row as "the first row".
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find()");
+
+        assertThat(h.sink().toString().substring(mark))
+                .contains("natural order — not stable, and not the newest");
+    }
+
+    @Test
+    void findNamesTheOrderInsteadWhenOneWasAskedFor() {
+        // The other half, so a footer that printed the natural-order caveat unconditionally cannot pass:
+        // said over an ordered read it is simply false.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), 1L, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find().sort({field:'total', dir:'desc'})");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("ordered by `total` desc");
+        assertThat(output).doesNotContain("natural order");
+    }
+
+    @Test
+    void findGivesNoCountForAFilteredReadRatherThanOneItDidNotPayFor() {
+        // Counting a filtered collection is a full scan, so the server withholds it. A footer that
+        // rendered the absent count as 0 would state as fact the one thing the read declined to work out.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(Map.of("a", 1)), null, true);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.find({status: 'Paid'})");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("showing 1 ").doesNotContain(" of ~").doesNotContain("of ~0");
+        assertThat(output).contains("more rows remain");
+    }
+
+    @Test
+    void statsReportsTheRowCountAndAverageRowSizeAndSaysTheCountIsAnEstimate() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.statsOutcome = new DataBrowserOutcome.Stats.Reported(512L, 40960L, 80L);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.stats()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("~512").contains("80 bytes").contains("not counted");
+        assertThat(client.dataBrowserCalls).containsExactly("stats views.order_state");
+    }
+
+    @Test
+    void statsReportsASizeTheConnectorWithheldAsUnreportedRatherThanZero() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.statsOutcome = new DataBrowserOutcome.Stats.Reported(null, null, null);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("views.order_state.stats()");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("not reported").doesNotContain("~0").doesNotContain("0 bytes");
+    }
+
+    @Test
+    void aReadShellLineOffLineReportsThereIsNoConnectionRatherThanAnUnknownVerb() {
+        // It falls to the verb table otherwise, which answers a correctly typed read with a spelling
+        // suggestion for a word that was spelt right.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = harness(Path.of("tap-work"), client, new ScriptedPrompter());
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("views.order_state.find()")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).contains("cli.not-connected");
+        assertThat(client.dataBrowserCalls).isEmpty();
+    }
+
+    @Test
+    void aReadShellLineItCannotParseSaysWhyAndAsksTheServerNothing() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("views.order_state.drop()")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).contains("is not a read");
+        assertThat(client.dataBrowserCalls).isEmpty();
+        assertThat(h.repl().lastExitCode()).isEqualTo(Cli.EXIT_USAGE);
+    }
+
+    @Test
+    void theSameReadIsReachableAsAVerbForAOneShotInvocation() {
+        // A session takes the bare line, but a script gets one command; without the verb the shell would
+        // be unreachable from anything that is not a person at a prompt.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.findOutcome = new DataBrowserOutcome.Find.Read(List.of(), null, false);
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch(List.of("data-browser", "views.order_state.find()"));
+
+        assertThat(client.dataBrowserCalls).containsExactly(
+                "find views.order_state filter=null sort=null limit=null");
+    }
+
     @Test
     void tokenCreatePrintsTheNewBearerExactlyOnce() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
@@ -1260,6 +1522,53 @@ class ReplTest {
         assertThat(out).contains("remove those first");
     }
 
+    /**
+     * The remedy is rendered with the refusal's own parameters, or it is not printed at all.
+     *
+     * <p>An unbound name is left verbatim by the catalog, so rendering a solution with no arguments
+     * does not suppress it - it prints the template, braces and all. This refusal has its parameters
+     * in hand and used them on the very next line, while the remedy above it was rendered from
+     * nothing: "then delete `{id}`" reached the reader as those eight characters.
+     */
+    @Test
+    void aReferencedRefusalRendersItsRemedyWithTheIdRatherThanAPlaceholder() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.deleteOutcome = new DeleteOutcome.Rejected(
+                "artifact.in-use", "Resource 'src_kfk' is still referenced.",
+                Map.of("id", "src_kfk", "referrers", List.of("kfk2my")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("delete src_kfk --if-match " + "d".repeat(64))).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).as("no template escapes to the reader").doesNotContain("{id}");
+        assertThat(out).contains("then delete `src_kfk`");
+    }
+
+    /**
+     * A remedy that cannot be filled in is left out rather than printed raw.
+     *
+     * <p>The call sites that hold parameters now pass them, but most refusals carry none at all, and
+     * every one of those reaches the same renderer. Suppressing a solution that still has an unbound
+     * name after substitution is what keeps the next caller from reintroducing the raw template - the
+     * reader loses a sentence they could not have used, not one they could.
+     */
+    @Test
+    void aRefusalWithNoParametersPrintsNoRemedyRatherThanTheRawTemplate() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.deleteOutcome = new DeleteOutcome.Rejected(
+                "artifact.in-use", "Resource 'src_kfk' is still referenced.", Map.of());
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("delete src_kfk --if-match " + "d".repeat(64))).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("artifact.in-use");
+        assertThat(out).doesNotContain("{id}").doesNotContain("Delete or rewrite those resources first");
+    }
+
     @Test
     void aRunningPipelineRefusalShowsBothHalvesOfTheStateAndPointsAtStop() {
         FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
@@ -1527,6 +1836,245 @@ class ReplTest {
         assertThat(client.getCalls).containsExactly("jwt-tok@http://node1:7900/my-mongo");
         assertThat(client.testCalls).containsExactly(
                 "jwt-tok@http://node1:7900/my-mongo[mongodb {host=db.internal, username=cdc}]");
+    }
+
+    /**
+     * A connector that can say why a check failed and what to do about it says so through reason and
+     * solution, and until now the plain-text surface printed neither - they were reachable only by
+     * knowing to pass -o json, which is knowledge the person who needs them least likely has. The
+     * remedy the connector already wrote is the whole value of the check having run.
+     */
+    @Test
+    void testRendersTheReasonAndSolutionOnThePlainTextSurface() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Cdc cannot start",
+                        "wal_level is replica, logical decoding needs logical",
+                        "Set wal_level=logical and restart the server", "CREATE_SLOT_FAILED")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Cdc cannot start");
+        assertThat(out).contains("wal_level is replica");
+        assertThat(out).contains("Set wal_level=logical");
+        assertThat(out).contains("CREATE_SLOT_FAILED");
+    }
+
+    /**
+     * A diagnostic the catalog does not know is shown as it arrived, not dropped.
+     *
+     * <p>This used to be decided by shape - dotted lowercase segments were taken for an unresolvable
+     * key and suppressed. The shape does not separate the two: {@code 10.10.0.5}, {@code db.internal}
+     * and {@code 8.0.13} all match it, and all three are exactly what a host or version check reports.
+     * Suppressing them left a failed check with nothing on it at all, which is less than the reader
+     * had before the wording feature existed. The keys the connector API defines are a closed set the
+     * catalog holds in full, so anything absent from it is treated as a value and printed.
+     */
+    @Test
+    void testPrintsADiagnosticTheCatalogDoesNotKnowRatherThanDroppingIt() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "FAILED",
+                List.of(new ConnectionReport.Check("Check host port is valid", "FAILED",
+                        "10.10.0.5", "db.internal", "8.0.13", "CONN_REFUSED")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out)
+                .as("a host, a hostname and a version all look like keys and are none of them")
+                .contains("10.10.0.5").contains("db.internal").contains("8.0.13");
+        assertThat(out).contains("CONN_REFUSED");
+    }
+
+    /**
+     * A diagnostic far longer than anything a pattern should be run over is carried, not crashed on.
+     *
+     * <p>Deciding whether a string was a key by matching a repeated group is recursive in this
+     * platform's engine - one frame per repetition, so a few thousand dotted segments exhausted the
+     * stack, and the failure was a StackOverflowError thrown out of printing a connection report. The
+     * string is a connector's own, arriving from a database nobody here configured, and nothing in
+     * this repository bounds its length. Nothing matches it now - the catalog is asked instead - and
+     * this case is what keeps a matcher from coming back.
+     */
+    @Test
+    void testCarriesADiagnosticFarTooLongToMatchAgainst() {
+        String enormous = "a" + ".a".repeat(100_000);
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Access denied",
+                        enormous, null, "CDC_PRIVILEGE")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Access denied").contains("CDC_PRIVILEGE");
+        assertThat(out).as("the catalog does not know it, so it is shown as it arrived").contains(enormous);
+    }
+
+    /**
+     * For the keys the connector API actually defines, the catalog supplies the wording the connector
+     * never carried, so the checks that decide whether a stranger's own database can be read at all
+     * say what to do about it rather than naming a key nobody can resolve.
+     */
+    @Test
+    void testRendersOurOwnWordingForAConnectorApiDiagnosticKey() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("read log", "WARNING", "Access denied",
+                        "check.cdc.privilege.reason", "check.cdc.privilege.solution", "CDC_PRIVILEGE")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("privileges a change stream needs");
+        assertThat(out).contains("Grant the replication privileges");
+        assertThat(out).doesNotContain("check.cdc.privilege");
+    }
+
+    /**
+     * The change-stream check is the one whose failure is invisible: connectors report it as a warning,
+     * a warning does not fail the overall outcome, and so a database with change capture switched off
+     * answers "PASSED". The person then builds a pipeline whose capture half never runs and is told
+     * nothing, anywhere. The outcome is left alone - it is a connection verb, and the connection is
+     * genuinely usable for a snapshot - but the consequence is spelled out where it cannot be missed.
+     */
+    @Test
+    void testSaysPlainlyWhenChangeCaptureWillNotWorkEvenThoughTheTestPassed() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("ping", "PASSED", null, null, null, null),
+                        new ConnectionReport.Check("Read log", "WARNING",
+                                "SELECT pg_create_logical_replication_slot('t','pgoutput')",
+                                null, null, "410003")),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("PASSED");
+        assertThat(out).containsIgnoringCase("change capture");
+        assertThat(out).contains("snapshot");
+    }
+
+    /**
+     * The advisory names the check it is about, because "the check above" need not be the one that
+     * failed. Checks are printed in the order the connector reports them, and nothing puts the
+     * change-stream check last - so a passing check after it made the advisory point at a result that
+     * is fine, and blame the wrong thing to go and fix.
+     */
+    @Test
+    void testNamesTheChangeStreamCheckWhenAPassingCheckIsPrintedAfterIt() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("Read log", "WARNING", "no replication slot",
+                                null, null, "410003"),
+                        new ConnectionReport.Check("ping", "PASSED", null, null, null, null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("Read log check passes");
+        assertThat(out).as("the last check printed is a passing one, so 'above' would misname it")
+                .doesNotContain("the check above");
+    }
+
+    /** A connection whose change-stream check passed says nothing of the sort. */
+    @Test
+    void testDoesNotWarnAboutChangeCaptureWhenTheLogCheckPassed() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "PASSED",
+                List.of(new ConnectionReport.Check("Read log", "PASSED", null, null, null, null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        assertThat(h.sink().toString().substring(mark)).doesNotContainIgnoringCase("change capture");
+    }
+
+    /**
+     * A refusal that names what is wrong but not what to do leaves the reader stuck. The catalog carries
+     * a solution for the code, and the server sends the named parameters that fill it in, so the remedy
+     * can be rendered here from the same catalog the message came from - and until it is, the most
+     * carefully written half of an error is the half nobody sees.
+     */
+    @Test
+    void aRefusedApplyShowsTheRemedyAndNotOnlyWhatWentWrong(@TempDir Path base) throws Exception {
+        copyWorkspace("/ws-valid", base);
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.applyOutcome = new ApplyOutcome.Rejected("dsl.upsert-needs-key",
+                "The sync at serve.sync upserts table `events` of source `mydb`, but that table declares "
+                        + "no key, so no write can be matched to the row it belongs to.",
+                Map.of("table", "events", "source", "mydb", "path", "serve.sync"));
+        Harness h = onlineSession(base, client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("apply");
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("dsl.upsert-needs-key").contains("declares no key");
+        assertThat(out)
+                .as("the catalog's solution for the code, with its parameters filled in")
+                .contains("Give `events` a primary key")
+                .contains("write_mode: append");
+    }
+
+    /**
+     * The connector API's keys reach the message field too, not only reason and solution - a host/port
+     * check that fails carries {@code check.host.port.fail} as its message. Suppressing keys in two
+     * fields and printing them in the third would put the unreadable one where the eye lands first.
+     */
+    @Test
+    void testRendersOurOwnWordingWhenTheMessageItselfIsADiagnosticKey() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.getOutcome = storedConnection();
+        client.testOutcome = new ConnectionTestOutcome.Tested(new ConnectionReport(
+                "my-mongo", "mongodb", "FAILED",
+                List.of(new ConnectionReport.Check("Check host port is valid", "FAILED",
+                        "check.host.port.fail", "check.host.port.reason", "check.host.port.solution",
+                        null)),
+                1752000000000L));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        assertThat(h.repl().dispatch("test my-mongo")).isTrue();
+
+        String out = h.sink().toString().substring(mark);
+        assertThat(out).contains("did not accept a connection");
+        assertThat(out).doesNotContain("check.host.port.fail");
     }
 
     @Test
@@ -3455,5 +4003,136 @@ class ReplTest {
                 .withEnv(name -> "TAPSTATE_PASSWORD".equals(name) ? "from-env" : null);
         Cli.runSession(launch, client, () -> new ScriptedPrompter("asked"));
         assertThat(client.loginCalls).containsExactly("admin:from-env@http://node1:7900");
+    }
+
+    // ---- the in-place view ----
+
+    @Test
+    void watchRefusesWhereItsOutputIsNotATerminalAndNamesBothAlternatives() {
+        // The refusal is the whole point: down a pipe, an in-place redraw is not a worse view, it is
+        // cursor-control bytes in the middle of whatever the reader piped it into. And a reader who
+        // reached for this verb wants one of the two things it names, so a refusal that named neither
+        // would leave them with nothing to type next.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("cli.watch-needs-a-terminal");
+        assertThat(output).contains("tail").contains("find");
+        assertThat(client.dataBrowserCalls)
+                .as("it refuses before asking, so a piped watch never opens a read it cannot render")
+                .isEmpty();
+    }
+
+    @Test
+    void watchSaysWhatANamespaceLooksLikeRatherThanReportingAnUnknownVerb() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> true);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output)
+                .as("the verb was matched, so a line it cannot read is that verb written wrongly; "
+                        + "falling through would answer it by complaining about an unknown command")
+                .contains("<source>.<collection>")
+                .doesNotContain("Unknown");
+    }
+
+    @Test
+    void watchNeedsASessionBeforeItNeedsATerminal() {
+        // Offline the view has nothing to watch at all, and saying "this needs a terminal" to somebody
+        // who has not connected sends them to fix the wrong thing.
+        Harness h = harness();
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("watch views.order_state");
+
+        assertThat(h.sink().toString().substring(mark)).contains("cli.not-connected");
+    }
+
+    // ---- the appended view ----
+
+    @Test
+    void tailStreamsEveryChangeAndSaysWhatItCannotPromise() {
+        // The note is load-bearing. An appended stream reads as "everything that happened", and what
+        // reaches the store is the settled version of a row -- rapid changes are folded before they are
+        // written, upstream of the store, so no better transport would recover them.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailFrames.add(new TailChange(TailChange.Kind.INSERT, "14:22:11", null,
+                Map.of("status", "Paid")));
+        client.tailFrames.add(new TailChange(TailChange.Kind.UPDATE, "14:22:15",
+                Map.of("status", "Paid"), Map.of("status", "Shipped")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("not every intermediate version");
+        assertThat(output).contains("insert").contains("update");
+        assertThat(output)
+                .as("both sides of the alteration are shown because this change carried both; nothing "
+                        + "is worked out from an earlier event")
+                .contains("Paid").contains("Shipped");
+    }
+
+    @Test
+    void tailSaysWhyItStoppedRatherThanNamingACodeAndNothingElse() {
+        // A follow that ends by itself - its stream failed, or it was reclaimed after showing nothing
+        // for long enough - arrives as a code and nothing else, because a close frame carries one
+        // field. The reader is somebody watching a screen that just stopped updating, so the code has
+        // to be turned back into a sentence here; there is nowhere else it could be done.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailRefusal = "data-browser.follow-idle";
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).contains("data-browser.follow-idle");
+        assertThat(output)
+                .as("the catalog sentence, not the literal text of a missing one")
+                .contains("no changes")
+                .doesNotContain("null");
+    }
+
+    @Test
+    void tailNeedsNoTerminalBecauseItOnlyEverAppends() {
+        // The opposite of the in-place view, and the reason both exist: this one is the pipeable half.
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        client.tailFrames.add(new TailChange(TailChange.Kind.INSERT, "14:22:11", null,
+                Map.of("status", "Paid")));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+        h.repl().terminalCheck(() -> false);
+        int mark = h.sink().toString().length();
+
+        h.repl().dispatch("tail views.order_state");
+
+        String output = h.sink().toString().substring(mark);
+        assertThat(output).doesNotContain("cli.watch-needs-a-terminal");
+        assertThat(output).contains("insert");
+    }
+
+    @Test
+    void tailSendsItsFilterToTheServerRatherThanNarrowingLocally() {
+        FakeControlPlane client = new FakeControlPlane(URI.create("http://node1:7900"));
+        Harness h = onlineSession(Path.of("tap-work"), client);
+
+        h.repl().dispatch("tail views.order_state {status: \"Paid\"}");
+
+        assertThat(client.dataBrowserCalls)
+                .as("narrowing on the client would still carry every change of the whole collection "
+                        + "over the wire, which is the cost the filter exists to cut")
+                .anySatisfy(call -> assertThat(call).contains("tail views.order_state")
+                        .contains("status").contains("Paid"));
     }
 }

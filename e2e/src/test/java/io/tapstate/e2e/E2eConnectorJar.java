@@ -33,6 +33,23 @@ final class E2eConnectorJar {
     /** The connector id: the identity the product files the artifact under, declared by the spec. */
     static final String CONNECTOR_ID = "e2e_file";
 
+    /**
+     * The id to package this connector under when a specification needs the product to read it rows.
+     *
+     * <p>Row reads are served only to connectors the product knows speak the request shape it asks in,
+     * and that set is a closed one naming real connectors - a test connector does not belong in a
+     * shipped list, and would appear in the refusal text users read. So the substitution happens on
+     * this side: for those specifications this connector stands in for the one browsable connector
+     * there is, and is packaged under its name.
+     *
+     * <p>What that costs, said plainly: those specifications name a connector they are not driving.
+     * They are still testing the product's own logic - the bound on a page, the "there is more" flag,
+     * the confinement of a read, the keying of a pooled instance - none of which is MongoDB's. The
+     * behaviour that really is MongoDB's is witnessed against the real connector on the real-connector
+     * lane, which is the reason this substitution does not leave a hole.
+     */
+    static final String BROWSABLE_CONNECTOR_ID = "mongodb";
+
     /** The entry class's package, packaged whole. */
     private static final String PACKAGE_PATH = "io/tapstate/e2e/connector/";
 

@@ -55,15 +55,38 @@ final class HttpTierBinding implements TierBinding {
      */
     private final UnaryOperator<String> env;
 
+    /**
+     * How this run holds one store's traffic, and how it dials a store that has a hold in front of it.
+     *
+     * <p>Both belong to whoever brought the stores up, which is why they arrive as seams rather than
+     * being decided here: a run that provisioned nothing has no gate to hold and no address to undo,
+     * and it says so instead of quietly doing neither.
+     */
+    private final StreamHolds streamHolds;
+
+    private final UnaryOperator<EndpointAddress> asDialledByTheHarness;
+
     HttpTierBinding(
             ControlPlane control,
             Path workspace,
             Map<String, Endpoints> endpointsByConnector,
             UnaryOperator<String> env) {
+        this(control, workspace, endpointsByConnector, env, StreamHolds.none(), UnaryOperator.identity());
+    }
+
+    HttpTierBinding(
+            ControlPlane control,
+            Path workspace,
+            Map<String, Endpoints> endpointsByConnector,
+            UnaryOperator<String> env,
+            StreamHolds streamHolds,
+            UnaryOperator<EndpointAddress> asDialledByTheHarness) {
         this.control = control;
         this.workspace = workspace;
         this.endpointsByConnector = Map.copyOf(endpointsByConnector);
         this.env = env;
+        this.streamHolds = streamHolds;
+        this.asDialledByTheHarness = asDialledByTheHarness;
     }
 
     @Override
@@ -125,6 +148,24 @@ final class HttpTierBinding implements TierBinding {
     }
 
     @Override
+    public void update(TableAlias table, Map<String, Object> where, Map<String, Object> set) {
+        Endpoint endpoint = endpoint(table);
+        endpoint.driver().update(endpoint.address(), table.table(), where, set);
+    }
+
+    @Override
+    public void delete(TableAlias table, Map<String, Object> where) {
+        Endpoint endpoint = endpoint(table);
+        endpoint.driver().delete(endpoint.address(), table.table(), where);
+    }
+
+    @Override
+    public void insert(TableAlias table, List<Map<String, Object>> rows) {
+        Endpoint endpoint = endpoint(table);
+        endpoint.driver().insert(endpoint.address(), table.table(), rows);
+    }
+
+    @Override
     public void redeliver(TableAlias table) {
         Endpoint endpoint = endpoint(table);
         endpoint.driver().redeliver(endpoint.address(), table.table());
@@ -137,6 +178,16 @@ final class HttpTierBinding implements TierBinding {
      */
     EndpointAddress addressOf(TableAlias table) {
         return endpoint(table).address();
+    }
+
+    /**
+     * Holds or releases one source's traffic. Nothing is sent to the product: the source is named, its
+     * declared address is looked up, and whoever brought that store up puts the hold on.
+     */
+    @Override
+    public void driveStream(String sourceId, StreamVerb verb) {
+        SourceResource source = requireSource(sourceId);
+        streamHolds.drive(new EndpointAddress(sourceId, source.config()), verb);
     }
 
     @Override
@@ -205,7 +256,12 @@ final class HttpTierBinding implements TierBinding {
                             + " connector, which this run has no independent driver for; it knows "
                             + endpointsByConnector.keySet());
         }
-        return new Endpoint(driver, new EndpointAddress(table.resourceId(), source.config()));
+        // Behind whatever gate publishes it: the harness has to reach a store whose stream is held,
+        // because writing rows into a held source is the whole point of holding one. Identity for a
+        // store with no gate, which is every store on a run that provisions none.
+        return new Endpoint(
+                driver,
+                asDialledByTheHarness.apply(new EndpointAddress(table.resourceId(), source.config())));
     }
 
     /** One addressable endpoint: the driver that reads it and the address it answers on. */

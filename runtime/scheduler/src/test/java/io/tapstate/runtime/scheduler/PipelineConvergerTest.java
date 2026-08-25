@@ -1,5 +1,8 @@
 package io.tapstate.runtime.scheduler;
 
+import io.tapstate.core.common.Severity;
+import io.tapstate.core.common.TapstateErrorCode;
+import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.lifecycle.CheckpointDoc;
 import io.tapstate.core.lifecycle.DesiredState;
 import io.tapstate.core.lifecycle.StateJson;
@@ -9,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.tapstate.core.lifecycle.PipelineState.COMPLETED;
@@ -21,6 +26,7 @@ import static io.tapstate.runtime.scheduler.ConvergeStatus.CONVERGED;
 import static io.tapstate.runtime.scheduler.ConvergeStatus.NOTHING_TO_DO;
 import static io.tapstate.runtime.scheduler.ConvergeStatus.SUPERSEDED;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The convergence loop: it reads the desired intent, seeds the actual checkpoint when a pipeline
@@ -240,6 +246,41 @@ class PipelineConvergerTest {
     }
 
     @Test
+    @DisplayName("a start refused with a coded reason converges to FAILED and carries that reason")
+    void aCodedRefusalToStartConvergesToFailed() {
+        // A job that never started is not the same event as a job that died, and it used to be handled
+        // as no event at all: the throw escaped the pass, so nothing was published, and the pipeline sat
+        // at the last state anyone had observed while the loop retried it every tick. Observed against a
+        // real unreachable store, where the diagnosis existed and reached only the server log.
+        TapstateException refusal = new TapstateException(
+                new StubCode("actuation.view-store-unreachable"), Map.of("store", "views"), null);
+        actuator.refuseStartWith(refusal);
+        desired.save(new DesiredState("p1", RUNNING, REV));
+
+        ConvergeResult result = converger.converge("p1");
+
+        assertThat(result.status()).isEqualTo(ConvergeStatus.FAILED);
+        // The cause has to travel, not just the status: what the publisher renders as the observation's
+        // coded failure is this object, so a pass that reported FAILED with nothing attached would leave
+        // the read face saying the pipeline is broken and not saying why -- which is the whole defect.
+        assertThat(result.failure()).contains(refusal);
+        assertThat(state.read("p1").orElseThrow().stateJson()).isEqualTo(StateJson.of(FAILED));
+    }
+
+    @Test
+    @DisplayName("a start that throws an uncoded fault is left to escape, not laundered into FAILED")
+    void anUncodedFaultStillEscapes() {
+        // Coded refusals are conditions an operator acts on; an uncoded throw is a defect in this
+        // process, and recording it as the pipeline's own failure would file a bug report under the
+        // user's name. It keeps crashing the pass, which is what makes it visible as a bug.
+        actuator.refuseStartWith(new IllegalStateException("a bug in the builder"));
+        desired.save(new DesiredState("p1", RUNNING, REV));
+
+        assertThatThrownBy(() -> converger.converge("p1"))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("a running pipeline whose job has died converges to FAILED, carries the cause, and stops it")
     void aDeadJobConvergesToFailed() {
         converge(RUNNING); // actual now RUNNING
@@ -284,6 +325,47 @@ class PipelineConvergerTest {
         assertThat(actuator.calls())
                 .as("a job has to be put behind the checkpoint, or nothing is carrying this pipeline")
                 .containsExactly("start:p1");
+    }
+
+    /**
+     * The restart road reaches the same refusal as the CAS road, and it used to escape here. A store
+     * that is unreachable when a process comes up is exactly the condition this refusal exists for --
+     * the previous process left a RUNNING checkpoint, this one cannot put a job behind it, and the
+     * pipeline is not going to run. Letting the throw out leaves the checkpoint saying RUNNING while
+     * the loop retries every tick, which is the same state the coded refusal was introduced to remove
+     * on the other road: the read face says healthy and the reason lives in the server log alone.
+     */
+    @Test
+    @DisplayName("a restart whose start is refused with a coded reason converges to FAILED, not RUNNING")
+    void aCodedRefusalOnTheRestartRoadConvergesToFailed() {
+        converge(RUNNING); // a previous process left the checkpoint at RUNNING
+        actuator.carryingNothing(); // and this process has no job behind it
+        TapstateException refusal = new TapstateException(
+                new StubCode("actuation.view-store-unreachable"), Map.of("store", "views"), null);
+        actuator.refuseStartWith(refusal);
+
+        ConvergeResult result = converger.converge("p1");
+
+        assertThat(result.status()).isEqualTo(ConvergeStatus.FAILED);
+        assertThat(result.failure()).contains(refusal);
+        // The recorded state is the half that matters most here: a checkpoint left at RUNNING is what
+        // makes every read face keep answering healthy over a data plane that does not exist.
+        assertThat(state.read("p1").orElseThrow().stateJson()).isEqualTo(StateJson.of(FAILED));
+    }
+
+    /**
+     * An uncoded throw on the restart road stays a defect, same as on the other one. Recording it as
+     * the pipeline's failure would file a bug in this process under the user's name.
+     */
+    @Test
+    @DisplayName("an uncoded fault on the restart road still escapes")
+    void anUncodedFaultOnTheRestartRoadStillEscapes() {
+        converge(RUNNING);
+        actuator.carryingNothing();
+        actuator.refuseStartWith(new IllegalStateException("a bug in the builder"));
+
+        assertThatThrownBy(() -> converger.converge("p1"))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     /**
@@ -338,4 +420,18 @@ class PipelineConvergerTest {
         desired.save(new DesiredState("p1", target, REV));
         converger.converge("p1");
     }
+    /** A code whose only job is to carry a name: this test is about the path, not the catalog. */
+    private record StubCode(String code) implements TapstateErrorCode {
+
+        @Override
+        public Severity severity() {
+            return Severity.ERROR;
+        }
+
+        @Override
+        public Set<String> placeholders() {
+            return Set.of("store");
+        }
+    }
+
 }

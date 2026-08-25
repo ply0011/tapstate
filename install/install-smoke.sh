@@ -354,6 +354,137 @@ else
   bad "missing minimums must produce no notice (rc=$RC): $OUT"
 fi
 
+# --- the tap alias: opt-in shortcut, never a second copy of the binary --------------------------------
+# `tapstate` stays the only real command; `tap` exists to save keystrokes. It is a link to the same
+# target the stable entry points at, so an upgrade moves both at once -- two independent copies would
+# drift the moment a version directory is replaced.
+idir="$(mktemp -d)/bin"
+run_install Darwin arm64 glibc "$idir"
+if [ -L "$idir/tap" ] \
+   && [ "$(readlink "$idir/tap")" = "$(readlink "$idir/tapstate")" ]; then
+  ok "installs a tap alias resolving to the same target as tapstate"
+else
+  bad "tap alias missing or pointing elsewhere: tap=$(readlink "$idir/tap" 2>/dev/null) tapstate=$(readlink "$idir/tapstate" 2>/dev/null)"
+fi
+
+# An upgrade must move the alias too. Creating it only on a first install leaves `tap` pointing into a
+# version directory the installer has since deleted -- a dangling link that reports "no such file".
+idir="$(mktemp -d)/bin"
+run_install Darwin arm64 glibc "$idir"
+FIRST_VERSION="$VERSION"
+VERSION=9.9.9; make_asset darwin-arm64        # a second release in the same stub tree
+run_install Darwin arm64 glibc "$idir"
+VERSION="$FIRST_VERSION"
+if [ -L "$idir/tap" ] && [ -e "$idir/tap" ] \
+   && [ "$(readlink "$idir/tap")" = "$(readlink "$idir/tapstate")" ]; then
+  ok "an upgrade moves the alias with the stable entry rather than stranding it"
+else
+  bad "alias stranded after upgrade: tap=$(readlink "$idir/tap" 2>/dev/null) (exists: $([ -e "$idir/tap" ] && echo yes || echo no))"
+fi
+
+# A machine that already has a `tap` on PATH (node-tap ships one) keeps it. The installer must say so:
+# skipping silently leaves the user with no alias and no idea why.
+idir="$(mktemp -d)/bin"
+occupied="$(mktemp -d)"
+printf '#!/bin/sh\necho "not tapstate"\n' > "$occupied/tap"; chmod +x "$occupied/tap"
+OUT="$(PATH="$occupied:$PATH" \
+       TAPSTATE_VERSION="$VERSION" \
+       TAPSTATE_BASE_URL="file://$STUB" \
+       TAPSTATE_INSTALL_DIR="$idir" \
+       sh "$INSTALL_SH" 2>&1)"; RC=$?
+# The message has to be looked for by a phrase that cannot appear by accident: grepping for "tap"
+# alone passes on any line mentioning tapstate, so this assertion would hold before the feature exists.
+if [ "$RC" -eq 0 ] && [ ! -e "$idir/tap" ] && printf '%s' "$OUT" | grep -q 'already on PATH'; then
+  ok "leaves an existing tap alone and says why the alias was skipped"
+else
+  bad "existing tap not respected or skip not explained rc=$RC: $OUT"
+fi
+rm -rf "$occupied"
+
+# A foreign `tap` sitting in the install directory itself. PATH cannot see it whenever that directory
+# is not on PATH -- which is the default this installer prints instructions about -- so a check that
+# asks PATH alone finds nothing and the mv overwrites someone else's file.
+idir="$(mktemp -d)/bin"
+mkdir -p "$idir"
+printf '#!/bin/sh\necho "not tapstate"\n' > "$idir/tap"; chmod +x "$idir/tap"
+before="$(cat "$idir/tap")"
+OUT="$(TAPSTATE_VERSION="$VERSION" TAPSTATE_BASE_URL="file://$STUB" TAPSTATE_INSTALL_DIR="$idir" \
+       sh "$INSTALL_SH" 2>&1)"; RC=$?
+if [ "$RC" -eq 0 ] && [ ! -L "$idir/tap" ] && [ "$(cat "$idir/tap")" = "$before" ] \
+   && printf '%s' "$OUT" | grep -q 'is not ours'; then
+  ok "a foreign tap inside the install directory is left untouched, and the skip says so"
+else
+  bad "local foreign tap was overwritten or the skip not explained rc=$RC: $OUT (is-link: $([ -L "$idir/tap" ] && echo yes || echo no))"
+fi
+
+# And the mirror image: our own alias must still be upgraded when some other tap precedes it on PATH.
+# Deciding on PATH alone skipped the upgrade there, leaving the shortcut pointing into a version
+# directory this script deletes on the way out -- a dangling command, produced by an installer that
+# reported success.
+#
+# The second install has to be a different release, or the case proves nothing: install the same
+# version twice and the alias matches whether or not it was rewritten, so the skipped-upgrade bug
+# passes. The stub tree already carries 9.9.9 for exactly this.
+idir="$(mktemp -d)/bin"
+run_install Darwin arm64 glibc "$idir"
+occupied="$(mktemp -d)"
+printf '#!/bin/sh\necho "not tapstate"\n' > "$occupied/tap"; chmod +x "$occupied/tap"
+FIRST_VERSION="$VERSION"
+VERSION=9.9.9; make_asset darwin-arm64
+PATH="$occupied:$PATH" run_install Darwin arm64 glibc "$idir"
+VERSION="$FIRST_VERSION"
+if [ "$RC" -eq 0 ] && [ "$(readlink "$idir/tap")" = "versions/9.9.9/bin/tapstate" ]; then
+  ok "our own alias is upgraded to the new release even when another tap precedes it on PATH"
+else
+  bad "own alias not upgraded past a PATH conflict rc=$RC: tap=$(readlink "$idir/tap" 2>/dev/null)"
+fi
+rm -rf "$occupied"
+
+# A crafted link that matches the shape but escapes the directory. The ownership test is a glob, so
+# `..` is the way through it; adopting such a link means replacing a file this installation does not
+# own, which is the same failure the plain foreign case covers, reached by a different road.
+idir="$(mktemp -d)/bin"
+mkdir -p "$idir"
+elsewhere="$(mktemp -d)"
+printf '#!/bin/sh\necho "not tapstate"\n' > "$elsewhere/tapstate"; chmod +x "$elsewhere/tapstate"
+ln -s "versions/../../..$elsewhere/bin/tapstate" "$idir/tap"
+target_before="$(readlink "$idir/tap")"
+run_install Darwin arm64 glibc "$idir"
+if [ "$RC" -eq 0 ] && [ "$(readlink "$idir/tap")" = "$target_before" ] \
+   && printf '%s' "$OUT" | grep -q 'is not ours'; then
+  ok "a link that matches the shape but escapes the directory is not adopted"
+else
+  bad "traversal link adopted rc=$RC: now=$(readlink "$idir/tap" 2>/dev/null) was=$target_before"
+fi
+rm -rf "$elsewhere"
+
+# The alias is staged under a temporary name and moved into place, so a run that dies between the two
+# must not leave that name behind. This drives the failure with an `mv` that refuses the alias move --
+# the same window an interrupt opens, reached deterministically -- and then looks for the dot-file. The
+# work area is a temp dir nobody sees again; this one lands in a directory the user keeps forever.
+idir="$(mktemp -d)/bin"
+shim="$(mktemp -d)"
+cat > "$shim/mv" <<'SHIM'
+#!/bin/sh
+# Refuse only the alias staging move; everything else this installer does must still work, or the
+# case would prove that a broken mv breaks the install rather than that the trap cleans up.
+case "$*" in *.tap.*) exit 1 ;; esac
+exec /bin/mv "$@"
+SHIM
+chmod +x "$shim/mv"
+OUT="$(PATH="$shim:$PATH" \
+       TAPSTATE_VERSION="$VERSION" \
+       TAPSTATE_BASE_URL="file://$STUB" \
+       TAPSTATE_INSTALL_DIR="$idir" \
+       sh "$INSTALL_SH" 2>&1)"; RC=$?
+STRANDED="$(find "$idir" -maxdepth 1 -name '.tap.*' 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$RC" -ne 0 ] && [ "$STRANDED" = 0 ]; then
+  ok "an aborted alias move leaves no staged dot-file behind"
+else
+  bad "staged alias stranded or the abort was not detected rc=$RC stranded=$STRANDED: $OUT"
+fi
+rm -rf "$shim"
+
 # --- summary ----------------------------------------------------------------------------------------
 echo
 printf '\033[1minstall smoke: %d passed, %d failed\033[0m\n' "$PASS" "$FAIL"

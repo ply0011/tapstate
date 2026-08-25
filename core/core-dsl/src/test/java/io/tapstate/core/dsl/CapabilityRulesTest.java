@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -15,6 +16,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * build-time projection of each connector's own spec — nothing here hard-codes connector knowledge.
  */
 class CapabilityRulesTest {
+
+    /**
+     * A connector the catalog resolves no modes for, so the mode check has nothing to judge against.
+     * Which connector that is belongs to the checked-in catalog, not to the rules.
+     */
+    private static final String NO_MODE_CONNECTOR = "elasticsearch";
 
     private final DslParser parser = new DslParser();
     private final TapstateCatalog catalog = TapstateCatalog.load();
@@ -93,18 +100,31 @@ class CapabilityRulesTest {
     }
 
     @Test
+    void theNoModeFixtureStillHasNoModes() {
+        // The test below needs a connector the catalog resolves no modes at all for, and that is a
+        // property of the checked-in catalog rather than of the rules: a refresh can take it away.
+        // postgres was this fixture until its capabilities became derivable, and the way that
+        // surfaced was invisible - the test kept passing, because cdc had become a LEGAL mode rather
+        // than an unjudged one, so the branch it names stopped being exercised and nothing said so.
+        // Assert the premise directly, the same way the wizard's fixture does.
+        assertThat(catalog.byId(NO_MODE_CONNECTOR).modes())
+                .as("pick another connector with no modes for the skip-the-mode-check fixture")
+                .isEmpty();
+    }
+
+    @Test
     void skipsModeCheckWhenConnectorHasNoModes() {
-        // postgres did not classload during catalog generation (no built jar), so its modes are
-        // empty — no offline signal to judge against.
+        // A connector the catalog carries no modes for: there is no offline signal to judge the
+        // declared mode against, so the check is skipped rather than failed.
         Resource src = parse("""
                 version: tapstate/v1
                 kind: source
-                id: src_pg
-                connector: postgres
-                config: { host: 10.0.0.5, database: erp, user: u, password: p }
+                id: src_es
+                connector: %s
+                config: { host: 10.0.0.5, port: "9200", user: u, password: p }
                 mode: cdc
                 tables: [ orders ]
-                """);
+                """.formatted(NO_MODE_CONNECTOR));
         assertThatCode(() -> CapabilityRules.validate(List.of(src), catalog))
                 .doesNotThrowAnyException();
     }

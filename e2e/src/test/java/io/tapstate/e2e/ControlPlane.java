@@ -13,14 +13,20 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 
 /**
  * The product's HTTP surface, as a caller sees it.
@@ -37,6 +43,17 @@ import java.util.Optional;
 final class ControlPlane {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
+
+    /** How often a caller waiting on a pushed change looks again; a follow is told, never asked. */
+    private static final Duration POLL = Duration.ofMillis(100);
+
+    /**
+     * The bound for uploading a connector, which is the one request whose body is tens of megabytes -
+     * base64 of a shaded jar. The ordinary bound is about a server that has stopped answering; this one
+     * is about how long bytes take to move, and the largest connector this harness registers takes
+     * longer than that on a busy machine.
+     */
+    private static final Duration UPLOAD_TIMEOUT = Duration.ofMinutes(3);
 
     /**
      * What every per-namespace count of unassemblable changes is named with, before the namespace itself.
@@ -175,6 +192,51 @@ final class ControlPlane {
     }
 
     /**
+     * Mints a standing credential at the given scope and answers with it.
+     *
+     * <p>What a machine is given, as opposed to the session token a person's login returns. A
+     * specification that launches something outside this JVM and points it at the product needs one of
+     * these: handing over the session token instead would work, and would quietly make that
+     * specification a test of a credential nothing in production issues to a peer.
+     */
+    String mintToken(String scope) {
+        HttpResponse<String> response = send(authed("/api/tokens", JsonWriter.write(Map.of("scope", scope))));
+        expect(response, 201, "mint a " + scope + " token");
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> map)
+                || !(map.get("token") instanceof String token)) {
+            throw new AssertionError("minting a token returned no token: " + response.body());
+        }
+        return token;
+    }
+
+    /**
+     * Removes a declared source, so what is derived from the registry can be watched losing it.
+     *
+     * <p>Deleting the source rather than the artifact, which is the verb this branch has. The property
+     * a caller is watching is that a derived answer follows the registry rather than being snapshotted,
+     * and either verb takes the same thing out of it.
+     */
+    void deleteSource(String sourceId) {
+        // Read it first for its ETag: the delete is refused without one, so that a caller working from
+        // a stale view of a source cannot remove the version somebody else has since replaced.
+        HttpResponse<String> current = send(authedGet("/api/sources/" + sourceId));
+        expect(current, 200, "read the source " + sourceId + " before deleting it");
+        String tag = current.headers().firstValue("ETag")
+                .orElseThrow(() -> new AssertionError("the source " + sourceId + " came back with no ETag"));
+        HttpRequest request = HttpRequest.newBuilder(baseUrl.resolve("/api/sources/" + sourceId))
+                .timeout(TIMEOUT)
+                .header("Authorization", "Bearer " + requireCredential())
+                .header("If-Match", tag)
+                .DELETE()
+                .build();
+        HttpResponse<String> response = send(request);
+        if (response.statusCode() != 204 && response.statusCode() != 200) {
+            throw new AssertionError("could not delete the source " + sourceId + ": HTTP "
+                    + response.statusCode() + " - " + response.body());
+        }
+    }
+
+    /**
      * One stored artifact as the server hands it back, hash included. The hash is the precondition an edit
      * or a removal has to supply, so reading it here is what makes read-then-remove a closed loop over the
      * wire rather than something the caller computes locally off bytes it hopes are the same.
@@ -241,7 +303,8 @@ final class ControlPlane {
     /** Registers a connector's runtime jar; the product makes this idempotent by content hash. */
     void registerConnector(String connectorId, byte[] jar) {
         String body = JsonWriter.write(Map.of("artifact", Base64.getEncoder().encodeToString(jar)));
-        expect(send(authed("/api/connectors:register", body)), 200, "register the " + connectorId + " connector");
+        expect(send(authed("/api/connectors:register", body, UPLOAD_TIMEOUT)), 200,
+                "register the " + connectorId + " connector");
     }
 
     /**
@@ -321,6 +384,284 @@ final class ControlPlane {
     }
 
     /**
+     * Drives a connection test and returns the report body verbatim. The verb probes the connection
+     * for real - it inits the connector, discovers, and reads a small sample - so it exercises paths
+     * no other verb reaches, which is why a witness that only applies and discovers cannot stand in
+     * for it.
+     *
+     * <p>The body rather than the parsed form of {@link #testConnection}, because what a caller wants
+     * here is what the report does <em>not</em> say: a connector fault laundered into a message is
+     * invisible once the report is reduced to a status per check.
+     */
+    String testConnectionBody(String resourceId, String connectorId, Map<String, Object> settings) {
+        String body = JsonWriter.write(
+                Map.of("id", resourceId, "connectorId", connectorId, "settings", settings));
+        HttpResponse<String> response = send(authed("/api/connections:test", body));
+        expect(response, 200, "test the connection of " + resourceId);
+        return response.body();
+    }
+
+    /**
+     * The collections the read face lists for a declared source, each as the object it came down as.
+     *
+     * <p>Entries stay maps rather than becoming a record, and that is the point rather than laziness: what
+     * this face promises about a thing nobody could answer is that the key is <em>absent</em>, not that it
+     * carries an empty value. Decoding into a typed shape would give every absent key a null and erase
+     * exactly the distinction a caller reads.
+     */
+    List<Map<String, Object>> collections(String sourceId) {
+        HttpResponse<String> response = send(authedGet("/api/sources/" + sourceId + "/collections"));
+        expect(response, 200, "list the collections of " + sourceId);
+        return entriesOf(response.body(), "collections");
+    }
+
+    /** The refusal a listing was expected to be met with, read on the same terms every other one is. */
+    Refusal collectionsExpectingRefusal(String sourceId) {
+        HttpResponse<String> response = send(authedGet("/api/sources/" + sourceId + "/collections"));
+        return interpretRefusal(response.statusCode(), response.body(), "listing the collections of " + sourceId);
+    }
+
+    /**
+     * One preview read, answered whole: the rows, and whatever the face says around them.
+     *
+     * <p>The request travels as the caller wrote it rather than through named parameters, because several
+     * of these specifications exist to send a field the shape does not have and watch it change nothing.
+     * A typed argument list could not express that request at all.
+     */
+    Map<String, Object> find(String sourceId, String collection, Map<String, Object> request) {
+        HttpResponse<String> response = send(authed(findPath(sourceId, collection), JsonWriter.write(request)));
+        expect(response, 200, "read " + collection + " of " + sourceId);
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> map)) {
+            throw new AssertionError("a preview answer was not an object: " + response.body());
+        }
+        return asObject(map);
+    }
+
+    /** The refusal a read was expected to be met with, carrying the code the product named. */
+    Refusal findExpectingRefusal(String sourceId, String collection, Map<String, Object> request) {
+        HttpResponse<String> response = send(authed(findPath(sourceId, collection), JsonWriter.write(request)));
+        return interpretRefusal(
+                response.statusCode(), response.body(), "reading " + collection + " of " + sourceId);
+    }
+
+    /** What the face reports about one collection's size. */
+    Map<String, Object> stats(String sourceId, String collection) {
+        HttpResponse<String> response =
+                send(authedGet("/api/sources/" + sourceId + "/collections/" + collection + "/stats"));
+        expect(response, 200, "read the stats of " + collection + " of " + sourceId);
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> map)) {
+            throw new AssertionError("a stats answer was not an object: " + response.body());
+        }
+        return asObject(map);
+    }
+
+    /** The refusal a stats read was expected to be met with. */
+    Refusal statsExpectingRefusal(String sourceId, String collection) {
+        HttpResponse<String> response =
+                send(authedGet("/api/sources/" + sourceId + "/collections/" + collection + "/stats"));
+        return interpretRefusal(
+                response.statusCode(), response.body(), "reading the stats of " + collection + " of " + sourceId);
+    }
+
+    private static String findPath(String sourceId, String collection) {
+        return "/api/sources/" + sourceId + "/collections/" + collection + ":find";
+    }
+
+    /**
+     * Opens a follow of a collection and collects the changes the product pushes down it.
+     *
+     * <p>Driven over the websocket rather than through the CLI, for the same reason every other read verb
+     * here is: what is under test is the face, and a client in the middle would put its own reading of a
+     * request between the caller and the answer. The filter travels in the handshake query as the very
+     * JSON a one-shot read sends in its body, so "the same filter reached both faces" is a literal claim
+     * rather than an approximate one.
+     *
+     * <p>The caller closes it. A follow holds a connector instance for as long as it is open, so one left
+     * behind counts against the host's ceiling for the rest of the JVM.
+     */
+    Follow follow(String sourceId, String collection, Map<String, Object> filter) {
+        String path = "/api/data-browser/" + sourceId + "/" + collection + "/tail";
+        String query = filter == null
+                ? ""
+                : "?filter=" + URLEncoder.encode(JsonWriter.write(filter), StandardCharsets.UTF_8);
+        URI address = URI.create(
+                baseUrl.toString().replaceFirst("^http", "ws") + path + query);
+        Follow follow = new Follow(address);
+        try {
+            http.newWebSocketBuilder()
+                    .connectTimeout(TIMEOUT)
+                    .header("Authorization", "Bearer " + requireCredential())
+                    .buildAsync(address, follow)
+                    .join();
+        } catch (CompletionException refused) {
+            throw new AssertionError("could not follow " + collection + " of " + sourceId, refused.getCause());
+        }
+        return follow;
+    }
+
+    /**
+     * One open follow, and every change it has been sent.
+     *
+     * <p>Frames are kept whole and in arrival order. Order is what lets a caller assert that something was
+     * <em>not</em> sent: within one follow the store's stream is ordered and skips nothing, so a change
+     * the caller knows came last arriving is proof that every earlier one has already been delivered or
+     * filtered out. Without that a "it never arrived" assertion is only ever "it had not arrived yet".
+     */
+    static final class Follow implements AutoCloseable, WebSocket.Listener {
+
+        private final URI address;
+        private final List<Map<String, Object>> frames = Collections.synchronizedList(new ArrayList<>());
+        private final StringBuilder partial = new StringBuilder();
+        private final AtomicReference<String> ended = new AtomicReference<>();
+
+        private volatile WebSocket socket;
+
+        private Follow(URI address) {
+            this.address = address;
+        }
+
+        /** Every change delivered so far, oldest first. */
+        List<Map<String, Object>> frames() {
+            synchronized (frames) {
+                return List.copyOf(frames);
+            }
+        }
+
+        /**
+         * Waits for the product to end this follow, and answers with what it said when it did.
+         *
+         * <p>A follow can be refused after its handshake has already succeeded: the upgrade completes,
+         * then the read is attempted and may not be servable. The refusal therefore arrives as a close
+         * carrying the code, not as a failure to connect - so a caller witnessing one has to wait for
+         * the close rather than expect the open to throw.
+         */
+        String awaitClose(Duration within, String what) {
+            long deadline = System.nanoTime() + within.toNanos();
+            while (System.nanoTime() - deadline < 0) {
+                String closed = ended.get();
+                if (closed != null) {
+                    return closed;
+                }
+                sleep();
+            }
+            throw new AssertionError("waited " + within + " for " + what + " on " + address
+                    + ", and the follow was still open, having been sent " + frames());
+        }
+
+        /**
+         * Waits until a change satisfying the predicate has arrived, and answers with everything delivered
+         * up to and including it.
+         *
+         * <p>Fails rather than returns short on timeout, and says what did arrive: a follow that is not
+         * running at all and one that is running and filtering everything out look identical from here,
+         * and only the frames that did come tell them apart.
+         */
+        List<Map<String, Object>> awaitFrame(Predicate<Map<String, Object>> wanted, Duration within, String what) {
+            long deadline = System.nanoTime() + within.toNanos();
+            while (System.nanoTime() - deadline < 0) {
+                List<Map<String, Object>> delivered = frames();
+                if (delivered.stream().anyMatch(wanted)) {
+                    return delivered;
+                }
+                String closed = ended.get();
+                if (closed != null) {
+                    throw new AssertionError("the follow of " + address + " ended (" + closed
+                            + ") before " + what + "; it had been sent " + delivered);
+                }
+                sleep();
+            }
+            throw new AssertionError("waited " + within + " for " + what + " on " + address
+                    + ", and was sent " + frames());
+        }
+
+        @Override
+        public void onOpen(WebSocket webSocket) {
+            socket = webSocket;
+            webSocket.request(1);
+        }
+
+        @Override
+        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            partial.append(data);
+            if (last) {
+                String text = partial.toString();
+                partial.setLength(0);
+                if (!(JsonReader.parse(text) instanceof Map<?, ?> frame)) {
+                    throw new AssertionError("a followed change was not an object: " + text);
+                }
+                frames.add(asObject(frame));
+            }
+            webSocket.request(1);
+            return null;
+        }
+
+        @Override
+        public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+            ended.compareAndSet(null, statusCode + " " + reason);
+            return null;
+        }
+
+        @Override
+        public void onError(WebSocket webSocket, Throwable error) {
+            ended.compareAndSet(null, String.valueOf(error));
+        }
+
+        /**
+         * Closes the follow, and never throws doing it.
+         *
+         * <p>This runs from a try-with-resources, so anything it threw would be added to whatever the
+         * body was already failing with - and a peer that has gone away is the ordinary case here, not
+         * a finding. The interesting failure is the assertion; this must not stand in front of it.
+         */
+        @Override
+        public void close() {
+            WebSocket open = socket;
+            if (open == null) {
+                return;
+            }
+            try {
+                open.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+            } catch (RuntimeException alreadyGone) {
+                open.abort();
+            }
+        }
+
+        private static void sleep() {
+            try {
+                Thread.sleep(POLL.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while following", e);
+            }
+        }
+    }
+
+    /** The list under one key of an answer, each element kept as the object it arrived as. */
+    private static List<Map<String, Object>> entriesOf(String body, String key) {
+        if (!(JsonReader.parse(body) instanceof Map<?, ?> map) || !(map.get(key) instanceof List<?> entries)) {
+            throw new AssertionError("an answer carried no " + key + ": " + body);
+        }
+        List<Map<String, Object>> out = new ArrayList<>(entries.size());
+        for (Object entry : entries) {
+            if (!(entry instanceof Map<?, ?> row)) {
+                throw new AssertionError("a " + key + " entry was not an object: " + body);
+            }
+            out.add(asObject(row));
+        }
+        return out;
+    }
+
+    /**
+     * A decoded object as a map keyed by string. Keys absent on the wire stay absent here - nothing is
+     * filled in - so a caller may assert that the product left a key out.
+     */
+    private static Map<String, Object> asObject(Map<?, ?> decoded) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        decoded.forEach((key, value) -> out.put(String.valueOf(key), value));
+        return out;
+    }
+
+    /**
      * Records a lifecycle intent. The verb's own spelling comes from the product's enum, so the wire
      * word cannot drift from the word the product accepts.
      */
@@ -383,6 +724,36 @@ final class ControlPlane {
     String logs(String pipelineId) {
         HttpResponse<String> response = send(authedGet("/api/pipelines/" + pipelineId + "/logs"));
         return response.statusCode() + " " + response.body();
+    }
+
+    /**
+     * Runs the product's own connection test and answers the overall outcome with each check's status.
+     *
+     * <p>Both halves are returned because the interesting question about this verb is the relationship
+     * between them: a check can report a warning while the overall outcome still passes, and a caller
+     * that saw only one of the two could not tell that had happened.
+     */
+    ConnectionTest testConnection(String connectionId, String connectorId, Map<String, Object> settings) {
+        String body = JsonWriter.write(
+                Map.of("id", connectionId, "connectorId", connectorId, "settings", settings));
+        HttpResponse<String> response = send(authed("/api/connections:test", body));
+        expect(response, 200, "test the connection " + connectionId);
+        if (!(JsonReader.parse(response.body()) instanceof Map<?, ?> report)) {
+            throw new AssertionError("the connection test answered no report: " + response.body());
+        }
+        Map<String, String> statusByCheck = new LinkedHashMap<>();
+        if (report.get("checks") instanceof List<?> checks) {
+            for (Object each : checks) {
+                if (each instanceof Map<?, ?> check) {
+                    statusByCheck.put(String.valueOf(check.get("name")), String.valueOf(check.get("status")));
+                }
+            }
+        }
+        return new ConnectionTest(String.valueOf(report.get("outcome")), statusByCheck);
+    }
+
+    /** A connection test's overall outcome, and the status each individual check reported. */
+    record ConnectionTest(String outcome, Map<String, String> statusByCheck) {
     }
 
     /** The published metrics body verbatim, for the same diagnostic use and on the same terms as {@link #logs}. */
@@ -701,8 +1072,13 @@ final class ControlPlane {
     }
 
     private HttpRequest authed(String path, String body) {
+        return authed(path, body, TIMEOUT);
+    }
+
+    /** The same request with a bound of the caller's own, for a body large enough to need one. */
+    private HttpRequest authed(String path, String body, Duration timeout) {
         return HttpRequest.newBuilder(baseUrl.resolve(path))
-                .timeout(TIMEOUT)
+                .timeout(timeout)
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + requireCredential())
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))

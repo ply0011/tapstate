@@ -14,6 +14,9 @@ import io.tapstate.spi.capture.TableSchema;
 import io.tapdata.entity.event.TapEvent;
 import io.tapdata.entity.event.control.ControlEvent;
 import io.tapdata.entity.schema.TapTable;
+import io.tapdata.entity.utils.cache.Entry;
+import io.tapdata.entity.utils.cache.Iterator;
+import io.tapdata.entity.utils.cache.KVReadOnlyMap;
 import io.tapdata.pdk.apis.consumer.StreamReadConsumer;
 import io.tapdata.pdk.apis.functions.connector.source.BatchReadFunction;
 import io.tapdata.pdk.apis.functions.connector.source.StreamReadFunction;
@@ -189,7 +192,18 @@ public final class PdkCapturePort implements CapturePort {
                 if (sample.size() >= SAMPLE_SIZE) {
                     break;
                 }
-                batch.batchRead(connector.context(), new TapTable(stream), null, SAMPLE_SIZE, (events, offset) -> {
+                // The discovered table, not a bare name. A connector builds its read from the table's
+                // own columns, so a descriptor carrying none reads nothing - and one whose column map
+                // was never created answers a connector asking for it by throwing, inside the connector,
+                // where it reads as a broken connection rather than as a descriptor we failed to pass.
+                // Discovery ran above and the table is already in hand.
+                TapTable descriptor = discovered(tables, stream);
+                // And fill its field types, as the snapshot read does. Discovery reports the database's
+                // own type name and leaves the PDK type unset, so a descriptor that skips this step
+                // carries its columns with every type null - the same shape of failure one step later,
+                // and thrown from inside the connector just the same.
+                connector.fillFieldTypes(descriptor);
+                batch.batchRead(connector.context(), descriptor, null, SAMPLE_SIZE, (events, offset) -> {
                     for (TapEvent event : events) {
                         if (sample.size() < SAMPLE_SIZE) {
                             sample.add(event);
@@ -213,7 +227,7 @@ public final class PdkCapturePort implements CapturePort {
                 // that has no stored offset to recover from).
                 Map<String, TapTable> tables = byId(discoverTables(connector, config.streams()));
                 tables.values().forEach(connector::fillFieldTypes);
-                connector.context().setTableMap(tables::get);
+                connector.context().setTableMap(tableMap(tables));
                 Object startOffset = startOffset(connector);
                 StreamReadConsumer consumer = StreamReadConsumer.create((events, offset) -> {
                     for (TapEvent event : events) {
@@ -244,6 +258,60 @@ public final class PdkCapturePort implements CapturePort {
                     ? coded
                     : new TapstateException(ConnectorError.CAPTURE_FAILED,
                             Map.of("connector", connector.connectorId(), "detail", detail(t)), t));
+        }
+    }
+
+    /**
+     * The discovered tables, in the shape a connector reads them off its context: by name, and by a walk
+     * over every entry.
+     *
+     * <p>Handing over a lookup alone is not a smaller version of this - it is a map that throws. The
+     * frozen contract implements the walk as a default that raises, so a connector which expands what it
+     * was asked to watch, rather than asking for one name at a time, dies at the very start of its stream
+     * with nothing decoded. A snapshot over the same source is unaffected, because it never walks; the
+     * pair reads from outside as "this source cannot do change data capture at all", which is why a
+     * witness admitting only snapshot rows cannot see it.
+     *
+     * <p>Both readings are views of the one map, so what the walk yields cannot drift from what the
+     * lookup answers.
+     */
+    private static KVReadOnlyMap<TapTable> tableMap(Map<String, TapTable> tables) {
+        return new KVReadOnlyMap<>() {
+            @Override
+            public TapTable get(String name) {
+                return tables.get(name);
+            }
+
+            @Override
+            public Iterator<Entry<TapTable>> iterator() {
+                java.util.Iterator<Map.Entry<String, TapTable>> entries = tables.entrySet().iterator();
+                return new Iterator<>() {
+                    @Override
+                    public boolean hasNext() {
+                        return entries.hasNext();
+                    }
+
+                    @Override
+                    public Entry<TapTable> next() {
+                        Map.Entry<String, TapTable> entry = entries.next();
+                        return new TableEntry(entry.getKey(), entry.getValue());
+                    }
+                };
+            }
+        };
+    }
+
+    /** One entry of the table map, in the shape the walk yields. */
+    private record TableEntry(String key, TapTable table) implements Entry<TapTable> {
+
+        @Override
+        public String getKey() {
+            return key;
+        }
+
+        @Override
+        public TapTable getValue() {
+            return table;
         }
     }
 
@@ -323,6 +391,20 @@ public final class PdkCapturePort implements CapturePort {
     }
 
     /** The connection-test probe result: the discovered schema tables and a small raw sample. */
+    /**
+     * The discovered table for {@code stream}, or a descriptor declaring no columns when discovery did
+     * not report it. Declaring no columns is a statement a connector can read; being unable to answer
+     * what columns there are is not, which is why the fallback is never a raw descriptor.
+     */
+    private static TapTable discovered(List<TapTable> tables, String stream) {
+        for (TapTable table : tables) {
+            if (stream.equals(table.getId())) {
+                return table;
+            }
+        }
+        return TargetTapTable.bare(stream);
+    }
+
     private record Probe(List<TapTable> tables, List<TapEvent> sample) {
     }
 }

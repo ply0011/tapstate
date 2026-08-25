@@ -7,6 +7,7 @@ import io.tapstate.adapters.pdk.ConnectorIntrospector;
 import io.tapstate.adapters.pdk.ConnectorProvisioner;
 import io.tapstate.adapters.pdk.PdkCapabilityDeriver;
 import io.tapstate.adapters.pdk.PdkConnectionTester;
+import io.tapstate.adapters.pdk.PdkDataBrowser;
 import io.tapstate.adapters.pdk.PdkSchemaDiscoverer;
 import io.tapstate.adapters.pdk.RegistryConnectorProvisioner;
 import io.tapstate.adapters.pdk.SeedConnectorSweep;
@@ -24,6 +25,7 @@ import io.tapstate.control.core.ConnectorConfigValidator;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.LoginService;
 import io.tapstate.control.core.OperationRegistry;
 import io.tapstate.control.core.PasswordHasher;
@@ -32,7 +34,9 @@ import io.tapstate.control.core.PipelineLogQueryService;
 import io.tapstate.control.core.PipelineObservationQueryService;
 import io.tapstate.control.core.SchemaDiscoveryService;
 import io.tapstate.control.core.SchemaQueryService;
+import io.tapstate.control.core.DataBrowserFollows;
 import io.tapstate.control.core.SourceDraftService;
+import org.springframework.beans.factory.ObjectProvider;
 import io.tapstate.control.core.SourceRepresentation;
 import io.tapstate.control.core.SourceService;
 import io.tapstate.control.core.TokenSecrets;
@@ -45,10 +49,19 @@ import io.tapstate.core.logging.RingBufferLogSink;
 import io.tapstate.core.logging.SecretRedactor;
 import io.tapstate.runtime.engine.nest.NestSettings;
 import io.tapstate.runtime.probe.ConnectionProbe;
+import io.tapstate.runtime.probe.DataBrowserCollectionsProbe;
+import io.tapstate.runtime.probe.DataBrowserFindProbe;
+import io.tapstate.runtime.probe.DataBrowserStatsProbe;
 import io.tapstate.runtime.probe.DelegatingConnectionProbe;
+import io.tapstate.runtime.probe.DelegatingDataBrowserCollectionsProbe;
+import io.tapstate.runtime.probe.DelegatingDataBrowserFindProbe;
+import io.tapstate.runtime.probe.DelegatingDataBrowserStatsProbe;
+import io.tapstate.runtime.probe.DelegatingDataBrowserTailProbe;
+import io.tapstate.runtime.probe.DataBrowserTailProbe;
 import io.tapstate.runtime.probe.DelegatingSchemaDiscoveryProbe;
 import io.tapstate.runtime.probe.SchemaDiscoveryProbe;
 import io.tapstate.spi.store.AuditStore;
+import io.tapstate.spi.store.DataBrowser;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.ConnectionTestResultStore;
 import io.tapstate.spi.store.ConnectionTester;
@@ -206,13 +219,14 @@ class ControlPlaneConfiguration {
 
     @Bean
     ArtifactMutationService artifactMutationService(
-            ArtifactStore artifactStore, StorePort storePort, AuditGate auditGate) {
+            ArtifactStore artifactStore, StorePort storePort, AuditGate auditGate,
+            ObjectProvider<DataBrowserFollows> follows) {
         // The removal takes the same artifact store bean apply writes through, so both paths see one
         // view of a resource. The dependent bookkeeping a removed pipeline owns is reclaimed straight
         // off the store port: those facets have no service in front of them.
         return new ArtifactMutationService(
                 artifactStore, storePort.desired(), storePort.state(), storePort.observations(),
-                storePort.meta(), auditGate);
+                storePort.meta(), auditGate, follows.getIfAvailable(() -> DataBrowserFollows.NONE));
     }
 
     @Bean
@@ -294,6 +308,16 @@ class ControlPlaneConfiguration {
     }
 
     @Bean
+    ViewStoreSeedRunner viewStoreSeedRunner(ArtifactStore artifactStore, MongoProperties mongoProperties) {
+        // The managed ArtifactStore, not the raw one behind it. Reaching past the decorator would make
+        // this the one write in the process that skips secret tracking -- and the resource it writes is
+        // built from the deployment's own store URI, which is the last one that should be the exception.
+        // It changes nothing observable while the mongodb catalog marks `uri` non-secret; what it
+        // removes is a seam where a later change to that marking would silently not apply here.
+        return new ViewStoreSeedRunner(artifactStore, mongoProperties.getUri(), mongoProperties.getTlsCaFile());
+    }
+
+    @Bean
     ConnectorRegisterService connectorRegisterService(ConnectorArtifactRegistrar registrar, AuditGate auditGate) {
         // The register verb reaches the distribution store through the same registrar the seed sweep uses; it
         // implements the spi ingestion port, so control-core drives it without depending on the adapters ring.
@@ -357,6 +381,48 @@ class ControlPlaneConfiguration {
         return new SchemaQueryService(schemaStore);
     }
 
+    // The read face over a declared source's own database. Unlike the two connection probes, the browser
+    // holds live state between calls — a pool of initialized connector instances — so the assembly root
+    // owns its shutdown; the three probes share that one browser rather than holding one each, which is
+    // also why only the browser bean closes.
+
+    @Bean(destroyMethod = "close")
+    DataBrowser dataBrowser(ConnectorProvisioner provisioner) {
+        return new PdkDataBrowser(provisioner);
+    }
+
+    @Bean
+    DataBrowserCollectionsProbe dataBrowserCollectionsProbe(DataBrowser browser) {
+        return new DelegatingDataBrowserCollectionsProbe(browser);
+    }
+
+    @Bean
+    DataBrowserStatsProbe dataBrowserStatsProbe(DataBrowser browser) {
+        return new DelegatingDataBrowserStatsProbe(browser);
+    }
+
+    @Bean
+    DataBrowserFindProbe dataBrowserFindProbe(DataBrowser browser) {
+        return new DelegatingDataBrowserFindProbe(browser);
+    }
+
+    @Bean
+    DataBrowserTailProbe dataBrowserTailProbe(DataBrowser browser) {
+        return new DelegatingDataBrowserTailProbe(browser);
+    }
+
+    @Bean
+    DataBrowserService dataBrowserService(
+            ArtifactStore artifactStore, SchemaStore schemaStore,
+            DataBrowserCollectionsProbe collectionsProbe,
+            DataBrowserStatsProbe statsProbe, DataBrowserFindProbe findProbe,
+            DataBrowserTailProbe tailProbe) {
+        // The schema store is read, never written, from here: a listing reports what the last discovery
+        // found and never runs one, which would turn a read into an audited write.
+        return new DataBrowserService(
+                artifactStore, schemaStore, collectionsProbe, statsProbe, findProbe, tailProbe);
+    }
+
     @Bean
     PipelineLifecycleService pipelineLifecycleService(
             ArtifactQueryService artifactQueryService, StorePort storePort, AuditGate auditGate) {
@@ -412,8 +478,13 @@ class ControlPlaneConfiguration {
     @Bean
     SourceService sourceService(
             ConnectorCatalogView connectorCatalogView, ArtifactStore artifactStore,
-            SourceRepresentation representation) {
-        return new SourceService(connectorCatalogView::merged, artifactStore, representation);
+            SourceRepresentation representation, ObjectProvider<DataBrowserFollows> follows) {
+        // Resolved through a provider rather than injected directly: the streaming face is
+        // servlet-only, and a control plane assembled without one still deletes sources -- it
+        // simply has no follows to stop. Asked for at call time so it cannot depend on which
+        // configuration Spring happens to process first.
+        return new SourceService(connectorCatalogView::merged, artifactStore, representation,
+                follows.getIfAvailable(() -> DataBrowserFollows.NONE));
     }
 
     @Bean

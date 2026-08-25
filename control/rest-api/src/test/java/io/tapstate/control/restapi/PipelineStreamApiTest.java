@@ -1,10 +1,12 @@
 package io.tapstate.control.restapi;
 
 import io.tapstate.control.core.ArtifactQueryService;
+import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.PipelineLogQueryService;
 import io.tapstate.control.core.PipelineObservationQueryService;
+import io.tapstate.control.core.OperationRegistry;
 import io.tapstate.control.core.Scope;
 import io.tapstate.control.core.TokenSecrets;
 import io.tapstate.control.core.TokenService;
@@ -20,6 +22,7 @@ import io.tapstate.messages.MessageCatalog;
 import io.tapstate.spi.store.ObservationStore;
 import io.tapstate.core.model.PipelineResource;
 import io.tapstate.core.model.Resource;
+import io.tapstate.core.model.SourceResource;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.TokenRecord;
 import io.tapstate.spi.store.TokenStore;
@@ -182,6 +185,40 @@ class PipelineStreamApiTest {
                         .isEqualTo(401));
     }
 
+    @Test
+    void anUnauthenticatedFollowHandshakeIsRefusedUnauthorized() {
+        // The one gate this endpoint has, and the only thing that would report its absence. Without the
+        // interceptor the upgrade simply succeeds and an anonymous caller is handed every change to the
+        // collection -- there is no projection gate over websocket paths, and no arch rule that a path
+        // carries an interceptor, so nothing else in the build would say a word.
+        assertThatThrownBy(() -> HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create(
+                        "ws://localhost:" + port + "/api/data-browser/views/order_state/tail"), new FrameSink())
+                .join())
+                .hasCauseInstanceOf(WebSocketHandshakeException.class)
+                .cause()
+                .satisfies(cause -> assertThat(((WebSocketHandshakeException) cause).getResponse().statusCode())
+                        .as("a follow that upgrades without a credential is an open read of the data")
+                        .isEqualTo(401));
+    }
+
+    @Test
+    void anAuthenticatedFollowHandshakeReachesTheFollowHandler() {
+        FollowFixture fixture = context.getBean(FollowFixture.class);
+        fixture.setAnswering(true);
+        try {
+            WebSocket ws = connect(
+                    "/api/data-browser/views/order_state/tail", readToken(), new FrameSink());
+            try {
+                assertThat(ws.isOutputClosed()).isFalse();
+            } finally {
+                ws.abort();
+            }
+        } finally {
+            fixture.setAnswering(false);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static List<String> messages(Map<?, ?> frame) {
         List<String> out = new ArrayList<>();
@@ -217,7 +254,7 @@ class PipelineStreamApiTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({PipelineStreamConfiguration.class})
+    @Import({RestApiSecurityConfiguration.class, PipelineStreamConfiguration.class, DataBrowserStreamConfiguration.class})
     static class TestApp {
 
         @Bean
@@ -236,8 +273,38 @@ class PipelineStreamApiTest {
         }
 
         @Bean
+        FollowFixture followFixture() {
+            return new FollowFixture();
+        }
+
+        @Bean
         PipelineObservationQueryService pipelineObservationQueryService(ObservationStore store) {
             return new PipelineObservationQueryService(new ArtifactQueryService(appliedPipelines()), store);
+        }
+
+        @Bean
+        io.tapstate.control.core.DataBrowserService dataBrowserService(FollowFixture fixture) {
+            return new io.tapstate.control.core.DataBrowserService(
+                    appliedPipelines(),
+                    new NoDiscoveries(),
+                    config -> {
+                        if (!fixture.answering()) {
+                            throw new AssertionError("the handshake must be refused before any read");
+                        }
+                        return List.of("order_state");
+                    },
+                    (config, collection) -> {
+                        throw new AssertionError("the handshake must be refused before any read");
+                    },
+                    (config, query) -> {
+                        throw new AssertionError("the handshake must be refused before any read");
+                    },
+                    (config, request, listener) -> {
+                        if (!fixture.answering()) {
+                            throw new AssertionError("the handshake must be refused before any read");
+                        }
+                        return () -> { };
+                    });
         }
 
         @Bean
@@ -266,8 +333,25 @@ class PipelineStreamApiTest {
         }
 
         @Bean
+        OperationRegistry operationRegistry() {
+            return ControlOperations.registry();
+        }
+
+        @Bean
         CredentialAuthenticator credentialAuthenticator(TokenService tokens, TokenSigner signer) {
             return new CredentialAuthenticator(tokens, signer);
+        }
+    }
+
+    static final class FollowFixture {
+        private boolean answering;
+
+        boolean answering() {
+            return answering;
+        }
+
+        void setAnswering(boolean answering) {
+            this.answering = answering;
         }
     }
 
@@ -386,6 +470,10 @@ class PipelineStreamApiTest {
 
             @Override
             public Optional<Resource> get(String id) {
+                if (id.equals("views")) {
+                    return Optional.of(new SourceResource(id, null, "mongodb",
+                            Map.of("uri", "mongodb://db.local"), null, null, null, null, null));
+                }
                 return Optional.of(new PipelineResource(id, null, List.of("src_x"), null, null, null, null, null));
             }
 

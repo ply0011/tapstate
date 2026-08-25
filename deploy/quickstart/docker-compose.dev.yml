@@ -11,6 +11,13 @@
 #
 #   export COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml
 #
+# Either way it is opt-in, and that is deliberate: docker-compose.yml alone has to stay runnable from
+# inside a checkout, because that is how you reproduce what a user actually gets. The cost is that
+# forgetting it is silent -- the stack simply comes up on the published image, with every local change
+# absent -- so when something you changed seems not to be there, first ask which image is in play:
+#
+#   docker compose config --format json | python3 -c 'import sys,json;print(json.load(sys.stdin)["services"]["server"]["image"])'
+#
 # The build reads app/target/app-<version>-boot.jar, so package that first:
 #
 #   ( cd ../.. && mvn -pl app -am -DskipTests package )

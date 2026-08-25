@@ -10,9 +10,11 @@ import io.tapstate.runtime.srs.CaptureRunUnit;
 import io.tapstate.runtime.srs.SnapshotBuffer;
 import io.tapstate.runtime.srs.SrsCoordinator;
 import io.tapstate.spi.capture.CapturePort;
+import io.tapstate.spi.store.ConnectionTester;
 import io.tapstate.spi.store.KeyedStateStore;
 import io.tapstate.spi.store.SrsMetaStore;
 import io.tapstate.spi.store.StorePort;
+import java.time.Duration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -37,9 +39,16 @@ class DataPlaneActuationConfiguration {
         return new Engine(hazelcastMember, nestStateStore);
     }
 
+    /**
+     * The store probe's deadline. Short on purpose: this runs while a person waits for `start` to answer,
+     * and a store that has not replied in this long is not one the pipeline was about to write to either.
+     */
+    private static final Duration STORE_PROBE_TIMEOUT = Duration.ofSeconds(10);
+
     @Bean
-    DagSource dagSource(StorePort storePort, NestSettings nestSettings) {
-        return new StoreBackedDagSource(storePort, nestSettings);
+    DagSource dagSource(StorePort storePort, NestSettings nestSettings, ConnectionTester connectionTester) {
+        return new StoreBackedDagSource(storePort, nestSettings,
+                StoreReachability.probing(connectionTester, STORE_PROBE_TIMEOUT));
     }
 
     @Bean

@@ -118,6 +118,55 @@ class FileEndpointsTest {
     }
 
     /**
+     * The generated update rewrites whichever rows the driver picks; this one rewrites the row the
+     * caller named and leaves every other row exactly as it was. Asserting the whole file, not just the
+     * changed row, is what separates the two: an implementation that rewrote the lowest ids instead
+     * would satisfy an assertion about the file containing the new value.
+     */
+    @Test
+    void updatingWritesTheNamedColumnOnTheNamedRowAndLeavesTheRestAlone() throws IOException {
+        endpoints.seed(at(), "orders", SeedRows.generated(3));
+
+        endpoints.update(at(), "orders", Map.of("id", 2), Map.of("seq", 99));
+
+        assertThat(lines("orders")).containsExactly("id,seq", "1,1", "2,99", "3,3");
+        assertThat(endpoints.count(at(), "orders")).isEqualTo(3L);
+    }
+
+    @Test
+    void deletingRemovesTheNamedRowRatherThanTheLowestId() throws IOException {
+        endpoints.seed(at(), "orders", SeedRows.generated(3));
+
+        endpoints.delete(at(), "orders", Map.of("id", 2));
+
+        assertThat(lines("orders")).containsExactly("id,seq", "1,1", "3,3");
+    }
+
+    /**
+     * A change that matches nothing is refused rather than passed over. A specification writes one of
+     * these and then waits for its effect downstream; a silent no-op turns that wait into a timeout
+     * that reads like the product lost a change nobody ever made.
+     */
+    @Test
+    void aValuedChangeMatchingNoRowRefusesInsteadOfDoingNothing() {
+        endpoints.seed(at(), "orders", SeedRows.generated(3));
+
+        assertThatThrownBy(() -> endpoints.delete(at(), "orders", Map.of("id", 99)))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("moved 0 rows");
+    }
+
+    /** This driver's rows carry id and seq; anything else is named rather than silently dropped. */
+    @Test
+    void updatingAColumnThisDriverDoesNotHoldNamesIt() {
+        endpoints.seed(at(), "orders", SeedRows.generated(3));
+
+        assertThatThrownBy(() -> endpoints.update(at(), "orders", Map.of("id", 1), Map.of("customer", 5)))
+                .isInstanceOf(EnvelopeException.class)
+                .hasMessageContaining("customer");
+    }
+
+    /**
      * Changing a table that was never seeded is an authoring mistake, not a change: the specification
      * says produce changes "against a table that is already seeded", and silently creating one here
      * would let a specification whose seed and cdc name different tables pass by accident.

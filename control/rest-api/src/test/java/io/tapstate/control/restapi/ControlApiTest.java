@@ -1,5 +1,6 @@
 package io.tapstate.control.restapi;
 
+import io.tapstate.control.core.DataBrowserFollows;
 import io.tapstate.control.core.ApplyResult;
 import io.tapstate.control.core.ApplyService;
 import io.tapstate.control.core.ArtifactMutationService;
@@ -13,12 +14,14 @@ import io.tapstate.control.core.ConnectionTestResultQueryService;
 import io.tapstate.control.core.ConnectionTestService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.Frontend;
-import io.tapstate.control.core.Maturity;
 import io.tapstate.control.core.Operation;
 import io.tapstate.control.core.SchemaDiscoveryService;
 import io.tapstate.control.core.SchemaQueryService;
+import io.tapstate.control.core.Scope;
 import io.tapstate.control.core.StoredArtifact;
+import io.tapstate.control.core.TapstatePrincipal;
 import io.tapstate.control.core.ValidationDiagnostic;
+import io.tapstate.control.core.VerifiedToken;
 import io.tapstate.core.catalog.TapstateCatalog;
 import io.tapstate.core.dsl.DiscoveredTable;
 import io.tapstate.core.dsl.DslParser;
@@ -53,6 +56,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.client.RestClient;
@@ -633,7 +641,7 @@ class ControlApiTest {
     @Test
     void everyApiEndpointProjectsARegisteredCliExposedVerb() {
         Set<String> cliExposed = ControlOperations.registry()
-                .exposedOn(Frontend.CLI, Maturity.POC).stream()
+                .exposedOn(Frontend.CLI).stream()
                 .map(Operation::id).collect(Collectors.toSet());
 
         RequestMappingHandlerMapping mapping =
@@ -719,11 +727,10 @@ class ControlApiTest {
         }
 
         /**
-         * Stamps a fixed principal onto every {@code /api} request. This context omits the authentication
-         * interceptor on purpose — it asserts the verb mechanics, not the guard (which AuthTest asserts) —
-         * but an audited verb still needs a principal to attribute its record to, so one is supplied here.
-         * The endpoint reads whatever this stamps, which is what proves it carries the request's principal
-         * rather than a constant of its own.
+         * Stamps a fixed principal onto every {@code /api} request. This context omits the production
+         * security configuration on purpose — it asserts verb mechanics, not the guard (which AuthTest
+         * asserts) — but an audited verb still needs a principal to attribute its record to, so one is
+         * supplied here through the same security context controllers use in production.
          */
         @Bean
         WebMvcConfigurer principalStamp() {
@@ -734,12 +741,30 @@ class ControlApiTest {
                         @Override
                         public boolean preHandle(
                                 HttpServletRequest request, HttpServletResponse response, Object handler) {
-                            request.setAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE, STAMPED_PRINCIPAL);
+                            SecurityContext context = SecurityContextHolder.createEmptyContext();
+                            context.setAuthentication(new TapstateAuthentication(
+                                    TapstatePrincipal.humanJwt(new VerifiedToken(STAMPED_PRINCIPAL, Scope.ADMIN))));
+                            SecurityContextHolder.setContext(context);
                             return true;
+                        }
+
+                        @Override
+                        public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+                                Object handler, Exception failure) {
+                            SecurityContextHolder.clearContext();
                         }
                     }).addPathPatterns("/api/**");
                 }
             };
+        }
+
+        @Bean
+        SecurityFilterChain permitAllSecurity(HttpSecurity http) throws Exception {
+            http.csrf(AbstractHttpConfigurer::disable)
+                    .formLogin(AbstractHttpConfigurer::disable)
+                    .httpBasic(AbstractHttpConfigurer::disable)
+                    .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll());
+            return http.build();
         }
 
         @Bean
@@ -757,7 +782,7 @@ class ControlApiTest {
         ArtifactMutationService artifactMutationService(ArtifactStore store, AuditGate auditGate) {
             return new ArtifactMutationService(
                     store, NoReclaimStores.desired(), NoReclaimStores.state(),
-                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate);
+                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate, DataBrowserFollows.NONE);
         }
 
         // The connection-test controller is imported, so its service must be present for the context to

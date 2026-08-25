@@ -1,5 +1,7 @@
 package io.tapstate.cli;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -28,8 +30,31 @@ sealed interface ApplyOutcome {
         }
     }
 
-    /** The server refused the apply with a coded reason already rendered to a message. */
-    record Rejected(String code, String message) implements ApplyOutcome {
+    /**
+     * The server refused the apply with a coded reason already rendered to a message, and the named
+     * parameters that message was rendered from.
+     *
+     * <p>The parameters travel even though the message arrives ready to print, because the message is
+     * only half of what the catalog holds for a code: the other half is the remedy, and rendering that
+     * here needs the same values. Carrying only the message would leave the most useful sentence
+     * unreachable on the surface a person actually reads.
+     */
+    record Rejected(String code, String message, Map<String, Object> params) implements ApplyOutcome {
+
+        public Rejected {
+            // An unmodifiable view rather than Map.copyOf: copyOf rejects a null value, and nothing
+            // between the server and here does - the error's arguments travel through maps that all
+            // permit one. The throw would land outside the catch that turns a bad body into a refusal
+            // and inside the one that reports the server as unreachable, so a refusal the server did
+            // send would be reported as a server nobody could reach. A null-valued parameter is kept
+            // as sent.
+            params = params == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(params));
+        }
+
+        /** A refusal that carried no parameters, which is every non-coded one. */
+        Rejected(String code, String message) {
+            this(code, message, Map.of());
+        }
     }
 
     /** The server could not be reached (connection refused, timeout, or a malformed target). */
@@ -51,7 +76,8 @@ sealed interface ApplyOutcome {
      */
     record Warning(String code, Map<String, Object> params) {
         public Warning {
-            params = params == null ? Map.of() : Map.copyOf(params);
+            // Same reason as the refusal above: a null-valued parameter is carried, not fatal.
+            params = params == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(params));
         }
     }
 }

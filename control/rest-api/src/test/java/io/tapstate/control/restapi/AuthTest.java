@@ -17,6 +17,9 @@ import io.tapstate.control.core.ConnectorCatalogView;
 import io.tapstate.control.core.ConnectorRegisterService;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.CredentialAuthenticator;
+import io.tapstate.control.core.CreatedToken;
+import io.tapstate.control.core.DataBrowserFollows;
+import io.tapstate.control.core.DataBrowserService;
 import io.tapstate.control.core.GeneratedSecret;
 import io.tapstate.control.core.LoginService;
 import io.tapstate.control.core.OperationRegistry;
@@ -33,7 +36,6 @@ import io.tapstate.control.core.TokenService;
 import io.tapstate.control.core.TokenSigner;
 import io.tapstate.control.core.VerifiedToken;
 import io.tapstate.core.catalog.TapstateCatalog;
-import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.dsl.DslParser;
 import io.tapstate.core.lifecycle.DesiredState;
 import io.tapstate.core.lifecycle.Observation;
@@ -52,13 +54,12 @@ import io.tapstate.spi.store.DiscoveredSourceModel;
 import io.tapstate.spi.store.ObservationStore;
 import io.tapstate.spi.store.SchemaStore;
 import io.tapstate.core.model.PipelineResource;
+import io.tapstate.messages.MessageCatalog;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.TokenRecord;
 import io.tapstate.spi.store.TokenStore;
 import io.tapstate.spi.store.User;
 import io.tapstate.spi.store.UserStore;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,15 +71,17 @@ import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.client.RestClient;
 
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
-import java.lang.reflect.Proxy;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -95,12 +98,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The authentication and authorization matrix over the {@code /api} verb surface, exercised end to end
  * through a real embedded server (booted programmatically so the module stays on the reactor's JUnit
- * line). It proves the interceptor guards every verb, the two credential mechanisms both authenticate,
+ * line). It proves Spring Security guards every verb, the two credential mechanisms both authenticate,
  * the grade check refuses an under-scoped caller, and the two pre-authentication entry points (login and
  * the zero-user bootstrap) live outside the guard and self-guard. The stores and the crypto are in-memory
  * fakes; the control-core services and the wiring are real.
  */
 class AuthTest {
+
+    /** A follow probe that is never driven: nothing here streams, and one that answered
+     * would let a case pass by following instead of reading. */
+    private static final io.tapstate.runtime.probe.DataBrowserTailProbe NO_FOLLOWS =
+            (config, request, listener) -> {
+                throw new AssertionError("no case here opens a follow");
+            };
 
     private static final Instant NOW = Instant.parse("2026-07-08T12:00:00Z");
 
@@ -143,6 +153,7 @@ class AuthTest {
         ApiError body = client().get().uri("/api/artifacts")
                 .exchange((request, response) -> {
                     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                    assertThat(response.getHeaders().getFirst(HttpHeaders.WWW_AUTHENTICATE)).isNull();
                     return response.bodyTo(ApiError.class);
                 });
 
@@ -261,31 +272,6 @@ class AuthTest {
     }
 
     @Test
-    void interceptorAttachesOnlyTheAuthorizedVerifiedSubject() throws Exception {
-        AuthInterceptor interceptor = context.getBean(AuthInterceptor.class);
-        HttpServletResponse response = servletProxy(HttpServletResponse.class, new LinkedHashMap<>(), null);
-
-        HttpServletRequest unauthenticated = requestProxy(null);
-        assertThatThrownBy(() -> interceptor.preHandle(
-                unauthenticated, response, new HandlerMethod(new SubjectHandlers(), "read")))
-                .isInstanceOf(TapstateException.class);
-        assertThatThrownBy(() -> AuthInterceptor.authenticatedPrincipal(unauthenticated))
-                .isInstanceOf(IllegalStateException.class);
-
-        HttpServletRequest forbidden = requestProxy("reader|READ");
-        assertThatThrownBy(() -> interceptor.preHandle(
-                forbidden, response, new HandlerMethod(new SubjectHandlers(), "write")))
-                .isInstanceOf(TapstateException.class);
-        assertThatThrownBy(() -> AuthInterceptor.authenticatedPrincipal(forbidden))
-                .isInstanceOf(IllegalStateException.class);
-
-        HttpServletRequest authorized = requestProxy("alice|READ");
-        assertThat(interceptor.preHandle(
-                authorized, response, new HandlerMethod(new SubjectHandlers(), "read"))).isTrue();
-        assertThat(AuthInterceptor.authenticatedPrincipal(authorized)).isEqualTo("alice");
-    }
-
-    @Test
     void theBearerSchemeIsMatchedCaseInsensitively() {
         // The auth-scheme name is case-insensitive (RFC 7235), so a lowercase "bearer" carries a valid credential.
         HttpStatusCode status = client().get().uri("/api/artifacts")
@@ -293,6 +279,59 @@ class AuthTest {
                 .exchange((request, response) -> response.getStatusCode());
 
         assertThat(status).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void malformedAndDuplicateBearerHeadersAreTheSameCodedUnauthenticatedRefusal() {
+        String token = machineToken(Scope.READ);
+
+        ApiError malformed = client().get().uri("/api/artifacts")
+                .header("Authorization", "Bearer  " + token)
+                .exchange((request, response) -> {
+                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                    return response.bodyTo(ApiError.class);
+                });
+        ApiError duplicate = client().get().uri("/api/artifacts")
+                .header("Authorization", "Bearer " + token, "Bearer " + token)
+                .exchange((request, response) -> {
+                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                    return response.bodyTo(ApiError.class);
+                });
+
+        assertThat(malformed.code()).isEqualTo("control.unauthenticated");
+        assertThat(duplicate.code()).isEqualTo("control.unauthenticated");
+    }
+
+    @Test
+    void unknownApiRoutesReachMvcWhileUnknownRootRoutesRemainUnauthorized() {
+        HttpStatusCode unknownApi = client().get().uri("/api/not-a-control-verb")
+                .exchange((request, response) -> response.getStatusCode());
+        ApiError unknownRoot = client().get().uri("/not-a-public-endpoint")
+                .exchange((request, response) -> {
+                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                    return response.bodyTo(ApiError.class);
+                });
+
+        assertThat(unknownApi).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(unknownRoot.code()).isEqualTo("control.unauthenticated");
+
+        HttpStatusCode wrongMethod = client().put().uri("/api/sources")
+                .header("Authorization", "Bearer " + machineToken(Scope.ADMIN))
+                .exchange((request, response) -> response.getStatusCode());
+        assertThat(wrongMethod).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+    }
+
+    @Test
+    void theControlFaceUsesTwoStatelessSecurityChainsInsteadOfTheLegacyInterceptor() {
+        assertThat(context.getBeansOfType(SecurityFilterChain.class)).hasSize(2);
+    }
+
+    @Test
+    void securityConfigurationRefusesToStartWithoutTheHumanCredentialVerifier() {
+        assertThatThrownBy(() -> new SpringApplicationBuilder(MissingHumanVerifierApp.class)
+                .properties("server.port=0")
+                .run())
+                .hasStackTraceContaining("TokenSigner");
     }
 
     // ---- login is a pre-authentication entry point that issues a working credential ----
@@ -312,6 +351,25 @@ class AuthTest {
                 .header("Authorization", "Bearer " + login.token())
                 .exchange((request, response) -> response.getStatusCode());
         assertThat(status).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void aHumanJwtCarriesItsPrincipalIntoAnAuditedWriteWithoutCreatingAServletSession() {
+        seedUser("alice", "s3cret", "admin");
+        LoginResponse login = client().post().uri("/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new LoginRequest("alice", "s3cret"))
+                .retrieve().toEntity(LoginResponse.class).getBody();
+
+        ResponseEntity<CreatedToken> created = client().post().uri("/api/tokens")
+                .header("Authorization", "Bearer " + login.token())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new TokenCreateRequest("read"))
+                .retrieve().toEntity(CreatedToken.class);
+
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(created.getBody().token()).startsWith("cyxt_");
+        assertThat(created.getHeaders().get("Set-Cookie")).isNull();
     }
 
     @Test
@@ -425,7 +483,7 @@ class AuthTest {
 
     @Test
     void theOnlyEndpointsOutsideTheApiPrefixAreTheProbeAndThePreAuthEntryPoints() {
-        // /api is the authenticated boundary (the interceptor guards /api/**). Everything reachable
+        // /api is the authenticated boundary (the API security chain guards /api/**). Everything reachable
         // anonymously must therefore be an intentional carve-out: the liveness probe, the two pre-auth
         // entry points, and the framework's own error endpoint (which renders only the current request's
         // error, no application data). A future plain @Controller added at the root would escape both the
@@ -441,7 +499,7 @@ class AuthTest {
                     ? Set.of()
                     : info.getPathPatternsCondition().getPatternValues();
             for (String pattern : patterns) {
-                // Mirror the interceptor's /api/** exactly (segment-based), so a sibling like /api-internal
+                // Mirror the API security chain's /api/** exactly (segment-based), so a sibling like /api-internal
                 // is treated as outside the guarded surface and must be allow-listed too, not slipped through
                 // by a loose string prefix.
                 boolean underApi = pattern.equals("/api") || pattern.startsWith("/api/");
@@ -475,46 +533,10 @@ class AuthTest {
             config: { host: 10.20.0.15 }
             """;
 
-    private static HttpServletRequest requestProxy(String token) {
-        return servletProxy(HttpServletRequest.class, new LinkedHashMap<>(), token);
-    }
-
-    private static <T> T servletProxy(Class<T> type, Map<String, Object> attributes, String token) {
-        return type.cast(Proxy.newProxyInstance(
-                type.getClassLoader(),
-                new Class<?>[] {type},
-                (proxy, method, args) -> switch (method.getName()) {
-                    case "getHeader" -> "Authorization".equals(args[0]) && token != null
-                            ? "Bearer " + token : null;
-                    case "getAttribute" -> attributes.get(args[0]);
-                    case "setAttribute" -> {
-                        attributes.put((String) args[0], args[1]);
-                        yield null;
-                    }
-                    case "removeAttribute" -> {
-                        attributes.remove(args[0]);
-                        yield null;
-                    }
-                    case "toString" -> type.getSimpleName() + "Proxy";
-                    default -> method.getReturnType() == boolean.class ? false
-                            : method.getReturnType() == int.class ? 0 : null;
-                }));
-    }
-
-    private static final class SubjectHandlers {
-        @Verb("artifact.list")
-        public void read() {
-        }
-
-        @Verb("artifact.apply")
-        public void write() {
-        }
-    }
-
     /**
      * A minimal boot config: auto-configures Web MVC + the embedded servlet container, imports the whole
-     * HTTP control face as one bundle ({@link ControlHttpFace} — path prefix, interceptor registration,
-     * every verb controller, the pre-auth controller, the probe, the advice, and the interceptor bean),
+     * HTTP control face as one bundle ({@link ControlHttpFace} — path prefix, security chains,
+     * every verb controller, the pre-auth controller, the probe, and the advice),
      * and constructs the real control-core services over in-memory fakes. Importing the bundle rather than
      * the parts means this test exercises the exact assembly the running server uses.
      */
@@ -614,7 +636,7 @@ class AuthTest {
         ArtifactMutationService artifactMutationService(InMemoryArtifactStore store, AuditGate auditGate) {
             return new ArtifactMutationService(
                     store, NoReclaimStores.desired(), NoReclaimStores.state(),
-                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate);
+                    NoReclaimStores.observations(), NoReclaimStores.srsMeta(), auditGate, DataBrowserFollows.NONE);
         }
 
         // The connection-test controller comes in with the whole ControlHttpFace bundle, so its service must
@@ -686,6 +708,28 @@ class AuthTest {
                     return Optional.empty();
                 }
             });
+        }
+
+        // The three data-browser controller methods are bundled too, so their service must be present for
+        // the context to stand up; this suite exercises the auth matrix, not the reads, so every probe is
+        // inert (their behaviour is proven in DataBrowserApiTest).
+        @Bean
+        DataBrowserService dataBrowserService(InMemoryArtifactStore store) {
+            return new DataBrowserService(
+                    store,
+                    new NoDiscoveries(),
+                    config -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.collections is not exercised in this test");
+                    },
+                    (config, collection) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.stats is not exercised in this test");
+                    },
+                    (config, query) -> {
+                        throw new UnsupportedOperationException(
+                                "data-browser.find is not exercised in this test");
+                    }, NO_FOLLOWS);
         }
 
         // The connector register controller is bundled with the whole ControlHttpFace, so its service must be
@@ -772,6 +816,28 @@ class AuthTest {
             return new PipelineLogQueryService(sink);
         }
 
+    }
+
+    /** Minimal production-security assembly that deliberately omits the human verifier. */
+    @SpringBootConfiguration
+    @EnableAutoConfiguration
+    @Import(RestApiSecurityConfiguration.class)
+    static class MissingHumanVerifierApp {
+
+        @Bean
+        MessageCatalog messageCatalog() {
+            return MessageCatalog.bundled();
+        }
+
+        @Bean
+        OperationRegistry operationRegistry() {
+            return ControlOperations.registry();
+        }
+
+        @Bean
+        TokenService tokenService() {
+            return new TokenService(new FakeTokenStore(), new FakeTokenSecrets(), Clock.systemUTC());
+        }
     }
 
     // ---- fakes ----

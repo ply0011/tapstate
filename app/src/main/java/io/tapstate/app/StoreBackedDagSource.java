@@ -14,6 +14,7 @@ import io.tapstate.core.model.ServeBlock;
 import io.tapstate.core.model.SourceResource;
 import io.tapstate.core.model.Step;
 import io.tapstate.core.model.SyncElement;
+import io.tapstate.core.model.ViewBlock;
 import io.tapstate.core.model.TransformBody;
 import io.tapstate.runtime.engine.ChainAxes;
 import io.tapstate.runtime.engine.DagBindings;
@@ -32,6 +33,7 @@ import io.tapstate.runtime.srs.StartFrom;
 import io.tapstate.spi.sink.DdlPolicy;
 import io.tapstate.spi.sink.SinkWriter;
 import io.tapstate.spi.sink.TargetTable;
+import io.tapstate.spi.sink.TargetField;
 import io.tapstate.spi.sink.WriteMode;
 import io.tapstate.spi.store.ArtifactStore;
 import io.tapstate.spi.store.DiscoveredSourceModel;
@@ -39,7 +41,9 @@ import io.tapstate.spi.store.SourceTable;
 import io.tapstate.spi.store.SrsMeta;
 import io.tapstate.spi.store.StorePort;
 import io.tapstate.spi.transform.TransformPort;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +77,7 @@ final class StoreBackedDagSource implements DagSource {
     private final SinkWriterBinder sinkWriterBinder;
     private final TargetModelResolver targetModelResolver;
     private final NestSettings nestSettings;
+    private final StoreReachability storeReachability;
 
     StoreBackedDagSource(StorePort storePort) {
         this(storePort, assembledSinkWriterBinder());
@@ -81,6 +86,17 @@ final class StoreBackedDagSource implements DagSource {
     /** A source whose nests are held to what {@code nestSettings} allows, and the member configured from. */
     StoreBackedDagSource(StorePort storePort, NestSettings nestSettings) {
         this(storePort, assembledSinkWriterBinder(), nestSettings);
+    }
+
+    /** A source that holds a view's managed store to answering before the pipeline is built. */
+    StoreBackedDagSource(StorePort storePort, StoreReachability storeReachability) {
+        this(storePort, assembledSinkWriterBinder(), NestSettings.defaults(), storeReachability);
+    }
+
+    /** The assembled source: nests held to {@code nestSettings}, the store probed before a view is built. */
+    StoreBackedDagSource(
+            StorePort storePort, NestSettings nestSettings, StoreReachability storeReachability) {
+        this(storePort, assembledSinkWriterBinder(), nestSettings, storeReachability);
     }
 
     /**
@@ -105,15 +121,26 @@ final class StoreBackedDagSource implements DagSource {
     }
 
     StoreBackedDagSource(StorePort storePort, SinkWriterBinder sinkWriterBinder, NestSettings nestSettings) {
+        // No prober: the store is taken at its word. Every construction that means to check one passes it.
+        this(storePort, sinkWriterBinder, nestSettings, StoreReachability.assumingReachable());
+    }
+
+    StoreBackedDagSource(
+            StorePort storePort, SinkWriterBinder sinkWriterBinder, NestSettings nestSettings,
+            StoreReachability storeReachability) {
         this.storePort = Objects.requireNonNull(storePort, "storePort");
         this.sinkWriterBinder = Objects.requireNonNull(sinkWriterBinder, "sinkWriterBinder");
         this.targetModelResolver = new TargetModelResolver(this.storePort);
         this.nestSettings = Objects.requireNonNull(nestSettings, "nestSettings");
+        this.storeReachability = Objects.requireNonNull(storeReachability, "storeReachability");
     }
 
     @Override
     public DAG dagFor(String pipelineId) {
-        PipelineResource pipeline = StoredArtifacts.requirePipeline(artifacts(), pipelineId);
+        // Expanded before anything reads the blocks, so every later step - target resolution included -
+        // sees one shape rather than having to know a reference from a body.
+        PipelineResource pipeline = PipelineInlining.inline(
+                StoredArtifacts.requirePipeline(artifacts(), pipelineId), artifacts());
         Map<String, SourceVertex> sourceVertices = sourceVertices(pipeline);
         Map<String, String> sourceKeyByTable = sourceKeyByTable(sourceVertices);
         // The linear builder does not expose a per-sink upstream table set. Binding every selected table keeps
@@ -248,9 +275,12 @@ final class StoreBackedDagSource implements DagSource {
      * document is addressed by the nest root's key, which the author writes and which need not be the root
      * table's primary key.
      *
-     * <p>A nest whose root table was never discovered contributes nothing. That leaves the sink where it was
-     * before this resolution existed - naming the stream and knowing no more about it - which is the same
-     * place any undiscovered table leaves it, rather than a failure of its own.
+     * <p>A nest whose root table was never discovered still contributes the table its documents land in,
+     * which the topology knows without a discovery having run; only the columns are left out. Contributing
+     * nothing at all would drop the assembled stream from the set of streams that reach a sink, and a sink
+     * asked about a stream it was never told of falls back to a descriptor built from the bare stream name
+     * - putting the documents under the transform step's name rather than the root's, silently. A nest
+     * whose root alias resolves to no table at all is a different case and still contributes nothing.
      */
     private Map<String, TargetTable> assembledTargets(
             PipelineResource pipeline, Map<String, TargetTable> bySourceTable,
@@ -265,10 +295,13 @@ final class StoreBackedDagSource implements DagSource {
                 continue;
             }
             NestTable root = byAlias.get(nest.root().from());
-            TargetTable model = root == null ? null : bySourceTable.get(root.name());
-            if (model != null) {
-                assembled.put(step.id(), TargetModelResolver.keyedOn(model, nest.root().key()));
+            if (root == null) {
+                continue;
             }
+            TargetTable model = bySourceTable.get(root.name());
+            assembled.put(step.id(), model != null
+                    ? TargetModelResolver.keyedOn(model, nest.root().key())
+                    : new TargetTable(root.name(), List.of()));
         }
         return assembled;
     }
@@ -332,7 +365,208 @@ final class StoreBackedDagSource implements DagSource {
                 element -> sinkWriter(element, targets, servedTables),
                 ref -> upstreams(ref, sourceKeyByTable, sourceKeysById, sourceVertices, stepIds),
                 sourceKeysById::get,
+                view -> viewSink(pipeline, view, targets, servedTables, sourceKeysById),
                 nestBinding(pipeline, sourceIdByTable(sourceVertices)));
+    }
+
+    /**
+     * The sink-writer factory for a pipeline's view. It differs from a serve.sync element in exactly one
+     * place: the element names the source it writes to, while a view does not name one at all - the
+     * deployment's managed state store is resolved on the view's behalf. Everything after that is the
+     * same seam the sync path uses, so a view is written by the same writer over the same binding.
+     *
+     * <p>Write mode and ddl policy take the sync defaults. A view converges on its key, which is what
+     * upsert means; and the ddl policy governs how an incoming schema change is handled, not whether the
+     * target may be created, so refusing to drift costs the materialization nothing.
+     */
+    private SupplierEx<? extends SinkWriter> viewSink(
+            PipelineResource pipeline, ViewBlock view, Map<String, TargetTable> targets,
+            Set<String> servedTables, Map<String, List<String>> tablesBySourceId) {
+        if (!(view instanceof ViewBlock.Inline inline)) {
+            throw new IllegalArgumentException(
+                    "view block is a use-reference; resolve it to an inline view first");
+        }
+        // Resolve first: it holds the simpler facts - a missing key among them - and a view without a
+        // key has nothing for the identity gate to compare. Review found the reverse order turning the
+        // coded missing-key refusal into a bare NullPointerException inside the gate.
+        ViewTargetResolver.ViewTarget target = ViewTargetResolver.resolve(inline);
+        requireKeyIsTheFeedIdentity(pipeline, inline, targets, tablesBySourceId);
+        // Coded rather than bare, unlike a source the author named: this store is the deployment's, so
+        // its absence is a condition an operator acts on rather than a defect on this side.
+        SourceResource store = artifacts().get(target.sourceId())
+                .filter(SourceResource.class::isInstance)
+                .map(SourceResource.class::cast)
+                .orElseThrow(() -> new TapstateException(ActuationError.VIEW_STORE_NOT_CONFIGURED,
+                        Map.of("store", target.sourceId()), null));
+        // Resolved by id alone, so a source the author happened to give that id would satisfy the lookup
+        // - and be written into. Capture settings are what tells an authored source from the store; a
+        // plain connection under the id is indistinguishable today, which is a narrower, recorded gap.
+        if (store.mode() != null || store.tables() != null) {
+            throw new TapstateException(ActuationError.VIEW_STORE_IS_A_CAPTURE_SOURCE,
+                    Map.of("store", target.sourceId()), null);
+        }
+        // Last of the three, and in this order deliberately: the two above are answered from the store's
+        // own record and cost nothing, so a misconfiguration is named without ever touching the network.
+        // Only once the resource is known to be the deployment's store is it worth asking whether it
+        // answers.
+        storeReachability.requireReachable(
+                target.sourceId(), store.connector(), store.config());
+        // Keyed by every source table that can reach the view, all answering with the one collection.
+        // The sink resolves a target by the table a row came from, so a view - which collapses those
+        // tables into a single object - has to answer to each of their names. Keyed by the view's own
+        // name instead, every lookup misses and the rows land under the source table: the right rows,
+        // silently in the wrong collection, which no topology assertion can see.
+        Map<String, TargetTable> bySourceTable = new LinkedHashMap<>();
+        for (String sourceTable : servedTables) {
+            bySourceTable.put(sourceTable,
+                    viewTargetTable(target, targets == null ? null : targets.get(sourceTable)));
+        }
+        return sinkWriterBinder.bind(
+                store.connector(), store.config(), WriteMode.UPSERT, DdlPolicy.FAIL, bySourceTable);
+    }
+
+    /**
+     * Refuses a view whose single key is not the identity of what feeds it, before anything binds.
+     *
+     * <p>The view sink upserts every stream on the view's declared key and indexes it uniquely, so the
+     * key has to be what the feed converges on. Two shapes break that and neither says anything at
+     * write time: an assembly keyed on more columns than the view's key collapses distinct roots onto
+     * one document, and several tables feeding one view take turns overwriting each other wherever
+     * their key values coincide. Both land rows in the right collection with a right-looking count on
+     * any single snapshot, which is why they are refused here by name instead.
+     *
+     * <p>What feeds the view is resolved by walking its from-reference down to leaves: a nest step is
+     * one assembled stream carrying its root's key, a source id is each of its tables, anything else
+     * is one table. A regex names many upstreams by construction and is refused as such.
+     */
+    private static void requireKeyIsTheFeedIdentity(PipelineResource pipeline, ViewBlock.Inline view,
+            Map<String, TargetTable> targets, Map<String, List<String>> tablesBySourceId) {
+        List<String> streams = new ArrayList<>();
+        List<TransformBody.Nest> assemblies = new ArrayList<>();
+        collectFeed(pipeline, view.from(), tablesBySourceId, streams, assemblies, new HashSet<>());
+        if (streams.size() + assemblies.size() > 1) {
+            throw new TapstateException(ActuationError.VIEW_FED_BY_MANY_TABLES,
+                    Map.of("view", view.id(), "tables", String.join(", ", streams)), null);
+        }
+        if (assemblies.size() == 1) {
+            requireKeyIs(view, assemblies.getFirst().root().key());
+            return;
+        }
+        // A single table: its identity is whatever discovery recorded. An undiscovered table has no
+        // identity on record, and the view's own key is then the only identity there is - which is the
+        // path that lets materialization run before any discovery has.
+        if (streams.size() == 1 && targets != null) {
+            TargetTable model = targets.get(streams.getFirst());
+            if (model != null) {
+                List<String> identity = model.fields().stream()
+                        .filter(TargetField::primaryKey).map(TargetField::name).toList();
+                if (!identity.isEmpty()) {
+                    requireKeyIs(view, identity);
+                }
+            }
+        }
+    }
+
+    /** One refusal for every feed shape: the view's single key must be exactly this identity. */
+    private static void requireKeyIs(ViewBlock.Inline view, List<String> identity) {
+        if (identity == null || !identity.equals(List.of(view.primaryKey()))) {
+            throw new TapstateException(ActuationError.VIEW_KEY_NOT_FEED_IDENTITY,
+                    Map.of("view", view.id(), "key", String.valueOf(view.primaryKey()),
+                            "identity", identity == null ? "(none)" : String.join(", ", identity)),
+                    null);
+        }
+    }
+
+    /** Resolves one from-reference to the leaf streams it names; see the gate above for the reading. */
+    private static void collectFeed(PipelineResource pipeline, FromRef from,
+            Map<String, List<String>> tablesBySourceId, List<String> streams,
+            List<TransformBody.Nest> assemblies, Set<String> visited) {
+        if (!(from instanceof FromRef.Literal literal)) {
+            // A regex is many upstreams by construction; two entries make the count say so.
+            streams.add(from.toString());
+            streams.add(from.toString());
+            return;
+        }
+        String ref = literal.ref();
+        if (!visited.add(ref)) {
+            return;
+        }
+        Step step = stepOf(pipeline, ref);
+        if (step != null) {
+            if (step instanceof Step.Inline inline && inline.body() instanceof TransformBody.Nest nest) {
+                assemblies.add(nest);
+                return;
+            }
+            // A plain transform passes through whatever feeds it.
+            for (FromRef upstream : refsOf(step.from())) {
+                collectFeed(pipeline, upstream, tablesBySourceId, streams, assemblies, visited);
+            }
+            return;
+        }
+        List<String> sourceTables = tablesBySourceId.get(ref);
+        if (sourceTables != null) {
+            streams.addAll(sourceTables);
+            return;
+        }
+        streams.add(ref);
+    }
+
+    private static Step stepOf(PipelineResource pipeline, String id) {
+        if (pipeline.transforms() == null) {
+            return null;
+        }
+        for (Step step : pipeline.transforms()) {
+            if (step.id().equals(id)) {
+                return step;
+            }
+        }
+        return null;
+    }
+
+    private static List<FromRef> refsOf(FromClause from) {
+        if (from instanceof FromClause.Flow flow) {
+            return flow.refs();
+        }
+        if (from instanceof FromClause.Aliases aliases) {
+            return List.copyOf(aliases.aliases().values());
+        }
+        return List.of();
+    }
+
+    /**
+     * The target model one stream materializes under: the view's resolved collection and indexes, carrying
+     * that stream's own fields. Answered per stream rather than once for the view, because the fields are
+     * where the key lives and the key is what an upsert converges on - and the streams reaching one view
+     * do not share one. A nest's assembled documents are keyed on the root's key, which is a different
+     * column list from any single source table's, so one descriptor shared across every stream can carry
+     * at most one of them right. Collapsing them instead costs the key entirely: the documents land in the
+     * right collection with nothing to match on, and every re-sent root accumulates beside the one it
+     * should have replaced. This is the shape the serve path already resolves per stream.
+     */
+    private static TargetTable viewTargetTable(
+            ViewTargetResolver.ViewTarget target, TargetTable stream) {
+        List<TargetField> streamFields = stream == null ? List.of() : stream.fields();
+        List<TargetField> fields = new ArrayList<>(streamFields.size() + 1);
+        // The key first and always, carrying the stream's type for it when the stream declares one. A
+        // view names its own key, so it has one to be matched on before any discovery has run - and a
+        // type it could not resolve is left for the connector to infer rather than standing in the way.
+        fields.add(new TargetField(target.primaryKey(), typeOf(streamFields, target.primaryKey()), true));
+        for (TargetField field : streamFields) {
+            if (!field.name().equals(target.primaryKey())) {
+                fields.add(new TargetField(field.name(), field.type(), false));
+            }
+        }
+        return new TargetTable(target.collection(), fields, target.indexes());
+    }
+
+    /** The stream's own type token for one column, or null when the stream does not declare it. */
+    private static String typeOf(List<TargetField> fields, String name) {
+        for (TargetField field : fields) {
+            if (field.name().equals(name)) {
+                return field.type();
+            }
+        }
+        return null;
     }
 
     /**

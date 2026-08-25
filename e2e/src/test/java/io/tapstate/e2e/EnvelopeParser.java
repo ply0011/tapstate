@@ -251,6 +251,12 @@ public final class EnvelopeParser {
             throw new EnvelopeException("a step carries exactly one verb, found: " + mapping.keySet());
         }
         Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
+        // A lifecycle word carrying a body is the same verb scoped to one stream. Checked before the
+        // keyword enum so that the refusal an author reads names their word rather than reporting it
+        // unknown - it is a word they may write, just not one every verb may carry a source with.
+        if (Vocabulary.LIFECYCLE_STEPS.contains(only.getKey().toLowerCase(Locale.ROOT))) {
+            return streamLifecycle(only.getKey(), only.getValue());
+        }
         // Exhaustive over the keyword enum: a keyword added to the vocabulary does not compile until
         // it means something here.
         return switch (keyword(only.getKey())) {
@@ -267,6 +273,23 @@ public final class EnvelopeParser {
                             + Vocabulary.LIFECYCLE_STEPS);
         }
         return LifecycleVerb.valueOf(verb.toUpperCase(Locale.ROOT));
+    }
+
+    /**
+     * One lifecycle word applied to a single source stream. The source is written as a plain scalar
+     * because that is what it is - one name - and because the alternative flow-mapping spelling puts a
+     * key with no value in front of a reader, which every reader has to stop and decode.
+     */
+    private static Step streamLifecycle(String word, Object node) {
+        StreamVerb verb = word(StreamVerb.values(), StreamVerb::word, word.toLowerCase(Locale.ROOT),
+                word + " applies to the whole pipeline and cannot be scoped to one stream; "
+                        + "the words that can are " + Vocabulary.STREAM_SCOPED_STEPS);
+        if (!(node instanceof String sourceId) || sourceId.isBlank()) {
+            throw new EnvelopeException(
+                    word + " scoped to a stream names the source it holds, as in \"" + word
+                            + ": src_shipments\"; found: " + describe(node));
+        }
+        return new Step.StreamLifecycle(verb, sourceId);
     }
 
     private static StepKeyword keyword(String word) {
@@ -296,12 +319,65 @@ public final class EnvelopeParser {
             throw new EnvelopeException("a cdc step names exactly one table, found: " + mapping.keySet());
         }
         Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
-        String change = string(only.getValue(), "cdc." + only.getKey());
+        String at = "cdc." + only.getKey();
+        // Two shapes under one word rather than two step keywords: an author writing a change writes
+        // cdc either way, and which shape it is follows from whether they named the rows themselves.
+        Object body = only.getValue();
+        return new Step.Cdc(
+                alias(only.getKey()),
+                body instanceof Map ? valuedChange(body, at) : generatedChange(body, at));
+    }
+
+    private static Step.Change generatedChange(Object node, String at) {
+        String change = string(node, at);
         String[] parts = change.trim().split("\\s+");
         if (parts.length != 2) {
             throw new EnvelopeException("a cdc change reads '<op> <rows>', found: " + change);
         }
-        return new Step.Cdc(alias(only.getKey()), cdcOp(parts[0]), cdcRows(parts[1]));
+        return new Step.Change.Generated(cdcOp(parts[0]), cdcRows(parts[1]));
+    }
+
+    /** A change that names the row it moves, and for an update the value it writes. */
+    private static Step.Change valuedChange(Object node, String at) {
+        Map<String, Object> mapping = mapping(node, at);
+        if (mapping.size() != 1) {
+            throw new EnvelopeException(
+                    at + " carries exactly one operation, found: " + mapping.keySet());
+        }
+        Map.Entry<String, Object> only = mapping.entrySet().iterator().next();
+        CdcOp op = cdcOp(only.getKey());
+        String opAt = at + "." + only.getKey();
+        Map<String, Object> body = mapping(only.getValue(), opAt);
+        rejectUnknownKeys(body.keySet(), Vocabulary.valuedChangeKeys(op), opAt);
+
+        // An insert names rows; the other two locate one. Read it before the where below, which it has not
+        // got and does not need.
+        if (op == CdcOp.INSERT) {
+            // The same reader the seed uses: one id per row, one shape across rows, scalars only. An
+            // author who can seed a table can add to it, and the two cannot drift into different rules.
+            return new Step.Change.Insert(valueRows(body.get("values"), opAt + ".values"));
+        }
+
+        Map<String, Object> where = mapping(body.get("where"), opAt + ".where");
+        if (where.isEmpty()) {
+            throw new EnvelopeException(
+                    opAt + ".where must name at least one setting to locate the row by");
+        }
+        where.forEach((setting, value) -> requireScalar(value, opAt + ".where." + setting));
+
+        return switch (op) {
+            case UPDATE -> {
+                Map<String, Object> set = mapping(body.get("set"), opAt + ".set");
+                if (set.isEmpty()) {
+                    throw new EnvelopeException(opAt + ".set must name at least one column to write");
+                }
+                set.forEach((column, value) -> requireScalar(value, opAt + ".set." + column));
+                yield new Step.Change.Update(where, set);
+            }
+            case DELETE -> new Step.Change.Delete(where);
+            // Unreachable: returned above, before the where this operation does not carry is read.
+            case INSERT -> throw new IllegalStateException("insert is read before this point");
+        };
     }
 
     private static CdcOp cdcOp(String op) {

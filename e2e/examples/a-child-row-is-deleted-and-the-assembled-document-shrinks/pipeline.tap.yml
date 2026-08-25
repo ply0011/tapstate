@@ -1,0 +1,18 @@
+version: tapstate/v1
+kind: pipeline
+id: shrunk_orders
+source: [ src_shrink_orders, src_shrink_items ]
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: shrink_doc
+    type: nest
+    from: { o: shrink_orders, i: shrink_items }
+    root:
+      from: o
+      key: [ id ]
+      embed:
+        - { from: i, on: { order_id: id }, as: array, path: items, arrayKey: [ id ] }
+view:
+  id: shrink_state
+  from: shrink_doc
+  primary_key: id

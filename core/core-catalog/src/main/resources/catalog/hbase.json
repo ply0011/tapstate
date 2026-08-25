@@ -1,0 +1,79 @@
+{
+  "id": "hbase",
+  "name": "HBase",
+  "displayName": "HBase",
+  "icon": "icons/hbase.png",
+  "group": "database",
+  "modes": [
+    "snapshot"
+  ],
+  "discovery": "catalog",
+  "sink": {
+    "capable": true,
+    "writeSemantics": [
+      "upsert",
+      "append"
+    ]
+  },
+  "pushOut": false,
+  "config": [
+    {
+      "name": "zookeeperQuorum",
+      "type": "string",
+      "label": {
+        "en_US": "ZooKeeper Quorum"
+      },
+      "required": true,
+      "default": null,
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "zookeeperParent",
+      "type": "string",
+      "label": {
+        "en_US": "ZooKeeper ZNode Parent"
+      },
+      "required": false,
+      "default": "/hbase",
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "user",
+      "type": "string",
+      "label": {
+        "en_US": "Username"
+      },
+      "required": false,
+      "default": null,
+      "secret": false,
+      "options": [],
+      "visibleWhen": null
+    },
+    {
+      "name": "password",
+      "type": "string",
+      "label": {
+        "en_US": "Password"
+      },
+      "required": false,
+      "default": null,
+      "secret": true,
+      "options": [],
+      "visibleWhen": null
+    }
+  ],
+  "provenance": {
+    "connectorRepoSha": "d889798e",
+    "specPath": "connectors/hbase-connector/src/main/resources/spec.json",
+    "specContentHash": "6e5ab17af6a74a69",
+    "pdkApiVersion": null,
+    "requiredLevel": null,
+    "modeSource": {
+      "snapshot": "derived"
+    }
+  }
+}

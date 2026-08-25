@@ -146,6 +146,45 @@ class PdkCapturePortTest {
     }
 
     @Test
+    void testConnectionHandsTheConnectorItsDiscoveredTableNotABareName(@TempDir Path dir) throws Exception {
+        // The same property as the snapshot case above, on the verb a stranger reaches first. The probe
+        // reads a small sample as proof of life, and a connector builds that read from the table's own
+        // columns; handed a bare name it reads nothing, or asks the descriptor for a column map that was
+        // never created and dies inside the connector. Discovery has already run by this point and the
+        // table is in hand, so there is nothing to look up - only a bare name to stop manufacturing.
+        Path jar = Synthetic.tableAwareSource(dir);
+        PdkCapturePort port = new PdkCapturePort(provisioner(jar, "synthetic.TableAware", null));
+
+        ConnectionReport report = port.testConnection(config("t1"));
+
+        assertThat(report.sample()).hasSize(1);
+    }
+
+    /**
+     * The probe fills the PDK field types before reading, as the snapshot read does.
+     *
+     * <p>Discovery reports each column's database type and leaves the PDK type unset; the connector's
+     * own mapping is the only thing that can supply it, and the snapshot read calls it for exactly
+     * that reason. Handing the probe a real discovered table without that step swaps one broken
+     * descriptor for another: the columns are there but every type is null, and a connector that
+     * decodes by type throws from inside itself - which surfaces as a connection that does not work,
+     * naming nothing that would lead anyone back to the descriptor.
+     */
+    @Test
+    void testConnectionFillsTheFieldTypesBeforeReadingItsSample(@TempDir Path dir) throws Exception {
+        Path jar = Synthetic.typeAwareSource(dir);
+        // A spec declaring a type mapping: the fill reads the connector's own dataTypes and does
+        // nothing at all without one, so a ref with no spec could not tell the fill from its absence.
+        ConnectorRef ref = new ConnectorRef(List.of(jar), "synthetic.TypeAware", "2.0.8", null,
+                "{\"dataTypes\": {\"int\": {\"to\": \"TapNumber\", \"bit\": 32}}}");
+        PdkCapturePort port = new PdkCapturePort(connectorId -> ref);
+
+        ConnectionReport report = port.testConnection(config("t1"));
+
+        assertThat(report.sample()).hasSize(1);
+    }
+
+    @Test
     void snapshotWithoutExplicitStreamsInitsTheConnectorExactlyOnce(@TempDir Path dir) throws Exception {
         // Empty streams means "every stream": the drive discovers the stream names and reads them. It
         // must init the connector once, not once for discovery and again for the read — the connector
@@ -197,6 +236,51 @@ class PdkCapturePortTest {
             assertThat(three.await(5, TimeUnit.SECONDS)).as("three change events delivered").isTrue();
         }
         assertThat(got).extracting(Envelope::op).containsExactly(Op.INSERT, Op.UPDATE, Op.DELETE);
+    }
+
+    /**
+     * The table map the cdc drive hands the connector answers walking, not only lookup by name.
+     *
+     * <p>A connector that has to expand what it was asked to watch reads the schemas off the context by
+     * walking its table map, and it does so at the start of the stream, before any change is decoded.
+     * Handing it a map that answers only lookup is not a partial map: the frozen contract's default for
+     * walking throws, so the tail dies at startup having decoded nothing, while a snapshot over the very
+     * same source keeps working because it never walks the map. That asymmetry is what makes the defect
+     * read as "this connector cannot do change data capture at all" rather than as one missing method,
+     * and it is why a witness that admits only snapshot reads cannot see it.
+     */
+    @Test
+    void cdcHandsTheConnectorATableMapItCanWalk(@TempDir Path dir) throws Exception {
+        Path jar = Synthetic.tableMapIteratingStreamSource(dir);
+        PdkCapturePort port =
+                new PdkCapturePort(provisioner(jar, "synthetic.TableMapIteratingStream", null));
+        List<Envelope> got = new CopyOnWriteArrayList<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        CountDownLatch settled = new CountDownLatch(1);
+        // Both outcomes release the latch, and the failure is asserted before the delivery: a stream that
+        // dies on the first walk would otherwise be indistinguishable from one that is merely slow, and
+        // the reading would be a timeout rather than the reason for it.
+        CaptureListener listener = new CaptureListener() {
+            @Override
+            public void onEvent(Envelope event) {
+                got.add(event);
+                settled.countDown();
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                failure.set(error);
+                settled.countDown();
+            }
+        };
+        try (Subscription sub = port.cdc(config("t1"), listener)) {
+            assertThat(settled.await(5, TimeUnit.SECONDS)).as("the cdc drive settled").isTrue();
+        }
+        assertThat(failure.get()).as("walking the table map must not fail the stream").isNull();
+        assertThat(got).hasSize(1);
+        // The entry carries the discovered table rather than a bare name: its column count is the one
+        // discovery reported, so a map walked before the schemas were filled in would read zero here.
+        assertThat(got.get(0).after()).containsEntry("name", "t1").containsEntry("columns", 1L);
     }
 
     @Test

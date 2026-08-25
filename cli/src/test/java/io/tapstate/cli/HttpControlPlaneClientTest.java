@@ -423,6 +423,32 @@ class HttpControlPlaneClientTest {
     }
 
     @Test
+    void readsTheCollectionNamesOutOfWhatTheListingEndpointAnswers() throws Exception {
+        // Read against the body the server really sends, entries and all. A decoder that still expected
+        // bare names would find none it recognized and report an empty database — a silent wrong answer,
+        // not a failure, which is why this is asserted against the wire rather than a fake client.
+        AtomicReference<CapturedRequest> seen = new AtomicReference<>();
+        HttpServer server = apiServer("/api/sources/views/collections", 200,
+                "{\"collections\":["
+                        + "{\"name\":\"order_state\",\"kind\":\"view\",\"fields\":[\"id\"],"
+                        + "\"description\":\"One row per order\"},"
+                        + "{\"name\":\"customers\",\"kind\":\"view\"}]}",
+                seen);
+        try {
+            DataBrowserOutcome.Collections outcome =
+                    new HttpControlPlaneClient().collections(baseOf(server), "tok-abc", "views");
+
+            assertThat(outcome).isInstanceOf(DataBrowserOutcome.Collections.Listed.class);
+            assertThat(((DataBrowserOutcome.Collections.Listed) outcome).collections())
+                    .containsExactly("order_state", "customers");
+            assertThat(seen.get().method()).isEqualTo("GET");
+            assertThat(seen.get().authorization()).isEqualTo("Bearer tok-abc");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void applyPostsTheDraftsWithABearerCredentialAndReturnsTheOutcomes() throws Exception {
         AtomicReference<CapturedRequest> seen = new AtomicReference<>();
         HttpServer server = apiServer("/api/artifacts:apply", 200,
@@ -681,6 +707,38 @@ class HttpControlPlaneClientTest {
             ApplyOutcome outcome = new HttpControlPlaneClient()
                     .apply(baseOf(server), "tok", List.of(new LocalDraft("bad.tap.yml", "kind: nope\n")));
             assertThat(outcome).isEqualTo(new ApplyOutcome.Rejected("dsl.illegal-value", "Not a known kind."));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * A refusal is a refusal even when one of its named parameters came down as JSON null.
+     *
+     * <p>Nothing on the way here rejects a null value - the server's error carries its arguments in a
+     * map that permits them, and this client decodes them into one that permits them too - so the
+     * first thing that refused was the copy taken when the outcome was built, one frame outside the
+     * catch that turns a malformed body into a refusal. The result was an uncaught crash out of
+     * {@code apply} on a path whose whole posture is that a bad error body is still an error, not a
+     * stack trace.
+     */
+    @Test
+    void applyReturnsRejectedEvenWhenAParameterCameDownAsNull() throws Exception {
+        HttpServer server = apiServer("/api/artifacts:apply", 400,
+                "{\"code\":\"dsl.upsert-needs-key\",\"message\":\"No key.\","
+                        + "\"params\":{\"table\":\"events\",\"source\":null}}",
+                new AtomicReference<>());
+        try {
+            ApplyOutcome outcome = new HttpControlPlaneClient()
+                    .apply(baseOf(server), "tok", List.of(new LocalDraft("bad.tap.yml", "kind: nope\n")));
+
+            assertThat(outcome).isInstanceOfSatisfying(ApplyOutcome.Rejected.class, rejected -> {
+                assertThat(rejected.code()).isEqualTo("dsl.upsert-needs-key");
+                assertThat(rejected.params()).containsEntry("table", "events");
+                assertThat(rejected.params())
+                        .as("the null value is carried, not dropped and not fatal")
+                        .containsEntry("source", null);
+            });
         } finally {
             server.stop(0);
         }

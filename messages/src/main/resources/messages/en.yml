@@ -17,6 +17,28 @@ actuation.not-a-pipeline:
 actuation.source-schema-not-discovered:
   message: "Source `{source}` needs a discovered schema before its tables can be selected."
   solution: "Run schema discovery for the source, then apply or start the pipeline again."
+actuation.view-key-missing:
+  message: "View `{view}` declares no primary key."
+  solution: "Give the view a primaryKey naming the column that identifies one record, so updates converge on it instead of appending a copy."
+actuation.view-storage-tier-unsupported:
+  message: "View `{view}` declares the `{tier}` storage tier, which this release does not materialize."
+  solution: "Remove the tier from the view. Only the warm tier is materialized today; hot and cold are reserved."
+actuation.view-store-not-configured:
+  message: "The managed state store `{store}` a view materializes into is not configured."
+  solution: "Start the deployment's managed state store, or register a source under that id for views to materialize into."
+actuation.view-store-unreachable:
+  message: "The managed state store `{store}` a view materializes into did not answer: {reason}"
+  solution: "Check that the state store is running and reachable from the server, then start the pipeline again."
+actuation.view-key-not-feed-identity:
+  message: "View `{view}` declares key `{key}`, but what feeds it is identified by `{identity}`."
+  solution: "Declare the view's primaryKey as that identity column. An identity spanning several columns cannot be served by a view today - a view's key is a single column, and materializing on fewer columns than the identity collapses distinct records."
+actuation.view-fed-by-many-tables:
+  message: "View `{view}` is fed by more than one stream: {tables}."
+  solution: "Feed the view from a single table, or assemble the streams into one document with a nest step and feed the view from that."
+actuation.view-store-is-a-capture-source:
+  message: "The resource under the managed state store id `{store}` declares capture settings, so it is an authored source, not the deployment's store."
+  solution: "Rename your source so it does not occupy the managed store's id, or remove its mode/tables if it really is the deployment's state store."
+
 actuation.source-table-not-discovered:
   message: "Source `{source}` does not declare discovered table `{table}`."
   solution: "Discover the source again or change the pipeline table selector to a discovered table."
@@ -47,9 +69,24 @@ capture.start-from-unparsable:
 capture.event-table-not-selected:
   message: "The capture stream emitted table `{table}`, which this pipeline did not select."
   solution: "Update the source table selection or verify the connector emits the configured table names."
+cli.alias-install-dir-unknown:
+  message: "No installed `tapstate` was found in `{path}`."
+  solution: "Run this where tapstate is installed, or set TAPSTATE_INSTALL_DIR to that directory - the same variable the installer honours."
+cli.alias-link-failed:
+  message: "The `tap` shortcut at `{path}` could not be created or removed: {reason}"
+  solution: "Check that the directory exists and you can write to it, then run `tapstate alias install` again. tapstate itself works without the shortcut."
+cli.alias-name-taken:
+  message: "`{path}` already exists and is not the tapstate shortcut."
+  solution: "Leave it in place - tapstate works without the shortcut. Remove that file yourself if you want the `tap` name, then run `tapstate alias install` again."
 cli.artifact-exists:
   message: "An artifact already exists at {path}."
   solution: "Choose a different id or --out, or pass --force to overwrite."
+cli.demo-workspace-exists:
+  message: "The workspace already holds a demo resource at {path}."
+  solution: "Use a different workspace with -w, or pass --force to overwrite the demo files there."
+cli.workspace-not-writable:
+  message: "Could not write {path}: {reason}"
+  solution: "Check that the directory exists, is writable, and that no plain file is sitting where a directory is needed. Demo files this run wrote were removed and any it overwrote were put back, though empty directories it created can remain."
 cli.unknown-connector:
   message: "No connector '{connector}' in the catalog."
   solution: "Pick a connector id from the catalog; run `tapstate new` interactively to choose one."
@@ -80,6 +117,9 @@ cli.repl-builtin-only:
 cli.mcp-unavailable:
   message: "The MCP sidecar is unavailable: {reason}."
   solution: "Install the complete Tapstate CLI bundle, including libexec/tapstate-mcp, and retry."
+cli.watch-needs-a-terminal:
+  message: "`watch` redraws one row in place, which needs a terminal; here its output is a pipe or a file."
+  solution: "Use `tail <source>.<collection>` for a stream you can pipe, or `<source>.<collection>.find(...)` for a one-shot look."
 cli.if-match-needs-one-resource:
   message: "`--if-match` names one version, but this apply covers {count} resources."
   solution: "Apply the single file you are editing, or drop `--if-match` and let the batch apply unconditionally."
@@ -113,6 +153,9 @@ dsl.row-expression-type-unsupported:
 dsl.row-expression-type-unknown:
   message: "Expression `{expr}` at {path} reads column `{column}` of table `{table}`, which nothing resolved a type for."
   solution: "Whether this expression can run is unknown; drop the reference to `{column}`, or read a column whose type the source declares."
+dsl.upsert-needs-key:
+  message: "The sync at {path} upserts table `{table}` of source `{source}`, but that table declares no key, so no write can be matched to the row it belongs to."
+  solution: "Give `{table}` a primary key and discover `{source}` again, or write with `write_mode: append`, which adds rows instead of matching them. A unique index is not enough: only a primary key is read as the key here."
 dsl.composition:
   message: "Composition rule broken at {path}: {detail}."
   solution: "Review how the resources are wired together."
@@ -227,6 +270,24 @@ connector.test-failed:
 connector.write-failed:
   message: "Connector '{connector}' failed while writing: {detail}."
   solution: "Check the target is reachable and the connection settings are correct."
+connector.read-abandoned:
+  message: "Reading '{connector}' stopped before it finished, so the rows it returned are incomplete."
+  solution: "The read was interrupted rather than refused; run it again."
+connector.read-failed:
+  message: "Connector '{connector}' failed while reading the store: {detail}."
+  solution: "Check the store is reachable and the connection settings are correct."
+connector.capability-missing:
+  message: "Connector '{connector}' does not provide '{capability}', which this read needs."
+  solution: "Read a source whose connector provides this capability, or use a verb that does not need it."
+connector.instances-busy:
+  message: "Every connection to '{connector}' was still busy after {timeout}."
+  solution: "Another read of this connection is still running; retry, or narrow the read so it finishes sooner."
+connector.instance-limit-reached:
+  message: "This host already holds its limit of {limit} live connector connections and all of them are busy."
+  solution: "Wait for a running read to finish, or reduce how many connections are being read at once."
+connector.read-timeout:
+  message: "Reading '{connector}' took longer than {timeout} and was stopped."
+  solution: "Narrow the read with a filter or a smaller limit, or check the store is not overloaded."
 control.audit-blocked:
   message: "Operation '{op}' was refused because its required audit record could not be written."
   solution: "An audited operation must leave an audit record before it runs; check the store is reachable and healthy, then retry."
@@ -251,6 +312,27 @@ control.unauthenticated:
 control.unreachable:
   message: "The Tapstate Server is unreachable."
   solution: "Check the Server URL and availability, then retry the tool call."
+data-browser.connector-not-browsable:
+  message: "Connector '{connector}' answers reads in its own shape, and this face asks in documents, so its rows cannot be browsed."
+  solution: "Browse a source on one of: {browsable}. This source can still be listed and sized, and it can still be read by a pipeline."
+data-browser.follow-idle:
+  message: "Following stopped after 10 minutes with no changes; the connector instance it held was given back."
+  solution: "Follow it again to keep watching."
+data-browser.follow-stopped:
+  message: "Following stopped: the stream from the source failed."
+  solution: "Check the server log for what the connector reported, then follow it again."
+data-browser.invalid-limit:
+  message: "A read of {limit} rows is not served; ask for between 1 and {max}."
+  solution: "Ask for at most {max} rows, or narrow the read with a filter."
+data-browser.source-deleted:
+  message: "Following stopped: the source being followed was deleted."
+  solution: "Declare the source again, or follow a collection of a source that still exists."
+data-browser.unknown-collection:
+  message: "Source '{source}' has no collection named '{collection}'."
+  solution: "List what the source holds and read one of those names."
+data-browser.unorderable-field:
+  message: "Field '{field}' is named with a dot in it, and results cannot be ordered by such a field."
+  solution: "Order by another field. This one can still be filtered on, by escaping the dot that belongs to its name: write it price\\.usd in the shell, and \"price\\\\.usd\" in JSON, where a lone backslash is not an escape the format allows. Filtering it reads every row, though: an index is written the same way a path is, so a field whose name holds a dot cannot have one."
 mcp.connector-spec-unavailable:
   message: "Connector {connector} does not provide a complete live spec."
   solution: "Register the connector runtime and retry connector_get before using the connector."
@@ -389,3 +471,66 @@ nest.state-far-exceeds-memory-budget:
 nest.capacity-estimate-incomplete:
   message: "Nest level {embedPath} of pipeline {pipeline} could be sized from {counted} of the {total} inputs feeding it; the rest report no row count, so what was estimated is a floor."
   solution: "Discover the sources feeding that level so their tables report row counts, then apply again to have it sized on all of them."
+# Connector-supplied connection-test diagnostics.
+#
+# The connector API's typed test exceptions carry translation keys rather than sentences, and the
+# bundle that resolves them belongs to the platform those connectors were written for. These entries
+# supply the wording here instead, so a check that fails tells the reader what to do about it.
+#
+# They sit under a reserved pdk.testitem. prefix, constructionally disjoint from first-party
+# <domain>.<symbol> codes: a connector cannot collide with one, and they are not first-party codes,
+# so they are not in the codes golden. The set is fixed by the connector API, not open-ended.
+pdk.testitem.check.cdc.privilege.reason:
+  message: "The account does not hold the privileges a change stream needs."
+pdk.testitem.check.cdc.privilege.solution:
+  message: "Grant the replication privileges your database requires for change data capture, then test again."
+pdk.testitem.read.privilege.reason:
+  message: "The account cannot read one or more of the selected tables."
+pdk.testitem.read.privilege.solution:
+  message: "Grant read access on the tables this source selects, then test again."
+pdk.testitem.write.privilege.reason:
+  message: "The account cannot write to the target."
+pdk.testitem.write.privilege.solution:
+  message: "Grant insert, update and delete on the target tables, then test again."
+pdk.testitem.create.table.privilege.reason:
+  message: "The account cannot create tables, so a target table that does not exist yet cannot be created."
+pdk.testitem.create.table.privilege.solution:
+  message: "Either grant table creation, or create the target tables yourself before starting the pipeline."
+pdk.testitem.pdk.version.reason:
+  message: "The server version is outside the range this connector is verified against."
+pdk.testitem.pdk.version.solution:
+  message: "Check the connector's supported versions; outside them it is untested rather than certain to fail."
+pdk.testitem.pdk.connection.reason:
+  message: "The database could not be reached with these settings."
+pdk.testitem.pdk.connection.solution:
+  message: "Check the host, port, database and credentials, and that the server accepts connections from this machine."
+pdk.testitem.check.host.port.reason:
+  message: "The host and port did not accept a connection."
+pdk.testitem.check.host.port.solution:
+  message: "Check the address is reachable from where tapstate runs; firewalls and container networking are the usual causes."
+pdk.testitem.time.consistent.reason:
+  message: "The database clock differs noticeably from this machine's."
+pdk.testitem.time.consistent.solution:
+  message: "Sync the clocks; a large difference makes timestamps and change ordering hard to reason about."
+pdk.testitem.stream.read.reason:
+  message: "The change stream could not be started."
+pdk.testitem.stream.read.solution:
+  message: "Check that change data capture is enabled on the server and any required log or replication settings are in place."
+pdk.testitem.check.cdc.privilege.fail:
+  message: "The change-stream privilege check did not pass."
+pdk.testitem.read.privilege.fail:
+  message: "The read privilege check did not pass."
+pdk.testitem.write.privilege.fail:
+  message: "The write privilege check did not pass."
+pdk.testitem.create.table.privilege.fail:
+  message: "The table-creation privilege check did not pass."
+pdk.testitem.pdk.version.fail:
+  message: "The server version check did not pass."
+pdk.testitem.pdk.connection.fail:
+  message: "The connection could not be established."
+pdk.testitem.check.host.port.fail:
+  message: "The host and port did not accept a connection."
+pdk.testitem.time.consistent.fail:
+  message: "The clock comparison did not pass."
+pdk.testitem.stream.read.fail:
+  message: "The change stream could not be started."

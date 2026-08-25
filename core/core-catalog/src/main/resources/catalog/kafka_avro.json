@@ -4,11 +4,17 @@
   "displayName": "Confluent Avro",
   "icon": "icons/kafka_avro.png",
   "group": "mq",
-  "modes": [],
+  "modes": [
+    "cdc",
+    "snapshot"
+  ],
   "discovery": "catalog",
   "sink": {
-    "capable": false,
-    "writeSemantics": []
+    "capable": true,
+    "writeSemantics": [
+      "upsert",
+      "append"
+    ]
   },
   "pushOut": true,
   "config": [
@@ -474,11 +480,14 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/kafka-avro-connector/src/main/resources/spec_kafka_avro.json",
     "specContentHash": "54141fb7215fa3f4",
     "pdkApiVersion": null,
     "requiredLevel": null,
-    "modeSource": {}
+    "modeSource": {
+      "cdc": "derived",
+      "snapshot": "derived"
+    }
   }
 }

@@ -1,0 +1,72 @@
+# One business object assembled out of two different database engines, landing in the managed state
+# store without the pipeline naming anywhere to write it.
+#
+# Two things have to hold at once here, and neither witnesses the other. The order lives in MySQL and
+# its shipments live in PostgreSQL, so the assembled document is something no view and no join could
+# have produced - there is no join across two engines, and neither database can see the other's table.
+# And the pipeline names no target: declaring the view is the whole instruction, so what also has to
+# hold is that the assembled document reaches the store the view resolves to, keyed as the view
+# declared it.
+#
+# The sibling that ends in a serve block already shows the cross-engine assembly reaching a target the
+# specification named. It cannot show this: a serve block says where to write, so it passes whether or
+# not a view resolves to anything. Swapping the serve block for a view declaration is the whole
+# difference between the two, which is why they are separate examples rather than one.
+#
+# What the assertions have to discriminate:
+#
+# - Counting the documents does not see the second engine at all. Three orders arrive whether or not
+#   their shipments did, so an implementation that honoured only the first stream - or that assembled
+#   nothing and passed the root rows straight through - satisfies a count perfectly. The arrays are
+#   therefore read by length.
+# - The three lengths are deliberately different: two, one, three. A constant, and an implementation
+#   that attaches every child to whichever root came first, each satisfy one root and fail the others;
+#   only having three roots with three different lengths makes that visible.
+# - The parent's own column is read back beside the array. A document whose array is right and whose
+#   scalar fields were dropped on the way through is a document nobody can use, and no assertion about
+#   the array would notice it.
+#
+# The arrays are awaited rather than asserted. Reaching three documents does not mean the children are
+# on them yet - the roots are written as they arrive and the arrays fill as the child rows are placed,
+# so a count of three is true strictly before the assembly is. Awaiting keeps every discrimination: an
+# implementation that never assembles still runs the bound out and fails on the array.
+#
+# The order of elements inside an array is deliberately not asserted. A snapshot read is free to return
+# the child rows in any order, so an assertion on element positions would fail for a reason that has
+# nothing to do with what this example is for.
+#
+# Read mode is snapshot_and_cdc rather than snapshot_only because a stateful node needs every row to
+# carry its order, and a source reading no chain of its own supplies none.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips this
+# example, naming a directory whose jars do not resolve fails it.
+name: a-child-collection-from-another-engine-lands-in-the-managed-store
+setup:
+  databases:
+    orders: { kind: mysql }
+    shipments: { kind: postgres }
+    store: { kind: mongo }
+  connectors: [mysql, postgres, mongodb]
+  apply: [src_orders.tap.yml, src_shipments.tap.yml, views.tap.yml, pipeline.tap.yml]
+  discover: [src_orders, src_shipments]
+pipeline: pipeline.tap.yml
+seed:
+  src_orders.orders:
+    values:
+      - { id: 1, customer: alice }
+      - { id: 2, customer: bob }
+      - { id: 3, customer: carol }
+  src_shipments.shipments:
+    values:
+      - { id: 1, order_id: 1, carrier: dhl }
+      - { id: 2, order_id: 1, carrier: ups }
+      - { id: 3, order_id: 2, carrier: fedex }
+      - { id: 4, order_id: 3, carrier: dhl }
+      - { id: 5, order_id: 3, carrier: ups }
+      - { id: 6, order_id: 3, carrier: fedex }
+steps:
+  - start
+  - await: { count: { views.order_state: 3 } }
+  - await: { doc: { views.order_state: { where: { id: 1 }, expect: { customer: alice }, size: { shipments: 2 } } } }
+  - await: { doc: { views.order_state: { where: { id: 2 }, expect: { customer: bob }, size: { shipments: 1 } } } }
+  - await: { doc: { views.order_state: { where: { id: 3 }, expect: { customer: carol }, size: { shipments: 3 } } } }

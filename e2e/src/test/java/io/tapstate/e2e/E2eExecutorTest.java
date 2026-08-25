@@ -322,6 +322,87 @@ class E2eExecutorTest {
         assertThat(binding.calls).containsExactly("apply:[p.tap.yml]", "cdc:src_mongo.orders=INSERT x10");
     }
 
+    /**
+     * A valued change reaches the driver as the row and the value the specification wrote, not as a
+     * count. Without this the two shapes could parse apart and still execute the same way, and the
+     * whole point of the valued form is that the driver is told which row to move.
+     */
+    @Test
+    void drivesAnUpdateThatNamesTheRowAndTheValue() {
+        execute(minimal(
+                "steps:\n  - cdc: { src_mongo.orders: { update: { where: { id: 2 }, set: { seq: 99 } } } }\n"));
+
+        assertThat(binding.calls)
+                .containsExactly("apply:[p.tap.yml]", "update:src_mongo.orders where={id=2} set={seq=99}");
+    }
+
+    /**
+     * The scoped form has to reach a different seam from the bare one. Both spell {@code pause}, so an
+     * executor that read the word and ignored the source would drive the whole pipeline and every
+     * assertion about the other stream still moving would go on holding - there is nothing left running
+     * to contradict it.
+     */
+    @Test
+    void holdsOneStreamWithoutDrivingThePipeline() {
+        execute(minimal("steps:\n  - pause: src_shipments\n  - resume: src_shipments\n"));
+
+        assertThat(binding.calls)
+                .containsExactly(
+                        "apply:[p.tap.yml]", "stream:pause:src_shipments", "stream:resume:src_shipments");
+        assertThat(binding.drivenPipelineIds)
+                .as("a scoped hold is not a lifecycle intent and must not reach the pipeline")
+                .isEmpty();
+    }
+
+    /**
+     * A hold outlives the step that put it on, so something has to take it off. Leaving that to the
+     * specification would make every case about a held stream end in a line that proves nothing, and a
+     * case that forgot it would leave the next run waiting on a gate nobody remembers closing.
+     */
+    @Test
+    void releasesAStreamTheSpecificationLeftHeld() {
+        execute(minimal("steps:\n  - pause: src_shipments\n"));
+
+        assertThat(binding.calls)
+                .containsExactly("apply:[p.tap.yml]", "stream:pause:src_shipments", "stream:resume:src_shipments");
+    }
+
+    @Test
+    void releasesAHeldStreamEvenWhenAStepFails() {
+        assertThatThrownBy(() -> execute(minimal(
+                        "steps:\n  - pause: src_shipments\n  - assert: { count: { src_mongo.orders: 99 } }\n")))
+                .isInstanceOf(AssertionError.class);
+
+        assertThat(binding.calls)
+                .as("a run that fails while holding must still let go, or it poisons whatever runs next")
+                .endsWith("stream:resume:src_shipments");
+    }
+
+    @Test
+    void doesNotReleaseAStreamTheSpecificationAlreadyReleased() {
+        execute(minimal("steps:\n  - pause: src_shipments\n  - resume: src_shipments\n"));
+
+        assertThat(binding.calls)
+                .containsExactly(
+                        "apply:[p.tap.yml]", "stream:pause:src_shipments", "stream:resume:src_shipments");
+    }
+
+    @Test
+    void keepsTheBareLifecycleWordDrivingTheWholePipeline() {
+        execute(minimal("steps:\n  - pause\n"));
+
+        assertThat(binding.calls).containsExactly("apply:[p.tap.yml]", "drive:PAUSE");
+        assertThat(binding.drivenPipelineIds).containsExactly(PIPELINE_ID);
+    }
+
+    @Test
+    void drivesADeleteThatNamesTheRow() {
+        execute(minimal("steps:\n  - cdc: { src_mongo.orders: { delete: { where: { id: 2 } } } }\n"));
+
+        assertThat(binding.calls)
+                .containsExactly("apply:[p.tap.yml]", "delete:src_mongo.orders where={id=2}");
+    }
+
     @Test
     void countMatcherOverSeveralTablesHoldsOnlyWhenEveryTableMatches() {
         binding.countsOverTime(TARGET, 100L);
@@ -646,8 +727,28 @@ class E2eExecutorTest {
         }
 
         @Override
+        public void driveStream(String sourceId, StreamVerb verb) {
+            calls.add("stream:" + verb.word() + ":" + sourceId);
+        }
+
+        @Override
         public void cdc(TableAlias table, CdcOp op, long rows) {
             calls.add("cdc:" + table + "=" + op + " x" + rows);
+        }
+
+        @Override
+        public void update(TableAlias table, Map<String, Object> where, Map<String, Object> set) {
+            calls.add("update:" + table + " where=" + where + " set=" + set);
+        }
+
+        @Override
+        public void delete(TableAlias table, Map<String, Object> where) {
+            calls.add("delete:" + table + " where=" + where);
+        }
+
+        @Override
+        public void insert(TableAlias table, List<Map<String, Object>> rows) {
+            calls.add("insert:" + table + " rows=" + rows);
         }
 
         private TableAlias redeliverMovesTable;

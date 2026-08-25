@@ -77,6 +77,7 @@ class FixedSleepGateTest {
             // One bounded read of its own target per witness class, each a poll inside a deadline loop.
             entry("test/java/io/tapstate/e2e/LosslessNumericTypeIsAcceptedIT.java", 1L),
             entry("test/java/io/tapstate/e2e/RealMysqlToMongoSnapshotIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/RealMysqlToMongoViewIndexIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestAssemblesParentAndChildrenIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestChildCdcMutatesTheArrayIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestColdRootWakesCorrectlyIT.java", 1L),
@@ -94,7 +95,17 @@ class FixedSleepGateTest {
             entry("test/java/io/tapstate/e2e/NestSaysWhenItIsServedFromTheColdLayerIT.java", 1L),
             entry("test/java/io/tapstate/e2e/NestTrackingRefusesASourceWithoutBeforeImagesIT.java", 1L),
             // Two polls and one fixed gap that is not one - see the class comment.
-            entry("test/java/io/tapstate/e2e/NestThrottleCoalescesHotRootIT.java", 1L));
+            entry("test/java/io/tapstate/e2e/NestThrottleCoalescesHotRootIT.java", 1L),
+            // The read face's own: two harness primitives - a wait on what a CLI process has printed,
+            // and a wait on what a follow has delivered - and one bounded read per witness class. Each
+            // is a single named sleep() called from a `while (nanoTime - deadline < 0)` loop whose
+            // condition, not the sleep, decides the outcome.
+            entry("test/java/io/tapstate/e2e/CliProcess.java", 1L),
+            entry("test/java/io/tapstate/e2e/ControlPlane.java", 1L),
+            entry("test/java/io/tapstate/e2e/DataBrowserCollectionsIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/DataBrowserDottedFieldIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/TailIT.java", 1L),
+            entry("test/java/io/tapstate/e2e/WatchRedrawsIT.java", 1L));
 
     private static final Pattern SLEEP = Pattern.compile(
             "Thread\\s*\\.\\s*sleep\\s*\\(|TimeUnit\\s*\\.\\s*[A-Z_]+\\s*\\.\\s*sleep\\s*\\(");

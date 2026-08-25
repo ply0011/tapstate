@@ -26,7 +26,7 @@ set -eu
 # prerelease that lookup finds nothing and a bare run would die on a clean machine. Pinning also makes
 # the promise reproducible -- the same script installs the same build. TAPSTATE_VERSION overrides for
 # a one-off; releases update this line, and the smoke fails the build if it drifts from pom.xml.
-PINNED_VERSION="0.2.0"
+PINNED_VERSION="0.2.1"
 
 die() {
     printf 'install: %s\n' "$1" >&2
@@ -224,6 +224,65 @@ install_bundle() {
     ln -s "versions/$version/bin/tapstate" "$staged_link"
     mv -f "$staged_link" "$install_dir/tapstate"
     staged_link=""
+    install_alias "$install_dir" "$version"
+}
+
+# `tap` is a convenience shortcut, never a second command: `tapstate` is what every document, message
+# and completion says, and this only saves keystrokes. It is a link to the same target the stable entry
+# points at, so an upgrade moves both together -- a copy would go on pointing at a version directory
+# this script has already deleted.
+#
+# A `tap` that belongs to someone else (node-tap ships one) is left exactly as it is, and the skip is
+# said out loud: a silent one leaves the user without the shortcut and without a reason, which reads as
+# the installer having failed at something.
+install_alias() {
+    alias_dir="$1"
+    alias_version="$2"
+
+    # The local name is decided first, and on what it is rather than on what is on PATH. Two failures
+    # come from asking PATH alone. A `tap` sitting in the install directory that belongs to someone
+    # else is invisible to `command -v` whenever that directory is not on PATH -- and it was then
+    # overwritten by the mv below. And an upgrade of our own alias was skipped whenever any other tap
+    # happened to precede it on PATH, leaving the shortcut pointing into a version directory this
+    # script is about to delete.
+    ours=no
+    if [ -L "$alias_dir/tap" ]; then
+        # Ours by where it points, not by what the target is called: the link is written relative to
+        # the install directory, so a target that stays inside it is one this script wrote.
+        # A glob is not a path check: `versions/../../other/bin/tapstate` matches the pattern and
+        # resolves outside this directory entirely, so a crafted link would be adopted and replaced.
+        # Anything containing `..` is refused before the shape is even considered -- the links this
+        # script writes never need one.
+        alias_target="$(readlink "$alias_dir/tap")"
+        case "$alias_target" in
+            *..*) ours=no ;;
+            versions/*/bin/tapstate | tapstate) ours=yes ;;
+        esac
+    fi
+    if [ -e "$alias_dir/tap" ] || [ -L "$alias_dir/tap" ]; then
+        if [ "$ours" = no ]; then
+            # shellcheck disable=SC2016
+            printf 'note: skipping the optional `tap` shortcut -- %s already exists and is not ours.\n' "$alias_dir/tap"
+            # shellcheck disable=SC2016
+            printf '      tapstate is installed and unaffected; remove that file and run `tapstate alias install` to reconsider.\n'
+            return 0
+        fi
+    else
+        # The name is free here, so PATH decides: a tap somewhere else on PATH would shadow the one
+        # this would create, and a shortcut that resolves to someone else's command is worse than none.
+        existing="$(command -v tap 2>/dev/null || true)"
+        if [ -n "$existing" ]; then
+            # shellcheck disable=SC2016
+            printf 'note: skipping the optional `tap` shortcut -- a different tap is already on PATH at %s.\n' "$existing"
+            # shellcheck disable=SC2016
+            printf '      tapstate is installed and unaffected; run `tapstate alias install` later to reconsider.\n'
+            return 0
+        fi
+    fi
+    staged_alias="$alias_dir/.tap.$$"
+    ln -s "versions/$alias_version/bin/tapstate" "$staged_alias"
+    mv -f "$staged_alias" "$alias_dir/tap"
+    staged_alias=""
 }
 
 main() {
@@ -245,7 +304,11 @@ main() {
     tmp="$(mktemp -d)"
     staged=""
     staged_link=""
-    trap 'rm -rf "$tmp" ${staged:+"$staged"} ${staged_link:+"$staged_link"}' EXIT INT TERM
+    # The alias is staged under a temporary name too, so it is cleaned up on the same terms as the other
+    # two. Left out, an interrupt between its `ln -s` and its `mv` strands a dot-file link in a directory
+    # the user keeps -- and unlike the work area below, nothing else ever removes it.
+    staged_alias=""
+    trap 'rm -rf "$tmp" ${staged:+"$staged"} ${staged_link:+"$staged_link"} ${staged_alias:+"$staged_alias"}' EXIT INT TERM
 
     note_recommended_platform
     fetch "$url" "$tmp/$asset"

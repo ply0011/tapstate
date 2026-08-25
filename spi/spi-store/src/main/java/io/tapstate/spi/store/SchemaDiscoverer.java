@@ -8,8 +8,11 @@ package io.tapstate.spi.store;
  * <p>Only a failure that prevents discovery from running at all (the connector cannot be loaded /
  * level-gated, or throws out of its own discovery) surfaces as a coded exception. The port carries no
  * connector-framework types.
+ *
+ * <p>An {@link ExecutionPort}: it drives a connector, so it runs on the runtime side and control
+ * reaches it only through the whitelisted probe seam.
  */
-public interface SchemaDiscoverer {
+public interface SchemaDiscoverer extends ExecutionPort {
 
     /** Discovers the source model {@code config}'s connector exposes. */
     SourceModel discover(ConnectionConfig config);

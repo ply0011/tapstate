@@ -20,6 +20,43 @@ final class JsonOut {
         return sb.toString();
     }
 
+    /**
+     * The same tree on one line, for output a reader scans down rather than reads: a preview of rows is
+     * a list of things being compared to each other, and the indented form buries each row in the space
+     * between its own fields.
+     */
+    static String compact(Object root) {
+        StringBuilder sb = new StringBuilder();
+        writeCompact(sb, root);
+        return sb.toString();
+    }
+
+    private static void writeCompact(StringBuilder sb, Object value) {
+        if (value instanceof Map<?, ?> map) {
+            sb.append('{');
+            int i = 0;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                sb.append('"').append(escape(String.valueOf(entry.getKey()))).append("\": ");
+                writeCompact(sb, entry.getValue());
+                if (++i < map.size()) {
+                    sb.append(", ");
+                }
+            }
+            sb.append('}');
+        } else if (value instanceof List<?> list) {
+            sb.append('[');
+            for (int i = 0; i < list.size(); i++) {
+                writeCompact(sb, list.get(i));
+                if (i < list.size() - 1) {
+                    sb.append(", ");
+                }
+            }
+            sb.append(']');
+        } else {
+            sb.append(scalar(value));
+        }
+    }
+
     private static void writeValue(StringBuilder sb, Object value, int indent) {
         if (value instanceof Map<?, ?> map) {
             writeObject(sb, map, indent);

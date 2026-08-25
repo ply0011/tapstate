@@ -33,6 +33,13 @@
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
 
+    <!-- Servlet authentication and authorization filters. The configured chains stay stateless and retain
+         Tapstate's own credential formats, error codes, operation registry, and bootstrap flow. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
     <!-- The thin websocket channel carrying the two streaming read sugars (watch a pipeline's status,
          follow its logs). Spring's raw WebSocketHandler abstraction only (never a STOMP broker or general
          push framework) plus the servlet-container websocket support; still org.springframework under R5. -->

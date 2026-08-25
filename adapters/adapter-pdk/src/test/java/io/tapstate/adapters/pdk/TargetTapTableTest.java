@@ -4,7 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import io.tapstate.spi.sink.TargetField;
+import io.tapstate.spi.sink.TargetIndex;
 import io.tapstate.spi.sink.TargetTable;
+import io.tapdata.entity.event.ddl.index.TapCreateIndexEvent;
+import io.tapdata.entity.schema.TapIndex;
 import io.tapdata.entity.schema.TapTable;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -16,6 +19,28 @@ import org.junit.jupiter.api.Test;
  * value; the projection is exercised in isolation here, apart from any live connector.
  */
 class TargetTapTableTest {
+
+    @Test
+    void projectsEachTargetIndexIntoTheCreateEventKeepingItsUniqueness() {
+        TapCreateIndexEvent event = TargetTapTable.createIndexEvent(new TargetTable("orders",
+                List.of(new TargetField("id", "bigint", true)),
+                List.of(new TargetIndex(List.of("id"), true),
+                        new TargetIndex(List.of("customer_id"), false))));
+
+        assertThat(event.getIndexList()).hasSize(2);
+        TapIndex key = event.getIndexList().get(0);
+        assertThat(key.getUnique()).isTrue();
+        assertThat(key.getIndexFields()).singleElement()
+                .satisfies(f -> assertThat(f.getName()).isEqualTo("id"));
+        assertThat(event.getIndexList().get(1).getUnique()).isFalse();
+    }
+
+    @Test
+    void aTargetWithNoIndexesProducesNoCreateEvent() {
+        // A store that is handed an empty event would still be asked to do work it was never given.
+        assertThat(TargetTapTable.createIndexEvent(
+                new TargetTable("orders", List.of(new TargetField("id", "bigint", true))))).isNull();
+    }
 
     @Test
     void carriesTheTargetNameAndEachFieldWithItsType() {
@@ -42,9 +67,15 @@ class TargetTapTableTest {
     @Test
     void hasNoPrimaryKeyWhenNoFieldIsFlagged() {
         TapTable table = TargetTapTable.build(new TargetTable("events",
-                List.of(new TargetField("payload", "text", false))));
+                List.of(new TargetField("payload", "text", false), new TargetField("seq", "int", false))));
 
         assertThat(table.primaryKeys()).isEmpty();
+        // Asserted on the positions too, not only on the key they derive: a position is what marks a
+        // column as part of the key, so this is where a model carrying no key physically ends up. It
+        // holds whatever any rule above decides, and stays true if one is bypassed or replaced - which
+        // is the point of pinning it here rather than only where the refusal is decided.
+        assertThat(table.getNameFieldMap().values())
+                .allSatisfy(field -> assertThat(field.getPrimaryKeyPos()).isNull());
     }
 
     @Test

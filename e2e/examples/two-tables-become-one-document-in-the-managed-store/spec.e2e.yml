@@ -1,0 +1,69 @@
+# Rows scattered across two tables become one document, and that document lands in the managed state
+# store without the pipeline naming anywhere to write it. Both halves are the point and neither
+# witnesses the other: the nest is what makes one object out of two tables, the declared view is what
+# makes it land.
+#
+# Every other nest witness here ends in a serve block - a nest assembles, and a sync writes what it
+# assembled to a target the specification named. This one names no target at all. Declaring the view is
+# the whole instruction, and what has to hold is that an assembled document reaches the store a view
+# resolves to, keyed the way the view declared rather than the way its source tables happen to be keyed.
+#
+# What the assertions have to discriminate:
+#
+# - Counting the documents does not see the nest at all. A pipeline that passed both root rows straight
+#   through, assembling nothing and leaving every array missing, lands exactly the two documents a count
+#   expects. So the arrays are read by length: three under the root that owns three children, one under
+#   the root that owns one.
+# - The second root separates "children were attached" from "children were attached to whoever came
+#   first". An implementation that ignores the join key satisfies the first root's length while failing
+#   this one, and only having two roots makes that visible.
+# - The parent's own column is read back beside the array. A document whose array is right and whose
+#   scalar fields were dropped on the way through is a document nobody can use, and no assertion about
+#   the array would notice it.
+#
+# The array is awaited rather than asserted. Reaching two documents does not mean the children are on
+# them yet: the roots are written when they arrive and the arrays fill as the child rows are placed, so
+# a count of two is true strictly before the assembly is. Asserting on the instant the count holds
+# passed while this example ran alone and failed once a second real-connector example ran beside it,
+# which is load deciding a result rather than the product. Awaiting keeps every discrimination - an
+# implementation that never assembles still runs the bound out and fails on the array.
+#
+# The order of elements inside the array is deliberately not asserted. A snapshot read is free to return
+# the child rows in any order, so an assertion on element positions would fail for a reason that has
+# nothing to do with what this example is for; what an assembled array holds is this example's subject,
+# what order it holds it in is the sibling that changes one child and reads the array back.
+#
+# Read mode is snapshot_and_cdc rather than snapshot_only because a stateful node needs every row to
+# carry its order, and a source reading no chain of its own supplies none. The seeded rows still arrive
+# as snapshot reads; the change stream is what puts them on a chain.
+#
+# Two single-table sources rather than one source naming both tables: that is what puts two chains into
+# one job, which is the shape a nest is for and the shape that can get the join wrong.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips this
+# example, naming a directory whose jars do not resolve fails it.
+name: two-tables-become-one-document-in-the-managed-store
+setup:
+  databases:
+    src: { kind: mysql }
+    store: { kind: mongo }
+  connectors: [mysql, mongodb]
+  apply: [src_orders.tap.yml, src_items.tap.yml, views.tap.yml, pipeline.tap.yml]
+  discover: [src_orders, src_items]
+pipeline: pipeline.tap.yml
+seed:
+  src_orders.orders:
+    values:
+      - { id: 1, customer: ada }
+      - { id: 2, customer: grace }
+  src_items.order_items:
+    values:
+      - { id: 1, order_id: 1, sku: sku-1 }
+      - { id: 2, order_id: 1, sku: sku-2 }
+      - { id: 3, order_id: 1, sku: sku-3 }
+      - { id: 4, order_id: 2, sku: sku-4 }
+steps:
+  - start
+  - await: { count: { views.order_state: 2 } }
+  - await:  { doc: { views.order_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
+  - await:  { doc: { views.order_state: { where: { id: 2 }, expect: { customer: grace }, size: { items: 1 } } } }

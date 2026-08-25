@@ -57,8 +57,40 @@ public interface TierBinding {
     /** Records a lifecycle intent. Returns once the intent is recorded, not once it converges. */
     void drive(String pipelineId, LifecycleVerb verb);
 
+    /**
+     * Holds or releases one source's stream, leaving the pipeline and its other streams alone.
+     *
+     * <p>Not a lifecycle intent and not sent to the product at all: a job is suspended whole, so there
+     * is no product verb that could mean this. The harness holds the stream where it owns the ground -
+     * between the source and whatever is reading it - which is why the source keeps accepting writes
+     * while it is held, and why releasing delivers them in the order the source recorded them rather
+     * than the order they were held in. That is the one arrangement a specification cannot reach by
+     * waiting: an arrival order that disagrees with the source order.
+     *
+     * <p>Holding is a state. Holding a held stream is nothing, releasing a running one is nothing, and
+     * a stream left held when a run ends is released with the run.
+     */
+    void driveStream(String sourceId, StreamVerb verb);
+
     /** Produces changes against a table while the pipeline runs. */
     void cdc(TableAlias table, CdcOp op, long rows);
+
+    /**
+     * Sets columns on the one row the settings locate, while the pipeline runs.
+     *
+     * <p>Separate from {@link #cdc} because the two answer different questions. A generated change
+     * moves some rows and satisfies a case about a count arriving; this one moves a row the
+     * specification chose and writes a value the specification chose, which is what a case has to do
+     * before it can read that value back out of an assembled document. Locating is spelled the way
+     * {@link #fetch} spells it - identity is {@code id} whatever the store calls it.
+     */
+    void update(TableAlias table, Map<String, Object> where, Map<String, Object> set);
+
+    /** Removes the one row the settings locate, while the pipeline runs. Located like {@link #fetch}. */
+    void delete(TableAlias table, Map<String, Object> where);
+
+    /** Adds the given rows while the pipeline runs, leaving what the table held alone. */
+    void insert(TableAlias table, List<Map<String, Object>> rows);
 
     /**
      * Re-emits a table's current rows as fresh change events, row keys unchanged.

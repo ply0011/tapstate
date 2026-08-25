@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -50,12 +49,11 @@ class ArtifactController {
 
     @Verb("artifact.apply")
     @PostMapping("/artifacts:apply")
-    ApplyResult apply(@RequestBody ApplyRequest request,
-                      @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) String principal) {
+    ApplyResult apply(@RequestBody ApplyRequest request) {
         // Refuse a body with no drafts array at the boundary as a coded 400, rather than letting a null trip
         // the service's bare invariant guard (a 500). A missing body is already a framework-level 400 upstream.
         List<ArtifactDraft> drafts = requireDrafts(request);
-        return applyService.apply(principal, drafts);
+        return applyService.apply(AuthenticatedCaller.subject(), drafts);
     }
 
     @Verb("artifact.validate")
@@ -93,9 +91,8 @@ class ArtifactController {
     @DeleteMapping("/artifacts/{id}")
     ResponseEntity<Void> delete(
             @PathVariable("id") String id,
-            @RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch,
-            @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) String principal) {
-        mutationService.delete(principal, id, expectedHash(id, ifMatch));
+            @RequestHeader(name = HttpHeaders.IF_MATCH, required = false) String ifMatch) {
+        mutationService.delete(AuthenticatedCaller.subject(), id, expectedHash(id, ifMatch));
         return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
     }
 

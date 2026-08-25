@@ -1,0 +1,18 @@
+version: tapstate/v1
+kind: pipeline
+id: order_pipeline
+source: [ orders_db, fulfillment_db ]
+settings: { read_mode: snapshot_and_cdc }
+transforms:
+  - id: assemble
+    type: nest
+    from: { order: orders, shipment: shipments }
+    root:
+      from: order
+      key: [ id ]
+      embed:
+        - { from: shipment, on: { order_id: id }, as: array, path: shipments, arrayKey: [ id ] }
+view:
+  id: order_state
+  from: assemble
+  primary_key: id

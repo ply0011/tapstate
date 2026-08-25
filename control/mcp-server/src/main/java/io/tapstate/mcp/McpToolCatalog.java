@@ -5,7 +5,6 @@ import io.modelcontextprotocol.spec.McpSchema;
 import io.tapstate.control.core.ControlApiSchema;
 import io.tapstate.control.core.ControlOperations;
 import io.tapstate.control.core.Frontend;
-import io.tapstate.control.core.Maturity;
 import io.tapstate.control.core.Operation;
 import io.tapstate.control.core.Scope;
 import io.tapstate.core.common.JsonWriter;
@@ -19,7 +18,7 @@ final class McpToolCatalog {
     }
 
     static List<Operation> operations(boolean allowWrite) {
-        return ControlOperations.registry().exposedOn(Frontend.MCP, Maturity.BETA).stream()
+        return ControlOperations.registry().exposedOn(Frontend.MCP).stream()
                 .filter(operation -> operation.scope() == Scope.READ
                         || allowWrite && operation.scope() == Scope.WRITE)
                 .toList();

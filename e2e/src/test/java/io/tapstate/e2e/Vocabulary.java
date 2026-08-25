@@ -36,6 +36,13 @@ final class Vocabulary {
     /** Steps that carry a body. */
     static final SortedSet<String> BODIED_STEPS = sorted(StepKeyword.values(), StepKeyword::word);
 
+    /**
+     * Lifecycle steps that may instead carry one source id, meaning that stream alone. A subset of
+     * {@link #LIFECYCLE_STEPS} and spelled from the same product verbs - what the harness decides is
+     * which of them a source may be named under, not what any of them is called.
+     */
+    static final SortedSet<String> STREAM_SCOPED_STEPS = sorted(StreamVerb.values(), StreamVerb::word);
+
     /** Matcher words, shared by {@code await} and {@code assert} - two timings, one vocabulary. */
     static final SortedSet<String> MATCHERS = sorted(MatcherWord.values(), MatcherWord::word);
 
@@ -62,6 +69,26 @@ final class Vocabulary {
 
     /** The keys a doc matcher body carries: how to find the document, and what to hold it to. */
     static final Set<String> DOC_KEYS = Set.of("where", "expect", "size");
+
+    /**
+     * The keys a valued cdc change carries, per operation. Both locate a row the same way the doc
+     * matcher locates a document - one {@code where} spelling across the surface, not one per word -
+     * and only an update also says what to write.
+     *
+     * <p>An insert names rows rather than locating one, so it carries {@code values} and no
+     * {@code where} - the same spelling a seed uses, so an author who can seed a table can add to it.
+     */
+    static Set<String> valuedChangeKeys(CdcOp op) {
+        return switch (op) {
+            case UPDATE -> Set.of("where", "set");
+            case DELETE -> Set.of("where");
+            case INSERT -> Set.of("values");
+        };
+    }
+
+    static String lowerName(CdcOp op) {
+        return lowerName((Enum<?>) op);
+    }
 
     private Vocabulary() {
     }

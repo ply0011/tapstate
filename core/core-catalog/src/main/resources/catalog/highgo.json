@@ -328,7 +328,7 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "b4151f21",
+    "connectorRepoSha": "d889798e",
     "specPath": "connectors/highgo-connector/src/main/resources/spec_highgo.json",
     "specContentHash": "f050d487c81f0c62",
     "pdkApiVersion": null,

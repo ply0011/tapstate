@@ -1,0 +1,59 @@
+# A column of the parent row changes after the document is already assembled and materialized, and the
+# document in the managed state store follows. This is the second event, which is what a live business
+# object is for: its sibling proves rows scattered across two tables become one document, and this one
+# proves that document keeps being true after the fact it was built from stops being true.
+#
+# What the assertions have to discriminate:
+#
+# - Counting cannot see this at all. Nothing is inserted and nothing is deleted, so an implementation
+#   that assembles once at start-up and never rewrites lands exactly the two documents a count expects
+#   and holds them forever. The assertion is therefore on the value of the changed column.
+#
+# - Reading the new value back is not enough on its own either. A pipeline that reassembles the whole
+#   document from scratch on every change would also show the new customer - and would have thrown away
+#   the array on the way, because a rebuild driven by the parent's own stream has no child rows in hand.
+#   So the array is read in the same breath as the changed column: three elements before, three after.
+#
+# - The first assertion is the control. It holds the document to the old value before the change is
+#   made, so a run where the change never reached the source at all - the driver refusing, the table
+#   never seeded - cannot be mistaken for a run where the product propagated it. Without it, an
+#   assertion that the value is now 'hopper' would also pass on a document that always said 'hopper'.
+#
+# Every name here is this example's own - tables, pipeline, view - rather than the names its sibling
+# uses. The two examples run against the same MySQL server, and a table name is not private to a
+# database as far as a change stream is concerned: sharing one let this example's update surface inside
+# the sibling's run, which failed there rather than here and read as a product fault in a pipeline that
+# had done nothing wrong.
+#
+# The order of elements inside the array is deliberately not asserted, for the reason its sibling gives:
+# a snapshot read is free to return child rows in any order, and this example is about a scalar field
+# surviving alongside an array, not about what order the array holds.
+#
+# Runs only where real connector jars are available: naming no -Dtapstate.e2e.connectors-dir skips this
+# example, naming a directory whose jars do not resolve fails it.
+name: a-parent-column-change-reaches-the-assembled-document
+setup:
+  databases:
+    src: { kind: mysql }
+    store: { kind: mongo }
+  connectors: [mysql, mongodb]
+  apply: [src_ripple_orders.tap.yml, src_ripple_items.tap.yml, views.tap.yml, pipeline.tap.yml]
+  discover: [src_ripple_orders, src_ripple_items]
+pipeline: pipeline.tap.yml
+seed:
+  src_ripple_orders.ripple_orders:
+    values:
+      - { id: 1, customer: ada }
+      - { id: 2, customer: grace }
+  src_ripple_items.ripple_items:
+    values:
+      - { id: 1, order_id: 1, sku: sku-1 }
+      - { id: 2, order_id: 1, sku: sku-2 }
+      - { id: 3, order_id: 1, sku: sku-3 }
+      - { id: 4, order_id: 2, sku: sku-4 }
+steps:
+  - start
+  - await: { count: { views.ripple_state: 2 } }
+  - assert: { doc: { views.ripple_state: { where: { id: 1 }, expect: { customer: ada }, size: { items: 3 } } } }
+  - cdc: { src_ripple_orders.ripple_orders: { update: { where: { id: 1 }, set: { customer: hopper } } } }
+  - await: { doc: { views.ripple_state: { where: { id: 1 }, expect: { customer: hopper }, size: { items: 3 } } } }

@@ -1,8 +1,8 @@
+# @Deprecated codes stay listed as tombstones until intentionally retired.
 # Canonical first-party error codes — the build-time lock that keeps them stable.
 # Sorted, one <domain>.<symbol> per line. The ErrorCodeGatesTest diffs the scanned codes
 # against this file. Adding a code = append it here in the same change set; renaming or
 # removing one = a breaking change to an external contract (review + major version).
-# @Deprecated codes stay listed as tombstones until intentionally retired.
 actuation.from-regex-empty
 actuation.from-regex-invalid
 actuation.not-a-pipeline
@@ -13,6 +13,13 @@ actuation.source-table-not-discovered
 actuation.source-table-regex-invalid
 actuation.source-table-selection-empty
 actuation.source-table-spec-unsupported
+actuation.view-fed-by-many-tables
+actuation.view-key-missing
+actuation.view-key-not-feed-identity
+actuation.view-storage-tier-unsupported
+actuation.view-store-is-a-capture-source
+actuation.view-store-not-configured
+actuation.view-store-unreachable
 artifact.in-use
 artifact.not-found
 artifact.pipeline-not-stopped
@@ -22,8 +29,12 @@ artifact.version-conflict
 boot.hazelcast-unavailable
 capture.event-table-not-selected
 capture.start-from-unparsable
+cli.alias-install-dir-unknown
+cli.alias-link-failed
+cli.alias-name-taken
 cli.artifact-exists
 cli.connect-failed
+cli.demo-workspace-exists
 cli.if-match-needs-one-resource
 cli.kind-dir-mismatch
 cli.mcp-unavailable
@@ -34,19 +45,27 @@ cli.request-timed-out
 cli.resource-not-found
 cli.unknown-connector
 cli.verb-not-implemented
+cli.watch-needs-a-terminal
+cli.workspace-not-writable
 connector.ambiguous-connector-class
 connector.ambiguous-registration
 connector.api-level-incompatible
 connector.api-level-unknown
+connector.capability-missing
 connector.capture-failed
 connector.class-not-found
 connector.discover-failed
+connector.instance-limit-reached
+connector.instances-busy
 connector.load-failed
 connector.no-connector-class
 connector.not-found
 connector.not-official
 connector.not-registered
 connector.projection-failed
+connector.read-abandoned
+connector.read-failed
+connector.read-timeout
 connector.registration-conflict
 connector.spec-invalid
 connector.spec-not-found
@@ -60,6 +79,13 @@ control.forbidden
 control.malformed-request
 control.unauthenticated
 control.unreachable
+data-browser.connector-not-browsable
+data-browser.follow-idle
+data-browser.follow-stopped
+data-browser.invalid-limit
+data-browser.source-deleted
+data-browser.unknown-collection
+data-browser.unorderable-field
 dsl.ambiguous-reference
 dsl.composition
 dsl.config-required
@@ -79,6 +105,7 @@ dsl.row-expression-type-unsupported
 dsl.undefined-variable
 dsl.unknown-field
 dsl.unsupported-mode
+dsl.upsert-needs-key
 engine.frontier-order-not-encodable
 engine.frontier-pinned
 engine.job-failed
