@@ -1,0 +1,46 @@
+# Documentation classification gate.
+#
+# A reader-facing Markdown page under docs/ says where it is going, in its own header: either it is
+# an engineering draft headed for review and publication, or it is a pointer to the published page
+# that is now canonical. In scope: pages the pull request adds or modifies. Out of scope: everything
+# under docs/ that is not a page - sample data, workspace files, scripts, diagrams - which belongs
+# with the code and has no destination.
+#
+# What this buys: a reader who lands on a repository page can tell whether they are reading reviewed
+# documentation or an engineer's draft, without knowing how this project is organised. That
+# distinction was a convention before it was a check, and a convention nobody can see is one that a
+# hurried page silently opts out of.
+#
+# A page nobody touches needs nothing, so the rule arrives page by page instead of as one migration.
+#
+# The decision lives in a script rather than inline here, so it can be linted, run by hand, and held
+# to its own cases - which run first, on every pull request. A gate is exactly as trustworthy as the
+# last time something proved it still refuses.
+#
+# Like the other gates here, this is meant to be a required status check on main (branch protection);
+# a workflow that merely runs is not a gate until merges depend on it.
+name: docs classification
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  docs-classification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, so the merge base with the target branch resolves
+
+      - name: The gate still decides the way it is supposed to
+        run: |
+          shellcheck .github/scripts/docs-classification.sh \
+            .github/scripts/docs-classification-smoke.sh
+          bash .github/scripts/docs-classification-smoke.sh
+
+      - name: Every documentation page this pull request touches says where it is going
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: bash .github/scripts/docs-classification.sh

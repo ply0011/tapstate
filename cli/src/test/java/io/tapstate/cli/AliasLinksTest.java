@@ -126,10 +126,10 @@ class AliasLinksTest {
         // That is this installation's own link, one directory deeper, and treating it as foreign would
         // make `tapstate alias install` refuse on every machine the installer had already set up.
         Files.createFile(binDir.resolve("tapstate"));
-        Path versioned = binDir.resolve("versions").resolve("0.2.1").resolve("bin");
+        Path versioned = binDir.resolve("versions").resolve("0.3.0").resolve("bin");
         Files.createDirectories(versioned);
         Files.createFile(versioned.resolve("tapstate"));
-        Files.createSymbolicLink(binDir.resolve("tap"), Path.of("versions/0.2.1/bin/tapstate"));
+        Files.createSymbolicLink(binDir.resolve("tap"), Path.of("versions/0.3.0/bin/tapstate"));
 
         AliasLinks.install(binDir);
 

@@ -31,15 +31,34 @@ jobs:
           github-token: ${{ secrets.DOCS_REPO_TOKEN }}
           script: |
             const pr = context.payload.pull_request;
+            const sha = pr.merge_commit_sha;
+            const repo = `${context.repo.owner}/${context.repo.repo}`;
+            // Permalinks, not branch links: the branch moves and may be deleted, and this issue is
+            // read after both. The tree link is how the drafts are read exactly as they merged.
+            const commit = sha ? `https://github.com/${repo}/commit/${sha}` : '(no merge commit recorded)';
+            const drafts = sha ? `https://github.com/${repo}/tree/${sha}/docs` : '(no merge commit recorded)';
             const body = [
               `Documentation follow-up for merged PR ${pr.html_url}`,
               ``,
               `**Title:** ${pr.title}`,
               `**Author:** @${pr.user.login}`,
               `**Merged at:** ${pr.merged_at}`,
+              `**Merged commit:** ${commit}`,
+              `**Drafts as merged:** ${drafts}`,
               ``,
-              `**Change summary:**`,
+              `**Change summary, as the author wrote it:**`,
               pr.body || '(no description provided)',
+              ``,
+              `---`,
+              ``,
+              `The summary above should answer three things, because the pull request template asks`,
+              `for them: whether follow-up is needed, where the draft is under \`docs/\`, and which`,
+              `public page it is headed for. If any of the three is missing, ask on the pull request`,
+              `rather than guessing - the author has the context and this issue is where it gets lost.`,
+              ``,
+              `Pages under \`docs/\` carry a header saying whether they are an engineering draft or a`,
+              `pointer to an already published page. Publishing one means the draft here shrinks to a`,
+              `\`canonical-pointer\` with its \`canonical_url\`; the executable assets beside it stay put.`,
             ].join('\n');
             await github.rest.issues.create({
               owner: 'tapstate',
