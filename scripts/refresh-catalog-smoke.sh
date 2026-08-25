@@ -192,6 +192,14 @@ fresh_tree
 rm -rf "$scratch/connectors/.git"
 expect "a checkout whose sha cannot be read" 2 "--sha" --connectors "$scratch/connectors"
 
+# --bitmap names a bitmap to reuse, and only a spec-only run reuses one. Taken quietly on a full
+# refresh the named file is never opened, the run derives its own instead, and it exits 0 after tens
+# of minutes of connector builds - success reported for the one thing the caller did not ask for.
+fresh_tree
+printf 'mysql\tBATCH_READ\n' > "$scratch/mine.tsv"
+expect "--bitmap on a full refresh" 2 "add --spec-only" \
+  --connectors "$scratch/connectors" --bitmap "$scratch/mine.tsv"
+
 # --- the shapes a step has when it did not actually run -------------------------------------------
 #
 # Each of these is a green Maven run that regenerated nothing. Left alone they end in a refresh that

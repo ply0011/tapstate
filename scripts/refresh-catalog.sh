@@ -36,7 +36,8 @@
 #   --connectors <path>   the tapdata-connectors checkout to read (required)
 #   --dist <dir>          a directory of already-built connector jars; skips the build step
 #   --spec-only           reuse the checked-in bitmap instead of building jars and deriving
-#   --bitmap <path>       the bitmap to reuse (default: the checked-in one)
+#   --bitmap <path>       the bitmap --spec-only reuses (default: the checked-in one); refused on a
+#                         full refresh, which derives its own
 #   --sha <sha>           the connectors revision to stamp into provenance, when the checkout is not
 #                         a git working tree (a tarball, a vendored copy)
 #   --keep-workspace      leave the scratch directory in place for inspection
@@ -88,6 +89,13 @@ done
 if [ -z "$connectors" ]; then
   usage >&2
   refuse "no connectors checkout named"
+fi
+
+# --bitmap names a bitmap to *reuse*, which only a spec-only run does; a full refresh derives its own
+# and overwrites it. Accepted quietly, the named file is never opened and the run still exits 0 after
+# tens of minutes of connector builds - success reported for the one thing the caller did not ask for.
+if [ -n "$bitmap" ] && [ "$spec_only" = no ]; then
+  refuse "--bitmap names a bitmap to reuse, and a full refresh derives its own - add --spec-only, or drop --bitmap"
 fi
 
 # The repository this script lives in, so the run does not depend on the working directory.
