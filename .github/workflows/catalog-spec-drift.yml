@@ -193,6 +193,15 @@ jobs:
         with:
           token: ${{ steps.token.outputs.token }}
           branch: ws/catalog-spec-drift
+          # Only the paths a refresh writes. Without this the action commits everything untracked in
+          # the workspace, and this job leaves plenty there: the upstream partial clone and the path,
+          # fetch and decision lists it drives the scan from. A pull request carrying those is not a
+          # catalog change with some noise attached - it is a 3500-line diff a reviewer has to sift.
+          # Keep in sync with the three checked-in paths refresh-catalog.sh writes.
+          add-paths: |
+            core/core-catalog/src/main/resources/catalog
+            tools/catalog-assembler/ingest-report.md
+            tools/catalog-assembler/capability-bitmap.tsv
           # main is protected with "require branches to be up to date", so a pull request left alone
           # goes stale within a day. Rebasing onto main each run keeps one open pull request that can
           # actually merge, rather than a growing pile of them that cannot.
