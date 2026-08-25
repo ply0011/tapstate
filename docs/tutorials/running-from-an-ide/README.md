@@ -1,3 +1,9 @@
+---
+status: engineering-draft
+publication: handoff
+target: https://tapstate.dev/docs/tutorials/running-from-an-ide
+---
+
 # Running the server and CLI from an IDE
 
 The [online quickstart](../../quickstart-online.md) runs a released image out of compose. This page
