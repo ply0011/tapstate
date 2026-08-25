@@ -35,6 +35,9 @@ One data path. One operational surface.
 - **Transform** and combine data incrementally as it changes.
 - **Serve** application-ready state to applications, APIs, automation, and AI agents.
 
+For how this compares with a streaming stack you assemble yourself, see
+[Tapstate vs. a streaming stack](https://tapstate.dev/docs/overview/vs-streaming-stack).
+
 ## Try it
 
 Run the Alpha locally:
