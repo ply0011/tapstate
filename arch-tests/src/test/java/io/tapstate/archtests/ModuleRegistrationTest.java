@@ -151,8 +151,11 @@ class ModuleRegistrationTest {
         // This pins both halves. Should catalog-derive ever join the reactor, the first test above
         // turns red and forces the decision to be made rather than absorbed by an exemption row.
         List<String> reached = reactorModules().stream().map(Module::artifactId).toList();
+        // isNotEmpty first: doesNotContain over an empty list is true without looking at anything, so a
+        // reactorModules() that stopped finding modules would satisfy this while seeing nothing at all.
         assertThat(reached)
                 .as("catalog-derive is standalone by design: own coordinates, not under the root parent")
+                .isNotEmpty()
                 .doesNotContain("catalog-derive");
         assertThat(EXEMPT)
                 .as("a module this gate cannot see must not be listed as a waiver it granted")

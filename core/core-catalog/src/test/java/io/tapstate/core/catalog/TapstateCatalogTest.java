@@ -148,7 +148,9 @@ class TapstateCatalogTest {
         // has to be unchanged by that move - otherwise every consumer of provenance broke quietly.
         TapstateCatalog catalog = TapstateCatalog.build(index("mysql", "kafka"), ENTRIES::get);
 
-        assertThat(catalog.all()).allSatisfy(entry -> {
+        // hasSize first, because allSatisfy over an empty catalog passes without asserting anything:
+        // a build() that stopped returning entries would look identical to one that stamps them right.
+        assertThat(catalog.all()).hasSize(2).allSatisfy(entry -> {
             assertThat(entry.provenance().specSha()).isEqualTo("aaaa1111");
             assertThat(entry.provenance().capabilitySha()).isEqualTo("bbbb2222");
         });
