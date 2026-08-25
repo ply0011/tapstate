@@ -126,8 +126,16 @@ separate, reviewed commit.
 
 1. Change the field in your connectors checkout.
 2. `scripts/refresh-catalog.sh --connectors ../tapdata-connectors --spec-only`.
-3. The diff should be small: `index.json` (its `specSha`, one line) plus the entry files that really
-   changed. If every entry moved, something else moved with your change - read it before committing.
+3. The diff should be small: the entry files that really changed, and `index.json` only when the
+   upstream revision moved. If every entry moved, something else moved with your change - read it
+   before committing.
+
+`specSha` names the upstream revision the specifications were read at, so editing a checkout in place
+leaves it alone: the revision has not moved, only your working tree has. That is worth knowing before
+you commit such a refresh, because the catalog then claims a revision that does not contain what it
+carries. Each entry's own `specContentHash` does move, so the two disagree and the claim is at least
+detectable. A refresh from a committed revision - which is what the scheduled lanes always run - does
+not have this problem.
 
 ## Reading the diff
 
