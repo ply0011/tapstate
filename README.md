@@ -87,8 +87,6 @@ configuration, applied artifacts — shares that instance with whatever your pip
 write, so anyone holding a Tapstate token can read it back with an ordinary source
 declaration. Do not put data in this deployment that its own users should not see.
 
-See [Alpha limitations](https://tapstate.dev/docs) for details.
-
 ## Where we're going
 
 Alpha proves the core path from database changes to maintained state.
@@ -100,8 +98,6 @@ Tapstate is evolving toward the complete Capture → Transform → Serve path:
 - Pull and push interfaces for consuming live state
 - A broader connector ecosystem for operational systems and serving targets
 
-See the [roadmap](https://tapstate.dev/docs) for what's coming.
-
 ## Explore Tapstate
 
 - [Quickstart](https://tapstate.dev/docs/overview/quickstart-online) — get Tapstate running and see live state update
@@ -111,7 +107,6 @@ See the [roadmap](https://tapstate.dev/docs) for what's coming.
 - [Transforms](https://tapstate.dev/docs/reference/transforms) — reshape and assemble operational state
 - [Operations](https://tapstate.dev/docs/guides/observe-a-pipeline) — pipelines, status, metrics, logs, and runtime behavior
 - [MCP & AI](https://tapstate.dev/docs/reference/mcp) — use Tapstate with AI agents and developer tools
-- [Limitations](https://tapstate.dev/docs) — understand the current Alpha boundaries
 - [Build & contribute](CONTRIBUTING.md) — build from source and contribute to Tapstate
 
 [tapstate.dev/docs](https://tapstate.dev/docs) is the reviewed, published documentation
@@ -123,29 +118,6 @@ discovery index of the documentation, and
 [`/llms-full.txt`](https://tapstate.dev/llms-full.txt) carries the combined page
 context. Prefer them over crawling this repository — they carry the reviewed wording,
 including the line between what Alpha does today and where the product is going.
-
-## FAQ
-
-[How is Tapstate different from Debezium + Kafka + Flink?](https://tapstate.dev/docs/overview/vs-streaming-stack)
-Understand when a unified operational-state engine fits better than an assembled streaming stack.
-
-[Is Tapstate a replacement for Kafka or Flink?](https://tapstate.dev/docs/overview/vs-streaming-stack)
-See where Tapstate fits — and where event streaming and stream processing still belong.
-
-[How is Tapstate different from TapData?](https://tapstate.dev/docs)
-Learn how Tapstate's operational-state model differs from traditional data replication.
-
-[Why does Tapstate use MongoDB? Is MongoDB required?](https://tapstate.dev/docs/concepts/storage)
-Understand the current reference backing store and the longer-term serving model.
-
-[Can Tapstate work with Oracle, SQL Server, DB2, and other databases?](https://tapstate.dev/docs/connectors)
-See what's supported today and how connector coverage is expanding.
-
-[How does Tapstate work with AI agents?](https://tapstate.dev/docs/reference/mcp)
-Learn how live operational state can provide fresh business context for AI.
-
-[Is Tapstate production-ready?](https://tapstate.dev/docs)
-See the current Alpha guarantees, limitations, and path toward production readiness.
 
 ## About
 
