@@ -131,20 +131,31 @@ final class StreamGate implements AutoCloseable {
 
     private void accept() {
         while (!closed) {
+            Socket reader = null;
             try {
-                Socket reader = listener.accept();
-                Socket store = new Socket(targetHost, targetPort);
+                reader = listener.accept();
                 open.add(reader);
+                // Dialled after the accept, so it can fail on its own - a store that is down, or a
+                // connection limit reached. That failure belongs to this one connection: it closes the
+                // socket just accepted and the loop goes back to accepting, because a relay that
+                // stopped accepting here would leave every later connection hanging on a listener
+                // nobody is reading, which reads from above as the product having gone quiet.
+                Socket store = new Socket(targetHost, targetPort);
                 open.add(store);
                 // Toward the reader: the direction the hold applies to.
                 pump(store, reader, true);
                 // Toward the store: never held, so acknowledgements keep arriving.
                 pump(reader, store, false);
-            } catch (IOException listenerClosed) {
-                if (!closed) {
-                    throw new IllegalStateException("stream gate stopped accepting", listenerClosed);
+            } catch (IOException failed) {
+                if (closed) {
+                    return;
                 }
-                return;
+                if (reader == null) {
+                    // The listener itself, not one connection: there is nothing left to accept on.
+                    throw new IllegalStateException("stream gate stopped accepting", failed);
+                }
+                open.remove(reader);
+                closeQuietly(reader);
             }
         }
     }

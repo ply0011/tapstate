@@ -28,6 +28,14 @@ enum CliError implements TapstateErrorCode {
     DEMO_WORKSPACE_EXISTS("cli.demo-workspace-exists", Set.of("path")),
 
     /**
+     * A workspace directory or file could not be written; {@code path} is the one that failed and
+     * {@code reason} is what the filesystem said. Coded rather than left to crash because it is an
+     * ordinary condition a reader meets - a read-only directory, a name already taken by a plain file -
+     * and the answer is something they can act on rather than a stack trace.
+     */
+    WORKSPACE_NOT_WRITABLE("cli.workspace-not-writable", Set.of("path", "reason")),
+
+    /**
      * The optional {@code tap} shortcut cannot be managed because that name belongs to something else;
      * {@code path} is where it sits. Refused rather than replaced or deleted: the name is a working
      * command on that machine, and a convenience shortcut does not get to remove one.

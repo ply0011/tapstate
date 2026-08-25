@@ -158,8 +158,12 @@ class PublishedExamplesIT {
                     control, workspace, drivers(files, stores), env(stores),
                     stores::driveStream, stores::behindTheGate);
 
+            // The scene covers the readings after the run as well as the run itself. Those assertions
+            // are the ones that read the store through an address the specification could not name, and
+            // a failure there is exactly the kind whose explanation dies with the containers.
             try {
                 new E2eExecutor(binding, new FilePipelineLoader(workspace), TIMEOUT, POLL).execute(envelope);
+                verifyWhereItSettled(specification, envelope, settled, binding, stores, files);
             } catch (RuntimeException | AssertionError failed) {
                 // Before the containers go away. Everything that would explain this failure is inside
                 // them, and a second run to add a print statement costs two database engines again.
@@ -171,15 +175,7 @@ class PublishedExamplesIT {
                 throw failed;
             }
 
-            if (envelope.setup().databases().isEmpty()) {
-                settled.forEach((alias, rows) -> assertThat(
-                                files.count(EndpointAddress.uri(targetDirectory.toString()), alias.table()))
-                        .as("%s settles on %s rows in %s, read there by the address it named; this reads the "
-                                + "target this run handed out, which it cannot name", specification, rows, alias)
-                        .isEqualTo(rows));
-            } else {
-                theSettledCountIsInAStoreTheSeedNeverTouched(specification, envelope, settled, binding, stores);
-            }
+            // moved into verifyWhereItSettled, inside the try above
         }
         // Last line on purpose: the ledger vouches only for a run that held every assertion above,
         // including the independent read. The release gate reads absence from it, so nothing may be
@@ -232,6 +228,30 @@ class PublishedExamplesIT {
                             + "kept for itself, which the example cannot name", specification, rows, alias)
                     .isEqualTo(rows);
         });
+    }
+
+    /**
+     * Where the run settled, read back over an address the specification could not have named.
+     *
+     * <p>Extracted so it sits inside the same try that writes the failure scene: read outside it, a
+     * wrong count would report itself with no scene, which is the one failure most worth a scene.
+     */
+    private void verifyWhereItSettled(
+            Path specification,
+            Envelope envelope,
+            Map<TableAlias, Long> settled,
+            HttpTierBinding binding,
+            ProvisionedStores stores,
+            Endpoints files) {
+        if (envelope.setup().databases().isEmpty()) {
+            settled.forEach((alias, rows) -> assertThat(
+                            files.count(EndpointAddress.uri(targetDirectory.toString()), alias.table()))
+                    .as("%s settles on %s rows in %s, read there by the address it named; this reads the "
+                            + "target this run handed out, which it cannot name", specification, rows, alias)
+                    .isEqualTo(rows));
+        } else {
+            theSettledCountIsInAStoreTheSeedNeverTouched(specification, envelope, settled, binding, stores);
+        }
     }
 
     /**

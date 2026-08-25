@@ -84,10 +84,25 @@ public final class E2eExecutor {
      * nobody remembers closing.
      */
     private void releaseHeldStreams() {
+        // Every one of them, even after one refuses. Stopping at the first failure would leave the rest
+        // gated, and a gate outliving the run that made it is the failure this method exists to prevent
+        // - so the refusals are collected and raised once the last stream has had its turn.
+        RuntimeException firstRefusal = null;
         for (String sourceId : heldStreams) {
-            binding.driveStream(sourceId, StreamVerb.RESUME);
+            try {
+                binding.driveStream(sourceId, StreamVerb.RESUME);
+            } catch (RuntimeException refused) {
+                if (firstRefusal == null) {
+                    firstRefusal = refused;
+                } else {
+                    firstRefusal.addSuppressed(refused);
+                }
+            }
         }
         heldStreams.clear();
+        if (firstRefusal != null) {
+            throw firstRefusal;
+        }
     }
 
     /**
