@@ -8,6 +8,11 @@ name: translate-intake
 # is no report at all. So the report stays exactly as its author wrote it, and an English rendering
 # is added beside it for whoever reads the thread next.
 #
+# An `issues` event always runs in this repository's own context, so the key below is there even
+# when the report was filed by somebody with no association to the project at all. That is what
+# makes this work for the people it is for; a `pull_request` run from a fork is given no secrets,
+# which is the trap two other workflows here had to be pulled out of.
+#
 # `issues`, not `issue_comment`, so the reply this workflow leaves cannot trigger it again. The
 # translation is written into a single comment claimed by an HTML marker, so `edited` updates that
 # one comment instead of adding another.

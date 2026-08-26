@@ -51,8 +51,9 @@ body="${ISSUE_BODY:-}"
   "The issue body is longer than $MAX_CHARS characters, so it was left alone. Whole log files are
 better as an attachment than as a report body."
 [ -n "${TRANSLATE_API_KEY:-}" ] || say \
-  "Skipped: no engine is configured. This run reached the step and found no API key, which is the
-expected state on a fork - a workflow run triggered from a fork is given no repository secrets."
+  "Skipped: no engine is configured. This run reached the step and found no API key, so the key is
+not set on this repository. Note that an issue event always runs in this repository's own context,
+so a report filed by an outsider does reach the secret - unlike a workflow run from a fork."
 
 # The instructions the engine is held to. Contract, not decoration: a report is mostly the parts
 # that must survive verbatim.
