@@ -1,5 +1,5 @@
 name: Report a bug or an idea
-description: Something is wrong, or something is missing. We triage it and decide.
+description: Something is wrong, or something is missing. Write it in any language - we triage it and reply.
 labels: ["needs-triage"]
 body:
   - type: markdown
@@ -7,6 +7,10 @@ body:
       value: |
         This is the lane for **telling us**. You do not need to know how it should be fixed,
         and you are not expected to implement it.
+
+        **Write in whichever language you think in.** A bot adds an English translation below
+        what you wrote; your own text stays exactly as it is and is the version that counts.
+        Machine-translated English is just as welcome. Nothing here is checked for language.
 
         What happens next: we triage it and reply on this issue either way. If we take it, we
         open a separate issue for the work and link it here — and **this issue stays open until

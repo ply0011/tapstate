@@ -2,6 +2,26 @@
 
 Thanks for your interest in Tapstate! Contributions are welcome.
 
+## Language
+
+English is the working language here - issues, pull requests, and anything else written in the
+open. That is not a rule about you. It is so the next person who hits the same error and searches
+for it in English finds that it has already been reported.
+
+**Write in whichever language you think in.** Open an issue in Chinese, Japanese, Korean, German,
+anything at all - we take it exactly as it is. A bot adds an English translation as a comment
+underneath, which says on its face that it is machine-generated and that your original is the
+version that counts. We do not edit what you wrote. And machine-translated English is just as
+welcome: if you ran your own text through a translator before posting, that is a normal way to
+contribute here, not a lesser one.
+
+No check will refuse your issue or your pull request over the language you wrote it in.
+Enforcement reaches repository content and nothing else - files under version control, and the
+commit messages that carry them - because those enter the project's history permanently and
+cannot be corrected afterwards without rewriting it. Conversation is deliberately left out. (We also hold ourselves to English in the description of a pull request
+opened from a branch in this repository - our own habit, checked because we are the ones who slip,
+and not a bar applied to you.)
+
 ## Workflow
 
 1. **Fork** the repository and clone your fork.
@@ -30,6 +50,40 @@ one thing: whether you intend to do the work yourself.
 The second lane has no approval step on purpose. Making the one person willing to do the work wait
 for a verdict is how that person stops coming back. The gates are all on the pull request: CI,
 review, and a live verification a maintainer can rerun.
+
+### What triage promises
+
+Triage is done by this repository's code owners - today **@ply0011** and **@feynmx**.
+[`.github/CODEOWNERS`](.github/CODEOWNERS) is the copy of that list which is actually maintained;
+if it disagrees with this paragraph, believe it.
+
+- **Within 7 days of you opening it, one of them replies on the issue.** Not a label and not a
+  reaction - a reply you can read. If it has been longer, say so on the issue. A late triage is
+  our failure, and a nudge is the correct response to it rather than a rude one.
+- **If we are not going to do it, we say why, in public, and close it.** "Not now" and "not ever"
+  are different answers, and you get whichever one is true.
+- **If we are going to do it, we open a separate issue for the work, link it from yours, and leave
+  yours open until the fix merges.** What you wrote is the evidence - the steps you took, the
+  output you saw. Rewriting that into a scope statement would throw away the part that made it
+  useful, so we start a new issue instead of editing yours.
+
+**If you want to do the work yourself on something you reported, say so on the issue and we will
+assign it to you.** You cannot do that yourself, and the reason is worth stating rather than
+leaving you hunting for a menu that is not there: GitHub will only assign an issue to a member of
+the organisation or a collaborator on the repository, so the click exists for us and not for you.
+That makes the waiting entirely our doing, and we hold ourselves to **3 days** on it.
+
+### The Triage role
+
+Once a second pull request of yours has merged, we offer you GitHub's **Triage** role here. It
+carries no write access - you still cannot push and cannot merge. What it does carry is the
+ability to be assigned issues, which is otherwise closed to you for the reason just above, and to
+label, close and reopen them.
+
+This is not a badge. Someone who has already fixed two things in this codebase can usually read
+the third bug report faster than we can, and any report that waits on one of two people is a
+report that waits. Declining changes nothing else about how your work is reviewed, and nothing
+about it happens without your say-so.
 
 ### Does it need an issue first?
 

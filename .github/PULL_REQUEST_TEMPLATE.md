@@ -1,3 +1,10 @@
+<!--
+Write this in whichever language you think in. Nothing checks the language of a pull request
+opened from a fork, and nothing will refuse it over that. Pull requests from a branch in this
+repository keep to English, which is our own habit rather than a bar for you.
+See CONTRIBUTING.md, "Language".
+-->
+
 ## Linked issue
 
 <!--
