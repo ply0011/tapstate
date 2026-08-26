@@ -1,0 +1,41 @@
+name: Report a bug or an idea
+description: Something is wrong, or something is missing. We triage it and decide.
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the lane for **telling us**. You do not need to know how it should be fixed,
+        and you are not expected to implement it.
+
+        What happens next: we triage it and reply on this issue either way. If we take it, we
+        open a separate issue for the work and link it here — and **this issue stays open until
+        the fix merges**, because your reproduction is the evidence and we do not overwrite it.
+        If we decide not to, we say so here and close it.
+
+        If you already know what you want to build and intend to build it yourself, use
+        **Propose a change you will implement** instead — that lane does not wait on us.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        The smallest thing that shows it. For the CLI, the `.tap.yml` input and the exact command.
+        Paste output as text rather than a screenshot — we grep it.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `tapstate --version`, or the image tag / commit you ran.
+    validations:
+      required: true
