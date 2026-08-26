@@ -142,6 +142,18 @@ out="$(run "Le connecteur echoue au demarrage, voici la trace.")"; code=$?
 check "GitHub refuses the comment: exits 0" "$([ $code = 0 ] && echo 0 || echo 1)"
 check "GitHub refuses the comment: says the comment could not be left" "$(has "$out" "could not" && echo 0 || echo 1)"
 
+# A missing workflow input is a skip, not a red check. `set -u` makes an unset variable a non-zero
+# exit, and a non-zero exit here would put a failing check beside somebody's bug report.
+stage "An English translation."
+out="$(ISSUE_BODY="Le connecteur echoue." TRANSLATE_API_KEY=a-key TRANSLATE_BASE_URL=https://engine.invalid \
+       TRANSLATE_MODEL=a-model bash "$gate" 2>&1)"; code=$?
+check "no issue number: exits 0" "$([ $code = 0 ] && echo 0 || echo 1)"
+check "no issue number: says there was nowhere to reply" "$(has "$out" "nowhere to reply" && echo 0 || echo 1)"
+out="$(ISSUE_BODY="Le connecteur echoue." ISSUE_NUMBER=42 GITHUB_REPOSITORY=tapstate/tapstate \
+       TRANSLATE_API_KEY=a-key bash "$gate" 2>&1)"; code=$?
+check "half-configured engine: exits 0" "$([ $code = 0 ] && echo 0 || echo 1)"
+check "half-configured engine: says so, and not that no key is set" "$(has "$out" "half configured" && echo 0 || echo 1)"
+
 # --- one comment, claimed by a marker -------------------------------------------------------------
 stage "An English translation."
 out="$(run "Le connecteur echoue au demarrage, voici la trace.")"

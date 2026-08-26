@@ -55,6 +55,19 @@ better as an attachment than as a report body."
 not set on this repository. Note that an issue event always runs in this repository's own context,
 so a report filed by an outsider does reach the secret - unlike a workflow run from a fork."
 
+# Everything else this needs, checked before an API call rather than after. `set -u` turns an
+# unset variable into a non-zero exit, and a non-zero exit here is exactly the thing the contract
+# forbids: a red check beside somebody's bug report because a workflow input was missing.
+if [ -z "${TRANSLATE_BASE_URL:-}" ] || [ -z "${TRANSLATE_MODEL:-}" ]; then
+  say "Skipped: the engine is only half configured - a key is set, but the base URL or the model
+name is not."
+fi
+repo="${GITHUB_REPOSITORY:-}"
+num="${ISSUE_NUMBER:-}"
+if [ -z "$repo" ] || [ -z "$num" ]; then
+  say "Skipped: the event did not say which issue this is, so there was nowhere to reply."
+fi
+
 # The instructions the engine is held to. Contract, not decoration: a report is mostly the parts
 # that must survive verbatim.
 system="You translate bug reports and feature requests into English for a software project.
@@ -102,9 +115,6 @@ trap 'rm -f "$comment"' EXIT
   printf '> authoritative one** - where the two disagree, the original is right.\n\n'
   printf '%s\n' "$text"
 } > "$comment"
-
-repo="${GITHUB_REPOSITORY}"
-num="${ISSUE_NUMBER}"
 
 # Ours is the one carrying the marker. Not the first, not the latest.
 existing="$(gh api --paginate "repos/$repo/issues/$num/comments" \
