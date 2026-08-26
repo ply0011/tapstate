@@ -17,6 +17,89 @@ Thanks for your interest in Tapstate! Contributions are welcome.
 4. **Open a pull request** against `main`. Describe what changed and why. CI runs
    the build and a few repository checks on every PR — make sure it's green.
 
+## External contributions
+
+You need access to nothing private to contribute here. There are two ways in, and they differ in
+one thing: whether you intend to do the work yourself.
+
+| You want to | Use | What happens |
+| --- | --- | --- |
+| Tell us something is wrong or missing | the **bug or idea** template | We triage it and reply on the issue either way. If we take it, we open a separate issue for the work and link it — and yours stays open until the fix merges, because your reproduction is the evidence and we do not overwrite it. |
+| Build it yourself | the **proposal** template | Nothing gates you before you start. Write the design in the issue, and open the pull request when it is ready. |
+
+The second lane has no approval step on purpose. Making the one person willing to do the work wait
+for a verdict is how that person stops coming back. The gates are all on the pull request: CI,
+review, and a live verification a maintainer can rerun.
+
+### Does it need an issue first?
+
+**A change to product behavior does** — not as a gate, since no check enforces it, but because the
+issue is where the design gets read. Our planning documents are not public, so a pull request that
+arrives with no issue arrives with no context, and the reviewer's first question is the one you
+could have answered in a paragraph.
+
+**These do not**: documentation, build and CI configuration, scripts, and test-only changes — the
+same list that passes the end-to-end admission gate without a case. Send those as a pull request
+directly.
+
+### Linking a pull request to its issue
+
+Write **`Refs #123`**, not `Fixes #123`.
+
+`Fixes` closes the issue the moment the pull request merges, and one issue is regularly covered by
+more than one pull request, sometimes by more than one person. The first merge would then close work
+still in flight and take everyone else's remaining scope with it. Closing is a decision someone
+makes once the work is actually done.
+
+### Sign your commits (DCO)
+
+**Every commit in an external pull request carries a `Signed-off-by:` line.** A check verifies it,
+and it is required to merge.
+
+Signing off is a statement about *origin*, not authorship: you certify that you wrote the patch, or
+otherwise have the right to submit it under this project's license. The full text is the
+[Developer Certificate of Origin](https://developercertificate.org/) — one paragraph, worth the
+minute it takes to read. It is not a copyright assignment and it does not ask you to sign anything.
+
+Git writes the line for you:
+
+```sh
+git commit -s -m "your message"
+```
+
+Forgot it? Nothing is lost. Rewrite and force-push to your own fork — harmless, because it is your
+branch:
+
+```sh
+git commit --amend -s               # the last commit only
+git rebase --signoff <base>         # every commit on your branch, e.g. --signoff main
+git push --force-with-lease
+```
+
+The name and email come from your `user.name` and `user.email`, and should be an identity you can
+be reached at — that is what the certificate is for.
+
+### Two constraints nothing will catch for you
+
+Most conventions here are enforced by something that turns red. These two are not, and both cost a
+round of review when they are missed:
+
+- **Everything lives under `io.tapstate`** — package names and the Maven `groupId` alike. A new
+  module inherits that root rather than inventing its own.
+- **A user-facing error carries a code; a bug crashes.** An error a user can act on — bad
+  configuration, a rejected specification, a connector that will not start — is raised through the
+  error-code system: a typed exception, an enum constant for the code, named parameters, and
+  catalog text (English mandatory). Never a hand-written code string, and never a bare
+  `RuntimeException` as something a user is meant to read. A programmer error is the opposite — a
+  null that should not be null, an invariant that does not hold — so throw it bare and let it crash
+  with a stack trace. Laundering one of those into an error code hides a defect behind a message
+  that reads like a decision.
+
+### Code of Conduct
+
+Participation is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). A security vulnerability has
+its own private channel — see [SECURITY.md](SECURITY.md) — and never a public issue.
+
 ## End-to-end cases
 
 **A change to product source is admitted only with an end-to-end case alongside it.**
@@ -159,5 +242,7 @@ it.** You are never asked to author directly in the documentation repository.
 
 ## Reporting issues
 
-Open a GitHub issue with a clear description and, where relevant, a minimal
-reproduction (for the CLI, the `.tap.yml` input and the exact command).
+Use the **bug or idea** template — the first lane in
+[External contributions](#external-contributions). Include the version and, where relevant, a
+minimal reproduction (for the CLI, the `.tap.yml` input and the exact command). For a security
+vulnerability, do not open an issue at all: see [SECURITY.md](SECURITY.md).
