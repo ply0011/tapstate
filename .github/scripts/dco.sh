@@ -34,13 +34,21 @@ fi
 range="${DCO_RANGE:-origin/${BASE_REF:-main}..HEAD}"
 signoff='^[[:space:]]*Signed-off-by:[[:space:]]+.+[[:space:]]+<[^<>[:space:]]+@[^<>[:space:]]+>[[:space:]]*$'
 
+# Ask for the range explicitly rather than piping rev-list into the loop. A range that does not
+# resolve makes rev-list fail and print nothing, and a loop over nothing reports every commit signed
+# — a required check that goes green precisely when it could not look at anything.
+if ! commits="$(git rev-list --no-merges "$range" 2>&1)"; then
+  echo "::error::cannot list the commits in ${range}, so nothing was checked: ${commits}"
+  exit 1
+fi
+
 unsigned=()
 while read -r sha; do
   [ -n "$sha" ] || continue
   if ! git log -1 --format='%B' "$sha" | grep -qE "$signoff"; then
     unsigned+=("$(git log -1 --format='%h %s' "$sha")")
   fi
-done < <(git rev-list --no-merges "$range")
+done <<< "$commits"
 
 if [ "${#unsigned[@]}" -eq 0 ]; then
   echo "clean: every commit is signed off."

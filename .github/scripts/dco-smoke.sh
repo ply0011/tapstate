@@ -109,5 +109,20 @@ git commit -q --amend -m "$(git log -1 --format=%s)
 Signed-off-by: Someone Else <else@example.invalid>"
 expect "signing off a patch received from another person is allowed" true 0 "clean:"
 
+# The failure mode a green cannot be told from: rev-list fails, prints nothing, and a loop over
+# nothing finds every commit signed. Worth its own case because it is the one shape where the gate
+# reports success for having looked at zero commits.
+fresh_repo
+commit "signed one" -s
+out="$(PR_IS_FORK=true DCO_RANGE="no-such-base..HEAD" bash "$gate" 2>&1)"
+code=$?
+if [ "$code" = 1 ] && printf '%s' "$out" | grep -qF "nothing was checked"; then
+  printf '  ok    %s\n' "an unresolvable range is refused, not reported clean"
+  passed=$((passed + 1))
+else
+  printf '  FAIL  %s\n        got exit %s: %s\n' "an unresolvable range is refused, not reported clean" "$code" "$out"
+  failed=$((failed + 1))
+fi
+
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" = 0 ]
