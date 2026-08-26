@@ -582,7 +582,7 @@ done; [ "$i" -lt 60 ] || false
 # and removing that shipment shrinks the array back, in the same document
 docker compose exec postgres psql -U postgres -d appdb -c "DELETE FROM shipments WHERE id=7;"
 i=0; until docker compose exec -T mongo mongosh --quiet "$uri" --eval 'quit((db.order_state.findOne({id:1})?.shipments?.length ?? 0) <= 2 ? 0 : 1)'; do
-  i=$((i+1)); [ "$i" -lt 60 ] || { echo "still there after 60s. Look at: docker compose logs --tail 50 server"; break; }
+  i=$((i+1)); [ "$i" -lt 60 ] || { echo "still there after 60s; order 1 holds $(docker compose exec -T mongo mongosh --quiet "$uri" --eval 'print(db.order_state.findOne({id:1})?.shipments?.length ?? 0)') shipments. Look at: docker compose logs --tail 50 server"; break; }
   sleep 1
 done; [ "$i" -lt 60 ] || false
 ```
@@ -640,10 +640,17 @@ the server and databases are hosted changes.
      --server-id=1 --log-bin=mysql-bin --binlog-format=ROW --gtid-mode=ON --enforce-gtid-consistency=ON
    until docker exec tapstate-mysql mysqladmin ping -uroot -psecret --silent 2>/dev/null; do sleep 2; done
    docker exec -i tapstate-mysql mysql -uroot -psecret appdb < deploy/quickstart/mysql-init/01-orders.sql
+
+   docker run -d --name tapstate-postgres -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=appdb \
+     -p 5432:5432 postgres:16 -c wal_level=logical
+   until docker exec tapstate-postgres pg_isready -U postgres >/dev/null 2>&1; do sleep 2; done
+   docker exec -i tapstate-postgres psql -U postgres -d appdb < deploy/quickstart/postgres-init/01-shipments.sql
    ```
 
-   The last line seeds MySQL with the **same** `orders` data the compose stack uses —
-   one sample, not two that drift.
+   The seeding lines use the **same** files the compose stack does — one sample, not two
+   that drift. Two settings are not optional: `wal_level=logical` cannot be added after the
+   fact, and the seed file's `REPLICA IDENTITY FULL` is what lets a deleted shipment leave
+   the array it was in (see the note in [step 5](#5-author-the-resources)).
 
 3. **Start the server** on the host with JDK 21, pointing it at your Mongo:
 
@@ -674,15 +681,19 @@ the server and databases are hosted changes.
 5. **Resources.** Use the same three resources as [step 5](#5-author-the-resources),
    with one change: the server now runs on the host, not in the compose network, so
    the connectors address the databases by their host ports instead of the compose
-   service names — `config: { host: 127.0.0.1, port: 3306, … }` in `orders_db`, and
-   `uri: "mongodb://127.0.0.1:27017/views"` in `views`.
+   service names — `config: { host: 127.0.0.1, port: 3306, … }` in `orders_db` and
+   `config: { host: 127.0.0.1, port: 5432, … }` in `fulfillment_db`. Both of them, not one:
+   a source left pointing at a compose service name resolves to nothing from the host, and
+   the pipeline names every source it reads. The pipeline itself needs no change — the
+   managed store it materializes into is addressed by the server, through the
+   `--tapstate.store.mongo.uri` you passed in step 3, not by a resource here.
 
 6. **Online verbs, observe, CDC** are identical to steps 6–8, except you reach the
    databases with your own client (`docker exec tapstate-mysql …` /
    `docker exec tapstate-mongo mongosh "mongodb://127.0.0.1:27017/views" …`)
    rather than `docker compose exec`.
 
-Tear down with `docker rm -f tapstate-mysql tapstate-mongo` and `Ctrl-C` in the
+Tear down with `docker rm -f tapstate-mysql tapstate-postgres tapstate-mongo` and `Ctrl-C` in the
 server's terminal.
 
 ## Limitations

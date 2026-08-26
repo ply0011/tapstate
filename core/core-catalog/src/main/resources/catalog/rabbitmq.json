@@ -103,13 +103,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/rabbitmq-connector/src/main/resources/spec_rabbitmq.json",
     "specContentHash": "1188793de45ececa",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "stream": "declared"
+      "stream": "overlay"
     }
   }
 }

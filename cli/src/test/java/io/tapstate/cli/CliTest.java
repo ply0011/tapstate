@@ -800,7 +800,7 @@ class CliTest {
     void versionFlagPrintsTheVersion() {
         Run r = run("--version");
         assertThat(r.code()).isZero();
-        assertThat(r.out()).contains("tapstate 0.2.1");
+        assertThat(r.out()).contains("tapstate 0.3.0");
     }
 
     @Test

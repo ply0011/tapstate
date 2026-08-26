@@ -1,8 +1,5 @@
 package io.tapstate.tools.catalog.assembler;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -10,9 +7,10 @@ import java.util.Set;
 import java.util.function.Function;
 
 import io.tapstate.core.catalog.CatalogEntryAssembler;
+import io.tapstate.core.catalog.ConnectorOverlay;
 import io.tapstate.core.catalog.CatalogJson;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
-import io.tapstate.core.catalog.ConnectorGroup;
+import io.tapstate.core.catalog.DerivedCapability;
 import io.tapstate.core.catalog.NormalizedSpec;
 import io.tapstate.core.catalog.SpecNormalizer;
 import io.tapstate.core.model.SourceMode;
@@ -21,26 +19,48 @@ import io.tapstate.core.model.SourceMode;
  * Drives the catalog assembly: for each walked connector it parses the spec (reusing core-catalog's
  * JSON reader), normalizes it, merges the derived capability bitmap and any declared modes via the
  * core merge rules, and stamps provenance. Alongside the entries it builds the ingest report,
- * surfacing every degradation — unclassified connectors, undeclared message-queue suspects, sinks
- * defaulted with no DML signal, unrecognized type tokens and unresolved label refs — so nothing is
- * lost silently. Pure: file reads are the caller's, supplied as {@code specContent}.
+ * surfacing every degradation — unclassified connectors, modes nobody declared and only derivation
+ * stands behind, sinks defaulted with no DML signal, unrecognized type tokens and unresolved label
+ * refs — so nothing is lost silently. Pure: file reads are the caller's, supplied as {@code specContent}.
  */
 final class CatalogAssembler {
 
-    private static final String STREAM_READ = "stream_read_function";
-    private static final String WRITE_RECORD = "write_record_function";
+    /**
+     * The only two modes capabilities can speak to, and which capability each needs. Deliberately just
+     * these two: stream, api and file are underivable by construction, so checking them would flag
+     * every connector we declare — which is all eighteen of them — and a report that always lists the
+     * same names is one nobody reads. What this catches is a mode we claimed that the connector's own
+     * capabilities contradict, which no other gate sees: an entry that exists is trusted, so a wrong
+     * cdc here is admitted by validation rather than refused.
+     *
+     * <p>Both halves are read off the enums that own them rather than spelled again here. Spelled
+     * again, a rename is silent in either direction: a moved capability id leaves the lookup
+     * permanently false, so every declared snapshot reports as underivable, and a moved mode code
+     * leaves it null, so the check stops flagging anything at all. Both are green builds under a
+     * heading that quietly stopped meaning what it says.
+     */
+    private static final Map<String, String> DERIVABLE_FROM = Map.of(
+            SourceMode.SNAPSHOT.yaml(), DerivedCapability.BATCH_READ.capabilityId(),
+            SourceMode.CDC.yaml(), DerivedCapability.STREAM_READ.capabilityId());
+
+    private static final String WRITE_RECORD = DerivedCapability.WRITE_RECORD.capabilityId();
 
     private CatalogAssembler() {
     }
 
-    static Assembly assemble(WalkResult walk, String connectorRepoSha,
+    static Assembly assemble(WalkResult walk, String specSha, String capabilitySha,
                              Map<String, Set<String>> bitmap,
+                             ConnectorOverlay overlay,
                              Function<String, String> specContent) {
         List<ConnectorCatalogEntry> entries = new ArrayList<>();
         List<String> ingestedIds = new ArrayList<>();
         List<String> unclassified = new ArrayList<>();
         List<String> notDerived = new ArrayList<>();
-        List<String> mqSuspects = new ArrayList<>();
+        List<String> notBuilt = new ArrayList<>();
+        List<String> unverifiedModes = new ArrayList<>();
+        List<String> overlayAlone = new ArrayList<>();
+        List<String> overlayDivergences = new ArrayList<>();
+        List<String> overlayNotDerivable = new ArrayList<>();
         List<String> sinkDefaultedNoSignal = new ArrayList<>();
         List<String> unknownTypeFields = new ArrayList<>();
         List<String> unresolvedLabelRefs = new ArrayList<>();
@@ -52,10 +72,10 @@ final class CatalogAssembler {
             Map<String, Object> tree = asMap(CatalogJson.parse(content));
             NormalizedSpec spec = SpecNormalizer.normalize(tree);
             Set<String> caps = bitmap.getOrDefault(source.id(), Set.of());
-            String hash = sha256(content);
+            String hash = SpecHash.of(content);
 
             ConnectorCatalogEntry entry =
-                    CatalogEntryAssembler.assemble(spec, caps, connectorRepoSha, source.specPath(), hash);
+                    CatalogEntryAssembler.assemble(spec, caps, overlay, source.specPath(), hash);
             entries.add(entry);
             ingestedIds.add(entry.id());
 
@@ -64,13 +84,37 @@ final class CatalogAssembler {
             // distinct gap from a connector that was probed (or is JavaScript) and still resolved no
             // mode, so keep the two apart rather than lumping a build gap into unclassified.
             boolean notDerivedThisRun = source.connectorClassFqn() != null && !bitmap.containsKey(source.id());
-            if (notDerivedThisRun) {
+            if (notDerivedThisRun && UnbuildableConnectors.contains(source.id())) {
+                // Named, so its absence is a decision with a reason rather than a connector that
+                // quietly stopped being built. Both look identical in the catalog itself.
+                notBuilt.add(entry.id() + ": " + UnbuildableConnectors.reasonFor(source.id()));
+            } else if (notDerivedThisRun) {
                 notDerived.add(entry.id());
             } else if (entry.modes().isEmpty()) {
                 unclassified.add(entry.id());
             }
-            if (isMqSuspect(entry, spec, caps)) {
-                mqSuspects.add(entry.id());
+            if (entry.modesAreUnverified()) {
+                unverifiedModes.add(entry.id());
+            }
+            List<String> ourModes = overlay.modesFor(source.id());
+            if (ourModes != null) {
+                if (spec.declaredModes() == null) {
+                    // Upstream says nothing about modes, so this one lives in exactly one place: our
+                    // overlay. The entry that results is indistinguishable from one both sides agree
+                    // on, and the divergence check below cannot speak when only one side does.
+                    overlayAlone.add(entry.id() + ": upstream declares nothing, ours " + ourModes);
+                } else if (!spec.declaredModes().equals(ourModes)) {
+                    // Only when they actually differ. Reporting agreement too would print every
+                    // connector we declare, on every run, and bury the one line that matters.
+                    overlayDivergences.add(entry.id()
+                            + ": upstream " + spec.declaredModes() + ", ours " + ourModes);
+                }
+                for (String mode : ourModes) {
+                    String needed = DERIVABLE_FROM.get(mode);
+                    if (needed != null && !caps.contains(needed)) {
+                        overlayNotDerivable.add(entry.id() + ": " + mode + " needs " + needed);
+                    }
+                }
             }
             if (sinkDefaultedNoSignal(spec, caps)) {
                 sinkDefaultedNoSignal.add(entry.id());
@@ -80,18 +124,10 @@ final class CatalogAssembler {
             findings.unresolvedLabelRefs().forEach(k -> unresolvedLabelRefs.add(entry.id() + ":" + k));
         }
 
-        IngestReport report = new IngestReport(connectorRepoSha, ingestedIds, unclassified, notDerived,
-                mqSuspects, sinkDefaultedNoSignal, unknownTypeFields, unresolvedLabelRefs, walk.exemptions());
+        IngestReport report = new IngestReport(specSha, capabilitySha, ingestedIds, unclassified, notDerived, notBuilt,
+                unverifiedModes, overlayAlone, overlayDivergences, overlayNotDerivable, sinkDefaultedNoSignal,
+                unknownTypeFields, unresolvedLabelRefs, walk.exemptions());
         return new Assembly(entries, report);
-    }
-
-    /** A stream-reading connector that the merge routed to the MQ group but that declared no modes —
-     *  so it derived cdc/snapshot, which is wrong for a stream source and must be reviewed. */
-    private static boolean isMqSuspect(ConnectorCatalogEntry entry, NormalizedSpec spec, Set<String> caps) {
-        return entry.group() == ConnectorGroup.MQ
-                && caps.contains(STREAM_READ)
-                && spec.declaredModes() == null
-                && !entry.modes().contains(SourceMode.STREAM);
     }
 
     /** Write-capable but the spec carries no DML policy, so the write semantics were a defaulted
@@ -105,20 +141,5 @@ final class CatalogAssembler {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> asMap(Object value) {
         return value instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
-    }
-
-    /** First 16 hex chars of the spec's SHA-256 — enough to detect any upstream content change. */
-    private static String sha256(String content) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(content.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder();
-            for (int i = 0; i < 8; i++) {
-                hex.append(String.format("%02x", digest[i]));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
     }
 }

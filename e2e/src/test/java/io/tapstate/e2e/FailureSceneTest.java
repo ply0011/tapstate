@@ -60,6 +60,25 @@ class FailureSceneTest {
                 .doesNotContain(PASSWORD);
     }
 
+    /**
+     * The half that "collect no address" does not cover: text this class did not compose. A driver's
+     * exception names the endpoint it could not reach, and a document read back can hold a uri in a
+     * column - both are somebody else's text, appended verbatim before this.
+     */
+    @Test
+    void takesAddressesOutOfTextItDidNotCompose(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("scene.txt");
+
+        FailureScene.write(file, envelope(), new LeakyBinding(), "order_pipeline");
+
+        String scene = Files.readString(file);
+        assertThat(scene)
+                .as("an address in an exception message, and one inside a fetched document")
+                .doesNotContain("://")
+                .doesNotContain(PASSWORD);
+        assertThat(scene).contains("<address elided>");
+    }
+
     @Test
     void survivesReadingsThatCannotBeTakenAtAll(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("scene.txt");
@@ -172,6 +191,21 @@ class FailureSceneTest {
 
         @Override
         public void redeliver(TableAlias table) {
+        }
+    }
+
+    /** Answers with a uri in a document and throws one in a message: both paths, one binding. */
+    private static final class LeakyBinding extends SceneBinding {
+
+        @Override
+        public Optional<Map<String, Object>> fetch(TableAlias table, Map<String, Object> where) {
+            return Optional.of(Map.of("id", 1, "callback", "mongodb://admin:" + PASSWORD + "@host/db"));
+        }
+
+        @Override
+        public long count(TableAlias table) {
+            throw new IllegalStateException(
+                    "could not reach mongodb://admin:" + PASSWORD + "@host/db");
         }
     }
 

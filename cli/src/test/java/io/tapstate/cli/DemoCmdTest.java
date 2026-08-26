@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * {@code demo} exists to save a stranger from transcribing three files before they can see anything.
@@ -110,6 +111,82 @@ class DemoCmdTest {
         assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
         assertThat(dir.resolve("source/orders_db.tap.yml"))
                 .as("the other two must not have been written before the refusal")
+                .doesNotExist();
+    }
+
+    /**
+     * The all-or-none promise, at the one place it was only an intention. The existence check passes -
+     * nothing is there yet - and then a plain file sitting where a kind directory belongs fails the
+     * write. Before this, two of the three had already been written by then, and the reader got an
+     * uncoded stack trace on top of a half-made workspace.
+     */
+    @Test
+    void leavesNothingBehindWhenADirectoryCannotBeMade(@TempDir Path dir) throws IOException {
+        Files.writeString(dir.resolve("pipeline"), "not a directory\n");
+
+        Run r = run("demo", "-w", dir.toString());
+
+        assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
+        assertThat(r.all()).contains("cli.workspace-not-writable");
+        assertThat(dir.resolve("source/orders_db.tap.yml"))
+                .as("the sources must not survive a failure that came after them")
+                .doesNotExist();
+        assertThat(dir.resolve("source"))
+                .as("an empty kind directory is acceptable; a file in it is not")
+                .satisfiesAnyOf(
+                        d -> assertThat(d).doesNotExist(),
+                        d -> assertThat(d.toFile().list()).isEmpty());
+    }
+
+    /**
+     * Under {@code --force} every target that is already there is read before any of them is written,
+     * so that the rollback below has something to put back. A target that cannot be read at all - a
+     * directory sitting on the path - is therefore refused while the workspace is still untouched,
+     * which is a better outcome than writing two files and taking them back again.
+     */
+    @Test
+    void writesNothingWhenATargetCannotEvenBeRead(@TempDir Path dir) throws IOException {
+        Files.createDirectories(dir.resolve("pipeline/order_pipeline.tap.yml"));
+
+        Run r = run("demo", "-w", dir.toString(), "--force");
+
+        assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
+        assertThat(r.all()).contains("cli.workspace-not-writable");
+        assertThat(dir.resolve("source/orders_db.tap.yml"))
+                .as("the refusal came before the first byte, so this was never written")
+                .doesNotExist();
+        assertThat(dir.resolve("source/fulfillment_db.tap.yml")).doesNotExist();
+    }
+
+    /**
+     * The rollback itself, with both of its halves in one run. The last target is readable and not
+     * writable, so the first two land and the third cannot: the file this invocation created is taken
+     * back, and the file it overwrote is put back with the bytes it held. That second half is the one
+     * that matters - deleting it would make a command whose writes did not survive still destroy
+     * content on that path, which is the one outcome {@code --force} may not have.
+     */
+    @Test
+    void putsBackWhatItOverwroteAndTakesBackWhatItCreated(@TempDir Path dir) throws IOException {
+        Files.createDirectories(dir.resolve("source"));
+        Files.createDirectories(dir.resolve("pipeline"));
+        Path theirs = dir.resolve("source/orders_db.tap.yml");
+        String mine = "# mine, edited\nkind: source\nid: orders_db\n";
+        Files.writeString(theirs, mine);
+        Path readOnly = dir.resolve("pipeline/order_pipeline.tap.yml");
+        Files.writeString(readOnly, "kind: pipeline\n");
+        readOnly.toFile().setWritable(false, false);
+        // Root can write a file with no write bit, and then there is no failure to roll back from.
+        assumeTrue(!Files.isWritable(readOnly), "needs a filesystem that enforces the write bit");
+
+        Run r = run("demo", "-w", dir.toString(), "--force");
+
+        assertThat(r.code()).isEqualTo(DemoCmd.EXIT_DIAGNOSTIC);
+        assertThat(r.all()).contains("cli.workspace-not-writable");
+        assertThat(theirs)
+                .as("it was theirs before the run, so the run may not end with it gone or replaced")
+                .hasContent(mine);
+        assertThat(dir.resolve("source/fulfillment_db.tap.yml"))
+                .as("this one the invocation did create, so it goes")
                 .doesNotExist();
     }
 

@@ -45,6 +45,7 @@ cli.auth-session-rejected
 cli.auth-session-unreachable
 cli.auth-usage
 cli.connect-failed
+cli.connector-not-official
 cli.context-already-exists
 cli.context-config-invalid
 cli.context-config-permissions
@@ -69,6 +70,7 @@ cli.resource-not-found
 cli.unknown-connector
 cli.verb-not-implemented
 cli.watch-needs-a-terminal
+cli.workspace-not-writable
 connector.ambiguous-connector-class
 connector.ambiguous-registration
 connector.api-level-incompatible

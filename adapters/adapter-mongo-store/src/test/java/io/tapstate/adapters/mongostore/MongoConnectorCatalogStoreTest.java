@@ -58,7 +58,6 @@ class MongoConnectorCatalogStoreTest {
                 }
               ],
               "provenance": {
-                "connectorRepoSha": "20371556",
                 "specPath": "mysql-connector/src/main/resources/mysql-spec.json",
                 "specContentHash": "abc123",
                 "pdkApiVersion": "1.3.5",

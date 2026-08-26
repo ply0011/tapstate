@@ -67,13 +67,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/activemq-connector/src/main/resources/spec_activemq.json",
     "specContentHash": "7650bcc9b5006aa2",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "stream": "declared"
+      "stream": "overlay"
     }
   }
 }

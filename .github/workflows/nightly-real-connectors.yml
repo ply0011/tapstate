@@ -1,8 +1,9 @@
 # Real-connector witness lane.
 #
 # Runs the real-connector end-to-end witnesses across both fidelity tiers: the product embedded in the
-# test JVM, and the shipped boot jar in its own process. They drive two real Tapdata connectors (MySQL,
-# MongoDB), so they need a Docker daemon for the databases and the connectors' runtime jars. The default
+# test JVM, and the shipped boot jar in its own process. They drive real Tapdata connectors, so they
+# need a Docker daemon for the databases and the connectors' runtime jars. Which connectors is the
+# build script's default list rather than anything named here, so the two cannot drift. The default
 # CI build skips them (no jars); this lane is where they are meant to run.
 #
 # The witnesses come in two shapes and this lane runs both, because neither shape can stand in for the
@@ -50,6 +51,16 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: A JDK 17 for the connectors, whose pinned Lombok predates JDK 21
+        # Their build dies mid-reactor under a newer JDK, on a javac internal that names nothing about
+        # Lombok. Installed first so its JAVA_HOME can be captured while it is the current one; the
+        # product's own JDK is set up after this and takes JAVA_HOME back.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: echo "TAPSTATE_CONNECTOR_JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -59,7 +70,10 @@ jobs:
         # Shares the Maven cache the product build restores above. On a cold cache this step is minutes
         # of downloads rather than of compiling - the connectors pull a large dependency graph, and the
         # MySQL one builds a vendored Debezium.
-        run: e2e/build-real-connectors.sh "${{ runner.temp }}/connectors"
+        #
+        # No --modules: this lane wants the script's default list, which is the set its witnesses drive.
+        # The catalog refresh passes its own list, derived from the probe manifest.
+        run: scripts/build-real-connectors.sh "${{ runner.temp }}/connectors"
       - name: Real-connector witnesses on both tiers
         # Docker 29 rejects the API version testcontainers negotiates by default, so pin it. The surefire
         # selector matches nothing, so only the failsafe witnesses run: the example sweep, and the bespoke

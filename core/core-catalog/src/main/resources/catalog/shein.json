@@ -40,13 +40,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/shein-connector/src/main/resources/spec.json",
     "specContentHash": "cc04f4e6f3f420a6",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "api": "declared"
+      "api": "overlay"
     }
   }
 }

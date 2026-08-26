@@ -91,13 +91,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/rocketmq-connector/src/main/resources/spec_rocketmq.json",
     "specContentHash": "f92cca761a2a11ee",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "stream": "declared"
+      "stream": "overlay"
     }
   }
 }

@@ -1,8 +1,6 @@
 package io.tapstate.cli;
 
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
-import io.tapstate.core.catalog.ConnectorGroup;
-import io.tapstate.core.catalog.ModeSource;
 import io.tapstate.core.model.SourceMode;
 
 /**
@@ -18,15 +16,9 @@ final class CapabilityHints {
     private CapabilityHints() {
     }
 
-    /** Whether the entry's mode list is a hard constraint (else it is advisory, defer to server). */
-    static boolean modesAreTrustworthy(ConnectorCatalogEntry entry) {
-        return entry.group() == ConnectorGroup.DATABASE
-                || entry.provenance().modeSource().containsValue(ModeSource.DECLARED);
-    }
-
     /** Whether {@code mode} is acceptable for {@code entry} offline (mirrors the capability layer). */
     static boolean isModeAllowed(ConnectorCatalogEntry entry, SourceMode mode) {
-        if (entry.modes().isEmpty() || !modesAreTrustworthy(entry)) {
+        if (entry.modes().isEmpty() || !entry.modesAreTrustworthy()) {
             return true; // no trustworthy offline signal — defer to the server
         }
         return entry.modes().contains(mode);

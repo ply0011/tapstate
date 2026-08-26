@@ -264,14 +264,13 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/mongodb-lower-connector/src/main/resources/mongo3-spec.json",
     "specContentHash": "47319572642a5574",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "cdc": "derived",
-      "snapshot": "derived"
+      "cdc": "overlay",
+      "snapshot": "overlay"
     }
   }
 }

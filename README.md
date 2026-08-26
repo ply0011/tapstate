@@ -1,392 +1,128 @@
-# tapstate — preview
+# tapstate
 
 **Capture. Transform. Serve. One deployable.**
 
-tapstate is an open-source unified operational data engine. It captures and unifies
-database changes, then serves live operational state to applications and AI agents.
-
-Instead of operating separate CDC, event-streaming, stream-processing, and serving
-products, tapstate is designed to provide one data path and one operational surface:
+Tapstate is an open-source **unified operational data engine** that turns database
+changes into live, application-ready state.
 
 ```text
-production systems -> log-based CDC -> incremental transform -> live operational state
-                                                            -> pull or push consumers
+Production databases → Capture → Transform → Live state → Apps / APIs / AI agents
 ```
 
-tapstate is built for platform and data infrastructure teams that need current
-business state without turning freshness into an integration project.
+Instead of assembling CDC, streaming, stream processing, and serving infrastructure,
+Tapstate brings the source-to-state path under one product boundary.
 
-> From the team behind TapData, hardened through years of production CDC and real-time data movement work.
+Kafka moves events. Warehouses analyze history. Tapstate turns database truth into
+live operational state.
 
-## Why tapstate
+## Why Tapstate
 
-Modern systems increasingly depend on fresh operational data:
-
-- Applications need current account, order, inventory, entitlement, and customer state.
-- AI agents need up-to-date business context, not yesterday's warehouse snapshot.
-- Data teams need lower-latency pipelines without adding more infrastructure to operate.
-- Platform teams need correctness, recovery, and observability across the whole path.
-
-The common answer is a hand-assembled stack:
+A typical operational data path:
 
 ```text
-Debezium + Kafka / Redpanda + Flink / custom jobs + Redis / MongoDB / Elasticsearch
+Database → CDC → Kafka → Flink / jobs → serving database → application
 ```
 
-That stack can work, but it creates multiple failure surfaces, upgrade cycles, schemas, offsets, dashboards, and on-call paths.
+With Tapstate:
 
-tapstate brings that source-to-serve path under one product boundary. The current
-preview implements a deliberately narrow slice of this direction; see
-[Project status](#project-status) before evaluating it for a workload.
+```text
+Database → Tapstate → live operational state → application
+```
 
-## Product direction
+One data path. One operational surface.
 
-Capture, transform, and serve define tapstate's product boundary. They do not imply
-that every capability below is available in the current preview.
+- **Capture** database changes using log-based CDC.
+- **Transform** and combine data incrementally as it changes.
+- **Serve** application-ready state to applications, APIs, automation, and AI agents.
 
-### Capture
+For how this compares with a streaming stack you assemble yourself, see
+[Tapstate vs. a streaming stack](https://tapstate.dev/docs/overview/vs-streaming-stack).
 
-tapstate reads changes from production databases using log-based CDC.
+## Try it
 
-- Initial load plus continuous sync
-- Change metadata and ordering required to maintain downstream state
-- Minimal source impact
-
-### Transform
-
-tapstate reshapes changes incrementally before they are served.
-
-- Filter and route change streams
-- Enrich and denormalize records
-- Combine related operational data into application-ready views
-- Maintain those views as source records change
-- Avoid running a separate stream-processing cluster
-
-### Serve
-
-Serve covers both pull and push consumption of maintained operational state.
-
-- Materialize current state into a serving store
-- Query current state through standard drivers and, in future releases, data APIs
-- Subscribe to state changes through future webhook and messaging adapters
-- Reuse the same state across applications, automation, and AI agents
-
-The public preview currently demonstrates materialization to MongoDB. A stable
-tapstate State Data API and push/subscription delivery are roadmap capabilities,
-not current guarantees.
-
-## Try the current preview
-
-Run the preview locally as a Docker Compose stack. The quickstart brings up MySQL,
-PostgreSQL, the tapstate server and a MongoDB-backed preview store, then assembles an
-order in one engine and its shipments in the other into a single object that stays
-fresh as either side changes -- something no SQL view or join can produce, because
-neither database can see the other's table. One command does the whole flow in a
-`tapstate-demo` directory it creates:
+Run the Alpha locally:
 
 ```sh
 curl -sSL https://install.tapstate.dev | sh
 ```
 
-Prefer to read it first? Download, read, then run — same script, and it works in
-the directory you saved it in:
-
-```sh
-mkdir tapstate-demo && cd tapstate-demo
-curl -sSL https://install.tapstate.dev -o quickstart.sh
-sh quickstart.sh
-```
-
-Everything it installs stays inside that one directory; tearing down is
-`docker compose down -v` in it, and `rm -rf` of the directory removes the rest.
-See [docs/quickstart-online.md](docs/quickstart-online.md) for the full walkthrough
-and the manual `docker compose` steps behind it.
-
-The recording of this demo, and what each shot is evidence for, is written down shot
-by shot in [docs/demo.md](docs/demo.md) — including what the recording does *not*
-prove, and the fact that its images were pulled beforehand so your first run includes
-a download it does not.
-
-Already have the stack up and just want the workspace back? `tapstate demo` writes
-the same three resources the quickstart generates, and `tapstate demo --print-steps`
-prints the walkthrough they belong to:
-
-```sh
-tapstate demo -w work            # write the demo workspace
-tapstate demo --print-steps      # the walkthrough, without writing anything
-```
-
-> **Preview.** The runtime is single-node and not production-ready. Runtime state is
-> in memory, and a restart replays from the source rather than resuming a durable
-> offset. High availability, durable resume, and exactly-once guarantees are not
-> available. `quickstart.sh` downloads a released CLI and server image. See
-> [Limitations](docs/quickstart-online.md#limitations).
->
-> **Recommended platform.** Docker with Compose v2, plus the system versions each
-> release names in its notes: a macOS version, and a glibc version on Linux. Both are
-> measured from the binaries themselves and follow the machines that built them, so an
-> older system may refuse to launch them — `sw_vers -productVersion` and `ldd --version`
-> say what a machine has. Nothing stops you from installing anyway: the installer names
-> what the build expects and carries on, and how it goes from there is yours.
-
-To install just the CLI — the offline authoring loop, one native binary, no Docker,
-no JDK:
-
-```bash
-curl -sSL https://install.tapstate.dev/cli | sh
-```
-
-It installs a preview build to `~/.tapstate/bin`, verifies the download against its
-published checksum, and never asks for sudo or edits your shell configuration. Prefer
-to read before you run — or to skip the pipe entirely? Both are supported:
-
-```bash
-# Audit the script first, then run the copy you read:
-curl -sSL https://install.tapstate.dev/cli -o install.sh && less install.sh && sh install.sh
-
-# Or skip the installer: download a release asset and check it yourself.
-# Assets are tapstate-<version>-<os>-<arch>.tar.gz, each next to its .sha256
-# (and all of them listed in the release's checksums.txt):
-v=0.2.1 p=darwin-arm64   # your version, and your platform: darwin|linux, arm64|x64
-curl -sSLO "https://github.com/tapstate/tapstate/releases/download/v$v/tapstate-$v-$p.tar.gz"
-curl -sSLO "https://github.com/tapstate/tapstate/releases/download/v$v/tapstate-$v-$p.tar.gz.sha256"
-shasum -a 256 -c "tapstate-$v-$p.tar.gz.sha256"   # sha256sum -c on Linux
-tar -xzf "tapstate-$v-$p.tar.gz"
-```
-
-To uninstall: `rm -rf ~/.tapstate`, and drop the `PATH` line from your shell
-configuration if you added one.
-
-The checked-in walkthrough uses the current `tapstate/v1` DSL and verifies the
-materialized state directly in MongoDB. See
-[the online quickstart](docs/quickstart-online.md) for the complete resources,
-commands, and CDC verification loop.
-
-## Target use cases
-
-- Real-time customer and account 360
-- Operational data APIs
-- Core system offloading
-- Live master data
-- Real-time analytics feeds
-- Fresh context for AI agents
-- Inventory, order, entitlement, and risk state
-
-## tapstate vs. the assembled stack
-
-| Need | Traditional stack | tapstate direction |
-| --- | --- | --- |
-| Capture database changes | Debezium or custom CDC | Built-in log-based CDC |
-| Move events | Kafka / Redpanda | Integrated data path |
-| Transform streams | Flink / jobs / glue code | In-flight transforms |
-| Serve current state | Cache / search / document DB | Maintained state with pull and push surfaces |
-| Operate reliability | Multiple dashboards and failure modes | One operational surface |
-
-Kafka moves events. Warehouses analyze history. tapstate turns database truth into
-live operational state.
-
-## Project status
-
-tapstate is early and actively evolving. Today, the checked-in public quickstart
-demonstrates:
-
-- Offline authoring and validation of `tapstate/v1` resources
-- A single-node preview runtime
-- MySQL initial load plus CDC
-- An in-flight map transform
-- Continuous materialization to MongoDB
-- Pipeline status, preview metrics, and node-local logs
-
-The quickstart's MongoDB instance is the preview's reference backing store. It is
-part of the local deployable experience, not a claim that the runtime is one binary
-or that MongoDB is the only future deployment option.
-
-The preview does not provide high availability, durable offset resume, exactly-once
-delivery, a stable State Data API, or push/subscription delivery. It is not intended
-for production-critical paths.
-
-That instance is also not a security boundary, and this one is worth stating as a
-mechanism rather than a caveat. It runs without authentication, and the server's own
-control-plane data — users, tokens, audit records, connection configuration, applied
-artifacts — sits in it alongside whatever your pipelines write. Anyone holding a
-Tapstate token can declare an ordinary source pointing at the control-plane database
-and read it back: that is valid `tapstate/v1`, not a bypass, and no confinement on the
-query surface reaches a source the user declared. The container publishes no host
-port, so the threshold is holding a token rather than reaching the network. Treat the
-bundled store as sharing Tapstate's trust domain, and do not put data in it that the
-users of this deployment should not see. Separating the two means adding
-authentication or a second instance; the preview does neither, deliberately, because
-both would cost the property that you need no MongoDB of your own to run it.
-
-This repository is for developers, platform engineers, and data infrastructure
-teams who want to try the engine, follow development, and help shape the project.
-
-## Building and running from source
-
-The vision above is where tapstate is going; this section is the real, working
-path today. You describe the preview's implemented path — sources and pipelines
-with inline transforms and MongoDB sync materialization — as small declarative
-`.tap.yml` documents, and tapstate moves and reshapes the data. The repository
-ships an **offline authoring
-CLI** (a single native binary that creates, validates, and explores `.tap.yml`
-resources with no server, database, or network) plus an early **preview runtime**
-that executes those resources as live pipelines.
-
-### Requirements
-
-- **To run the CLI:** no runtime to install — `tapstate` is a native binary (starts in
-  ~30 ms). Each build does carry a recommended system version — a macOS version, or a
-  glibc version on Linux — that tracks the machine it was built on and can move between
-  releases, so every release names its own in its notes. Installing on an older system is
-  allowed: the installer says what the build expects and carries on; whether it launches
-  there is then up to you.
-- **To build from source:** **Oracle GraalVM for JDK 21** (includes `native-image`)
-  and **Maven 3.6+**. A plain JDK 21 is enough to build and run the test suite;
-  GraalVM is only needed for the native image.
-
-### Build
-
-From the repository root:
-
-```sh
-# Full build + unit tests (needs a JDK 21 toolchain)
-mvn verify
-
-# Native CLI binary (needs GraalVM for JDK 21 on JAVA_HOME)
-mvn -Pnative -pl cli -am -DskipTests package
-```
-
-The native binary lands at **`cli/target/tapstate`** (the connector catalog,
-grammar schema, and message text are embedded). That standalone file is enough
-for offline authoring. `tapstate mcp` additionally needs the sibling sidecar,
-so install the complete bundle when exposing the command globally:
-
-```sh
-# Build the native CLI and MCP Boot JAR, then assemble bin/ + libexec/.
-mvn -Pnative -pl cli,control/mcp-server,distribution/cli-bundle -am -DskipTests package
-tar -xzf distribution/cli-bundle/target/cli-bundle-0.2.1-native.tar.gz
-mkdir -p "$HOME/.tapstate/versions/0.2.1" "$HOME/.tapstate/bin"
-mv tapstate-cli-0.2.1/* "$HOME/.tapstate/versions/0.2.1/"
-ln -s "$HOME/.tapstate/versions/0.2.1/bin/tapstate" "$HOME/.tapstate/bin/tapstate"
-export PATH="$HOME/.tapstate/bin:$PATH"
-```
-
-The stable entry is a symlink into the versioned bundle. The launcher resolves
-that link before locating `libexec`, so an MCP host can invoke `tapstate mcp`
-without a repository-relative path. The release installer performs this layout
-and switches the stable link atomically; it never scans Maven caches or `PATH`
-for a sidecar.
-
-Verify:
-
-```console
-$ tapstate --version
-tapstate 0.2.1
-```
-
-### Quick start (offline CLI)
-
-The offline workspace is an ordinary folder, partitioned by resource kind. Create
-a source, wire it into a pipeline, and validate — all without a server:
-
-```console
-$ tapstate new -y --kind source --connector mysql --id orders_src -m cdc
-created source/orders_src.tap.yml
-
-$ tapstate new -y --kind source --connector postgres --id warehouse -m cdc
-created source/warehouse.tap.yml
-
-$ tapstate new -y --kind pipeline --id orders_sync --source orders_src --sync-to warehouse
-created pipeline/orders_sync.tap.yml
-
-$ tapstate validate
-valid: 3 resources
-```
-
-Each `new` writes a deterministic, canonical `.tap.yml`:
-
-```yaml
-version: tapstate/v1
-kind: source
-id: orders_src
-connector: mysql
-mode: cdc
-```
-
-`validate` runs three offline checks — **structure** (schema: unknown fields /
-types / enums), **reference closure** (referenced ids exist), and **capability
-matrix** (mode × connector legality) — and every diagnostic carries a code, a
-location, and a fix suggestion. Browse and document your workspace with `ls`,
-`desc <id>`, and `explain <field>`; run `tapstate` with no arguments for an
-offline REPL with Tab completion. All five offline verbs (`new` / `validate` /
-`ls` / `desc` / `explain`) accept `-o json|yaml` for machine-readable output.
-
-### Editor integration
-
-The grammar ships as a standard JSON Schema (draft 2020-12) in the tree at
-`core/core-schema/src/main/resources/schema/tapstate-v1.schema.json`. Associate
-`*.tap.yml` with it for live validation, completion, and hover docs in any editor
-backed by [yaml-language-server](https://github.com/redhat-developer/yaml-language-server):
-
-```jsonc
-// VS Code settings.json
-{
-  "yaml.schemas": {
-    "/abs/path/to/tapstate/core/core-schema/src/main/resources/schema/tapstate-v1.schema.json": "*.tap.yml"
-  }
-}
-```
-
-### Preview runtime
-
-Beyond the offline verbs, `connect` / `login` / `register` / `apply` /
-`discover-schema` / `start` / `status` / `metrics` / `logs` (and friends) drive a
-running tapstate server — see [docs/quickstart-online.md](docs/quickstart-online.md)
-for the end-to-end flow (build → start a server → run a real sync). That runtime is
-an early **preview** (single-node, in-memory); offline, without a connection, those
-verbs exit with code `3`.
-
-## Roadmap
-
-- [x] Public quickstart
-- [ ] Supported source and target matrix
-- [ ] Architecture guide
-- [ ] Local development environment
-- [ ] Benchmarks
-- [ ] Deployment examples
-- [ ] Contributor guide
-
-## Documentation
-
-- [All documentation](docs/)
-- [Quickstart](docs/quickstart-online.md)
-- [Tutorials](docs/tutorials/) - worked scenarios with sample data
-- [Nest](docs/nest/) - assembling one document out of many tables
-- Architecture: coming soon
-- Connectors: coming soon
-- Deployment: coming soon
-- FAQ: coming soon
-
-## Community
-
-- Website: https://tapstate.com
-- GitHub: https://github.com/tapstate/tapstate
-- Discussions: coming soon
-- Issues: https://github.com/tapstate/tapstate/issues
-
-## Relationship to TapData
-
-tapstate is an open-source unified operational data engine from the team behind
-TapData.
-
-TapData is a mature real-time data integration and operational data platform used
-in enterprise environments. tapstate focuses on a simpler, developer-first path:
-capture, transform, and serve live operational state in one deployable.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## License
-
-tapstate is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+The demo starts MySQL, PostgreSQL, Tapstate, and MongoDB, then maintains a live order
+object assembled from both source databases. Change the source data and watch the
+state update.
+
+→ [Follow the quickstart](https://tapstate.dev/docs/overview/quickstart-online)
+
+## What it's for
+
+Tapstate maintains fresh operational state for applications and AI:
+
+- **AI agents and copilots** — give agents fresh business context grounded in operational systems
+- **Customer and account 360** — maintain a current view across systems
+- **Order and fulfillment state** — assemble live state as orders, payments, and shipments change
+- **Inventory and entitlement** — keep availability and access state current
+- **Operational data APIs** — serve application-ready state without querying multiple systems of record
+- **Core-system offloading** — move read workloads away from transactional systems
+
+Tapstate focuses on workloads whose primary outcome is current operational state,
+rather than general-purpose event streaming or historical analytics.
+
+## Alpha preview
+
+Today you can:
+
+- Capture MySQL and PostgreSQL data with initial load + CDC
+- Incrementally transform and combine data across sources
+- Materialize live state to MongoDB
+- Inspect pipeline status, metrics, and logs
+
+That MongoDB ships with the install and is managed by Tapstate: you do not install it,
+supply a URI, or configure its namespaces and indexes. It is the current reference
+backing store — not a claim that Tapstate is MongoDB-only, and not a managed
+production database service.
+
+Alpha is single-node and not production-ready. It does not yet provide high
+availability, durable offset resume, exactly-once guarantees, a stable State Data API,
+or push/subscription delivery.
+
+**The bundled store is not a security boundary.** It runs without authentication, and
+Tapstate's own control-plane data — users, tokens, audit records, connection
+configuration, applied artifacts — shares that instance with whatever your pipelines
+write, so anyone holding a Tapstate token can read it back with an ordinary source
+declaration. Do not put data in this deployment that its own users should not see.
+
+## Where we're going
+
+Alpha proves the core path from database changes to maintained state.
+
+Tapstate is evolving toward the complete Capture → Transform → Serve path:
+
+- Broader database support, including Oracle, SQL Server, MongoDB, DB2, and other common operational data sources
+- Production-grade durability and high availability
+- Pull and push interfaces for consuming live state
+- A broader connector ecosystem for operational systems and serving targets
+
+## Explore Tapstate
+
+- [Quickstart](https://tapstate.dev/docs/overview/quickstart-online) — get Tapstate running and see live state update
+- [Concepts](https://tapstate.dev/docs/concepts/dsl) — understand sources, pipelines, resources, and the Tapstate DSL
+- [Architecture](https://tapstate.dev/docs/overview/architecture) — understand the Capture → Transform → Serve architecture
+- [Connectors](https://tapstate.dev/docs/connectors) — supported databases, capabilities, and capture modes
+- [Transforms](https://tapstate.dev/docs/reference/transforms) — reshape and assemble operational state
+- [Operations](https://tapstate.dev/docs/guides/observe-a-pipeline) — pipelines, status, metrics, logs, and runtime behavior
+- [MCP & AI](https://tapstate.dev/docs/reference/mcp) — use Tapstate with AI agents and developer tools
+- [Build & contribute](CONTRIBUTING.md) — build from source and contribute to Tapstate
+
+[tapstate.dev/docs](https://tapstate.dev/docs) is the reviewed, published documentation
+and the one to read. Pages under `docs/` in this repository are engineering drafts kept
+next to the code, useful when you are working on Tapstate itself.
+
+**For agents and retrieval tooling:** [`/llms.txt`](https://tapstate.dev/llms.txt) is a
+discovery index of the documentation, and
+[`/llms-full.txt`](https://tapstate.dev/llms-full.txt) carries the combined page
+context. Prefer them over crawling this repository — they carry the reviewed wording,
+including the line between what Alpha does today and where the product is going.
+
+## About
+
+Tapstate is an Apache-2.0 open-source project from the team behind TapData, built on
+years of production CDC and real-time data movement experience.

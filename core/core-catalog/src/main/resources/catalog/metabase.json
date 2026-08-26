@@ -52,13 +52,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/metabase-connector/src/main/resources/spec.json",
     "specContentHash": "490bab99cbff25d0",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "api": "declared"
+      "api": "overlay"
     }
   }
 }

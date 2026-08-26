@@ -94,7 +94,7 @@
 
   <profiles>
     <!-- Real-connector regression. Activated by the same property the gated test keys on, so
-         `mvn -pl adapters/adapter-pdk test -Dtapstate.pdk.it.jarA=... -Dtapstate.pdk.it.classA=... -Dtapstate.pdk.it.idA=...`
+         `mvn -pl adapters/adapter-pdk test -Dtapstate.pdk.it.manifest=... -Dtapstate.pdk.it.dist=... -Dtapstate.pdk.it.bitmap=...`
          both selects the test and puts the PDK runtime on the host classpath. A connector dist jar is a
          thin plugin whose base class bootstraps the PDK runtime (TapRuntime, plus the error-code types it
          references) via the host class loader, so the runtime must be host-reachable — it cannot ride in
@@ -111,7 +111,7 @@
       <id>pdk-it</id>
       <activation>
         <property>
-          <name>tapstate.pdk.it.jarA</name>
+          <name>tapstate.pdk.it.manifest</name>
         </property>
       </activation>
       <dependencies>

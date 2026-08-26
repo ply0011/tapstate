@@ -199,6 +199,13 @@ class SpecSchemaAgreesWithParserTest {
                 steps:
                   - pause: {}
                 """,
+                // ...and one naming the empty string, which is a source id nobody has.
+                """
+                name: n
+                pipeline: p.tap.yml
+                steps:
+                  - pause: ""
+                """,
                 // A verb the product does not have.
                 """
                 name: n

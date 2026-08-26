@@ -18,12 +18,18 @@ See CONTRIBUTING.md, "End-to-end cases".
 ## Documentation impact
 
 <!--
-Does this change need follow-up in tapstate/docs? If yes, add the `docs-needed`
-label to this PR. On merge, an issue is opened in tapstate/docs, assigned to the
-docs owner, with a link back to this PR.
+Answer all three, even when the answer is "none" — an unanswered checkbox is not a
+decision. If follow-up is needed, add the `docs-needed` label to this PR; on merge, an
+issue is opened in tapstate/docs, assigned to the docs owner, with a link back here.
+Do not open that issue yourself.
+
+Pages under docs/ carry a classification header saying where they are going, and a CI
+check enforces it. See CONTRIBUTING.md, "Documentation".
 -->
 
 - [ ] This change needs documentation follow-up (add the `docs-needed` label)
+- **Draft in this repository:** <!-- path under docs/, or "none" -->
+- **Public page it is headed for:** <!-- URL under https://tapstate.dev/docs, or "none" -->
 
 ## Checks
 

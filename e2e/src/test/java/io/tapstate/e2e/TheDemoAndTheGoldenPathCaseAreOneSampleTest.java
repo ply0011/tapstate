@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -147,7 +149,35 @@ class TheDemoAndTheGoldenPathCaseAreOneSampleTest {
         return Files.readString(CASE.resolve(name));
     }
 
+    /**
+     * Every line as it is, except that the settings line keeps its setting <em>names</em> and drops
+     * their values.
+     *
+     * <p>Dropping the whole line was too coarse and keeping the non-address values would be too
+     * strict. Every value on that line legitimately differs: the demo dials a compose stack by name,
+     * the case interpolates whatever the harness brought up, credentials included. What may not
+     * differ is which settings are there at all - a demo that gained a setting the case does not
+     * carry is a demo the case is no longer running.
+     */
     private static List<String> withoutTheAddress(String resource) {
-        return resource.lines().filter(line -> !line.startsWith(ADDRESS_LINE_PREFIX)).toList();
+        return resource.lines()
+                .map(line -> line.startsWith(ADDRESS_LINE_PREFIX) ? settingNames(line) : line)
+                .toList();
+    }
+
+    /** The names on a {@code config: { … }} line, in a stable order, without their values. */
+    private static String settingNames(String line) {
+        int open = line.indexOf('{');
+        int close = line.lastIndexOf('}');
+        if (open < 0 || close < open) {
+            return ADDRESS_LINE_PREFIX + " <unreadable settings>";
+        }
+        List<String> names = new ArrayList<>();
+        for (String setting : line.substring(open + 1, close).split(",")) {
+            int colon = setting.indexOf(':');
+            names.add(colon < 0 ? setting.trim() : setting.substring(0, colon).trim());
+        }
+        Collections.sort(names);
+        return ADDRESS_LINE_PREFIX + " settings named " + String.join(", ", names);
     }
 }

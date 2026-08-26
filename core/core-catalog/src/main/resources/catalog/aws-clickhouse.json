@@ -266,13 +266,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/aws-clickhouse-connector/src/main/resources/aws_clickhouse.json",
     "specContentHash": "6170cee175e1261a",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "snapshot": "derived"
+      "snapshot": "overlay"
     }
   }
 }

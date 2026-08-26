@@ -455,6 +455,27 @@ else
   bad "one-line --token did not preserve its discovery and process-only credential contract (rc=$MACHINE_RC)"
 fi
 
+# --- 12. kafka.modes — the overlay-declared set survived into the image --------------------------
+# kafka has no derivable mode signal: its modes come from the repo overlay and are baked into
+# catalog/kafka.json when the snapshot is assembled. The image keeps that resource only because
+# -H:IncludeResources matches catalog/.*\.json, and losing it does NOT fail loudly — an entry with
+# no modes counts as "no trustworthy offline signal", so every mode is accepted and the CLI just
+# quietly stops rejecting. Pin the set by name here instead. The JVM side of the same claim is pinned
+# by the checked-in catalog and corpus gate, so this deliberately does not A/B a second process.
+bold "[12] kafka.modes — the overlay-declared set survived into the image"
+KAFKA_DIR="$REPO_ROOT/cli/target/native-smoke-kafka"
+rm -rf "$KAFKA_DIR" && mkdir -p "$KAFKA_DIR"
+printf 'version: tapstate/v1\nkind: source\nid: smoke_kafka\nconnector: kafka\nmode: cdc\n' > "$KAFKA_DIR/kafka.tap.yml"
+KAFKA_MODES="$({ "$BINARY" validate "$KAFKA_DIR" 2>&1 || true; } | strip_ansi | sed -n 's/.*supported modes: \(.*\)\.$/\1/p' | head -1)"
+if [[ "$KAFKA_MODES" == "stream" ]]; then
+  ok "kafka + cdc rejected, naming exactly the overlay-declared modes: [stream]"
+elif [[ -z "$KAFKA_MODES" ]]; then
+  bad "the image accepted kafka + cdc — kafka.modes is empty in the binary, so the catalog resource or its overlay-declared modes did not survive the build"
+else
+  bad "kafka.modes in the image is [$KAFKA_MODES], not the overlay-declared [stream]"
+fi
+rm -rf "$KAFKA_DIR"
+
 # --- summary ------------------------------------------------------------------------------------
 echo
 bold "native smoke: ${PASS} passed, ${FAIL} failed"

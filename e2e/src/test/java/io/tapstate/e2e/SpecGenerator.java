@@ -179,9 +179,14 @@ final class SpecGenerator {
         // pipeline when written on its own and that source's stream alone when it names one. Exhaustive
         // over the enum, so a word added to it does not compile until its shape is here.
         for (StreamVerb verb : StreamVerb.values()) {
-            forms.add(keyed(verb.word(), scalar("string",
+            Map<String, Object> sourceId = new LinkedHashMap<>(scalar("string",
                     "The id of the source whose stream this holds or releases, leaving every other "
-                            + "stream of the same pipeline running.")));
+                            + "stream of the same pipeline running."));
+            // A blank id names no source, and the parser refuses it. The schema is allowed to be the
+            // looser of the two, but not here: an author who wrote one would be told it is fine right
+            // up until the run, which is the direction this pair exists to prevent.
+            sourceId.put("minLength", 1);
+            forms.add(keyed(verb.word(), sourceId));
         }
         Map<String, Object> step = new LinkedHashMap<>();
         step.put("description", "One stage. Steps run in declaration order; the order is the scenario.");

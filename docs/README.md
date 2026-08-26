@@ -1,4 +1,23 @@
+---
+status: engineering-draft
+publication: handoff
+target: https://tapstate.dev/docs
+---
+
 # Documentation
+
+**The canonical user documentation is at `https://tapstate.dev/docs`.** What is in this
+directory is written alongside the implementation and has not been through documentation
+review: engineering drafts, executable samples, and material tied to a particular version.
+Read a page here as an engineer's draft, and the published site as the documentation.
+
+Every page here says which of the two it is, in a header at the top of the file - a draft
+headed for publication, or a pointer to the published page that replaced it. The shapes,
+and what a contributor does with them, are in
+[CONTRIBUTING.md](../CONTRIBUTING.md#documentation). Anything under this directory that is
+not a page - sample data, workspace files, scripts - carries no header: it belongs with the
+code and is read by running it.
+
 
 | Start here | |
 |---|---|
@@ -9,6 +28,7 @@
 | Features | |
 |---|---|
 | [Nest](nest/) | Assemble one document out of many tables and keep it current. |
+| [Connectors](connectors/) | How the bundled connector catalog is generated, what has to be rebuilt when something moves upstream, and how this repository declares what a connector can do. |
 
 ## How this directory is laid out
 

@@ -1,8 +1,10 @@
 package io.tapstate.adapters.pdk;
 
 import io.tapstate.core.catalog.CatalogEntryAssembler;
+import io.tapstate.core.catalog.ConnectorOverlay;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
 import io.tapstate.core.catalog.NormalizedSpec;
+import io.tapstate.core.catalog.OfficialConnectors;
 import io.tapstate.core.catalog.SpecNormalizer;
 import io.tapstate.core.common.TapstateException;
 import io.tapstate.core.common.JsonReader;
@@ -49,37 +51,27 @@ import java.util.Objects;
 public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
 
     /**
-     * The connectors this release officially supports, in the order a refusal message names them. A
-     * list rather than a set so that order — and therefore the message — is fixed; the membership test
-     * over this many entries costs nothing. This is the default accepted set and the only one any
-     * shipped artifact uses; a test pins its exact contents, because a silent addition here would be a
-     * support promise nobody made.
-     *
-     * <p>Three engines, each with its managed variants. The variants are enumerated one by one rather
-     * than matched by prefix, because nothing in a connector's identity says which engine it belongs
-     * to: membership is a decision somebody made about a named connector, and a prefix rule would
-     * silently admit every future product whose id happens to begin the same way. Being listed here
-     * means the register path accepts the connector, which is not the same as the release having
-     * verified it — accepting a variant rests on it being the same engine underneath, and only the
-     * three engines themselves are exercised.
-     */
-    static final List<String> OFFICIAL_CONNECTOR_IDS = List.of(
-            "mysql", "aliyun-rds-mysql", "aws-rds-mysql", "polar-db-mysql", "mysql-pxc",
-            "postgres", "aliyun-rds-postgres", "aliyun-adb-postgres", "polar-db-postgres",
-            "tencent-db-postgres",
-            "mongodb", "mongodb-atlas", "mongodb3", "aliyun-db-mongodb", "tencent-db-mongodb");
-
-    /**
      * The officially supported ids, readable from outside this package.
      *
      * <p>Exists so that a gate standing outside every module can assert what a shipped deployment
-     * accepts out of the box. That claim spans two things this package cannot see together — this set,
-     * and the fact that nothing a release carries widens it — so the assertion cannot live here, and a
-     * package-private constant would leave it unmakeable.
+     * accepts out of the box. That claim spans two things this package cannot see together — the set
+     * itself, and the fact that nothing a release carries widens it — so the assertion cannot live
+     * here. The set itself is not held here: it is {@link OfficialConnectors#IDS}, so the authoring
+     * surfaces and this register path cannot drift apart.
      */
     public static List<String> officialConnectorIds() {
-        return OFFICIAL_CONNECTOR_IDS;
+        return OfficialConnectors.IDS;
     }
+
+    /**
+     * The same overlay the checked-in snapshot was assembled against, so a connector registered at
+     * runtime lands on the same catalog row the offline path would have produced for it.
+     *
+     * <p>Read once for the process rather than per registration: it is an immutable object rebuilt
+     * from the same bundled resources every time, and registering a directory of artifacts would
+     * otherwise re-read and re-parse the whole overlay once per connector.
+     */
+    private static final ConnectorOverlay OVERLAY = ConnectorOverlay.load();
 
     private final ConnectorRegistry registry;
     private final ConnectorIntrospector introspector;
@@ -110,9 +102,20 @@ public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
         this.catalogStore = Objects.requireNonNull(catalogStore, "catalogStore");
         this.specStore = Objects.requireNonNull(specStore, "specStore");
         Objects.requireNonNull(alsoAccept, "alsoAccept");
-        List<String> accepted = new ArrayList<>(OFFICIAL_CONNECTOR_IDS);
-        accepted.addAll(alsoAccept);
-        this.acceptedConnectorIds = List.copyOf(accepted);
+        if (alsoAccept.isEmpty()) {
+            // The shipped path accepts that list itself rather than a copy of it, so no edit can move
+            // one without the other.
+            this.acceptedConnectorIds = OfficialConnectors.IDS;
+        } else {
+            List<String> accepted = new ArrayList<>(OfficialConnectors.IDS);
+            accepted.addAll(alsoAccept);
+            this.acceptedConnectorIds = List.copyOf(accepted);
+        }
+    }
+
+    /** The ids this registrar accepts: the official set, widened by whatever the deployment named. */
+    List<String> acceptedConnectorIds() {
+        return acceptedConnectorIds;
     }
 
     /** Registers the artifact at {@code artifact} if its content hash is not already registered. */
@@ -294,7 +297,8 @@ public final class ConnectorArtifactRegistrar implements ConnectorRegistrar {
         }
         NormalizedSpec normalized = SpecNormalizer.normalize(asSpecObject(specTree));
         ConnectorCatalogEntry row = CatalogEntryAssembler.assemble(
-                normalized, capabilities.capabilityIds(), null, introspected.specPath(), specHash);
+                normalized, capabilities.capabilityIds(), OVERLAY,
+                introspected.specPath(), specHash);
         catalogStore.upsert(row);
     }
 

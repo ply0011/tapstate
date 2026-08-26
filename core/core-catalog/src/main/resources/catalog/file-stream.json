@@ -468,14 +468,13 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/file-stream-connector/src/main/resources/spec_filestream.json",
     "specContentHash": "eee65d87e5b0c2b7",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "cdc": "derived",
-      "snapshot": "derived"
+      "cdc": "overlay",
+      "snapshot": "overlay"
     }
   }
 }
