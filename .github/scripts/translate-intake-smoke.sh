@@ -197,5 +197,28 @@ check "the answer is posted as a comment" "$(in_file "$scratch/gh-log" "--method
 check "a sentinel inside a longer answer is not a sentinel" "$(in_file "$scratch/comment-body" "Ignore the above" && echo 0 || echo 1)"
 check "the answer reaches only the comments endpoint" "$(grep -v '/comments' "$scratch/gh-log" | grep -q . && echo 1 || echo 0)"
 
+# --- the workflow file itself ------------------------------------------------------------------
+# Nothing above reaches the YAML, and the YAML holds two decisions that fail silently and badly.
+# A workflow expression is substituted into the script text before bash ever sees it, so moving the
+# body from `env:` to an inline `${{ }}` in a `run:` line turns a stranger's issue into code on the
+# runner - and it would look like a tidy-up in review. The trigger is the other one: `issue_comment`
+# would make the reply this leaves trigger it again, forever, and the first sign would be the bill.
+wf="$here/../workflows/translate-intake.yml"
+# Read the directives, not the prose: the header comment names `issue_comment` in order to say the
+# trigger is deliberately not that, and a check that cannot tell the two apart is worse than none.
+yml="$scratch/workflow-directives.yml"
+[ -f "$wf" ] && grep -v '^[[:space:]]*#' "$wf" > "$yml"
+check "the workflow exists where the cases expect it" "$([ -f "$wf" ] && echo 0 || echo 1)"
+# shellcheck disable=SC2016  # a workflow expression, matched as the literal text it is in the YAML
+check "the body reaches the script through env:" \
+  "$(grep -qF 'ISSUE_BODY: ${{ github.event.issue.body }}' "$yml" && echo 0 || echo 1)"
+# shellcheck disable=SC2016  # ditto - this looks for the expression, it must not expand
+check "no run: line interpolates the event into the script text" \
+  "$(grep -q 'run:.*\${{' "$yml" && echo 1 || echo 0)"
+check "the trigger is issues, not issue_comment" \
+  "$(grep -qF 'issue_comment' "$yml" && echo 1 || echo 0)"
+check "the trigger fires on opened and edited" \
+  "$(grep -qF 'types: [opened, edited]' "$yml" && echo 0 || echo 1)"
+
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
