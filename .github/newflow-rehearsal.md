@@ -18,3 +18,15 @@ Revert the merge commit that introduced it:
     git revert -m 1 <merge commit>
 
 That restores the tree byte for byte. Nothing else has to be undone.
+
+## Second revision
+
+The first session end left one progress comment on the execution issue:
+comment id `5434257064`, at
+<https://github.com/tapstate/tapstate/issues/73#issuecomment-5434257064>.
+
+This paragraph exists so that a second session end happens at all. The property
+under test is silent: the tooling is supposed to EDIT that one comment rather
+than post another, and posting another raises no error, fails no gate, and looks
+correct until someone counts. Recording the id here means the next run can be
+checked against a number rather than against an impression.
