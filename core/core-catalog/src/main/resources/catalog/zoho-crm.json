@@ -28,13 +28,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/zoho-crm-connector/src/main/resources/spec.json",
     "specContentHash": "d3eb0ddbfb8add92",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "api": "declared"
+      "api": "overlay"
     }
   }
 }

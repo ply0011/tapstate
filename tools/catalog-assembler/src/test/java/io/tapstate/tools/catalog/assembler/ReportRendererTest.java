@@ -17,10 +17,15 @@ class ReportRendererTest {
     void rendersEverySectionDeterministicallyWithNoneWhereEmpty() {
         IngestReport report = new IngestReport(
                 "20371556abc",
+                "9f0c11abdef",
                 List.of("github", "kafka", "mysql"),
                 List.of("github"),
                 List.of("hazelcast"),
+                List.of("yashandb: driver published only to the upstream project's private repository"),
                 List.of("kafka"),
+                List.of("kafka: upstream declares nothing, ours [stream]"),
+                List.of("rabbitmq: upstream [cdc], ours [stream]"),
+                List.of("selectdb: snapshot needs batch_read_function"),
                 List.of("kafka"),
                 List.of(),
                 List.of(),
@@ -29,17 +34,32 @@ class ReportRendererTest {
         assertThat(ReportRenderer.render(report)).isEqualTo("""
                 # Connector catalog ingest report
 
-                Connector repo SHA: `20371556abc`
+                Spec SHA: `20371556abc`
+                Capability SHA: `9f0c11abdef`
+
+                > The capability face comes from an earlier upstream revision than the spec face: modes, sink and write semantics were derived at `9f0c11abdef`, while the structure below was read at `20371556abc`. A full refresh brings them back together.
                 Ingested connectors: 3
 
                 ## Unclassified — no resolvable mode (need tapstate.modes)
                 - github
 
+                ## Not built — this repository cannot build these, by name and with reason
+                - yashandb: driver published only to the upstream project's private repository
+
                 ## Not derived — no built jar or did not classload (excluded from refresh)
                 - hazelcast
 
-                ## MQ suspects — derived cdc, undeclared (need tapstate.modes)
+                ## Unverified modes — derived for a non-database connector nobody declared
                 - kafka
+
+                ## Overlay carrying it alone — upstream declares nothing, the mode is ours only
+                - kafka: upstream declares nothing, ours [stream]
+
+                ## Overlay divergences — our declaration differs from the connector's own
+                - rabbitmq: upstream [cdc], ours [stream]
+
+                ## Overlay not derivable — we declare a mode the capabilities do not support
+                - selectdb: snapshot needs batch_read_function
 
                 ## Sink semantics defaulted — no DML signal
                 - kafka
@@ -53,5 +73,20 @@ class ReportRendererTest {
                 ## Exemptions — modules and specs set aside
                 - [EXCLUDED] tdd-connector: known non-connector module
                 """);
+    }
+
+    @Test
+    void saysNothingAboutRevisionsWhenTheTwoFacesAgree() {
+        // The note has to be absent after a full refresh, not merely quieter. A report that carried it
+        // every time would train a reader to skip the line that only sometimes means something - and
+        // that line is the only warning that every capability below was read at another revision.
+        IngestReport report = new IngestReport("samesha", "samesha", List.of("mysql"),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of());
+
+        assertThat(ReportRenderer.render(report))
+                .contains("Spec SHA: `samesha`")
+                .contains("Capability SHA: `samesha`")
+                .doesNotContain("earlier upstream revision");
     }
 }

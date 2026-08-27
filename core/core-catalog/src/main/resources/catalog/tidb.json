@@ -297,7 +297,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/tidb-connector/src/main/resources/spec_tidb.json",
     "specContentHash": "f9541706131b0e93",
     "pdkApiVersion": null,

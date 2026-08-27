@@ -86,9 +86,13 @@ public final class CatalogEntryWriter {
         return m;
     }
 
+    /**
+     * The two catalog-wide revisions are deliberately absent here: they belong to the index head, and
+     * an entry that carried its own copy would let the two disagree. A row with no head — one
+     * registered with a running server — has none, which is the same thing this omission says.
+     */
     private static Map<String, Object> provenance(Provenance provenance) {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("connectorRepoSha", provenance.connectorRepoSha());
         m.put("specPath", provenance.specPath());
         m.put("specContentHash", provenance.specContentHash());
         m.put("pdkApiVersion", provenance.pdkApiVersion());

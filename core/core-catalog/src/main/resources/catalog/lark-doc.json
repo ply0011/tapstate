@@ -40,13 +40,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/lark-doc-connector/src/main/resources/spec.json",
     "specContentHash": "ff454b9ad4e4c188",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "api": "declared"
+      "api": "overlay"
     }
   }
 }

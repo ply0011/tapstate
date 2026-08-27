@@ -1,6 +1,7 @@
 package io.tapstate.cli;
 
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
+import io.tapstate.core.catalog.OfficialConnectors;
 import io.tapstate.core.catalog.TapstateCatalog;
 import io.tapstate.core.model.SourceMode;
 import io.tapstate.core.model.SourceResource;
@@ -30,7 +31,7 @@ final class SourceWizard {
     }
 
     SourceResource run() {
-        String connector = prompter.choose("Which connector?", catalog.ids());
+        String connector = prompter.choose("Which connector?", OfficialConnectors.presentIn(catalog));
         ConnectorCatalogEntry entry = catalog.byId(connector);
         SourceMode mode = askMode(entry);
         List<TableRef> tables = askTables(mode);

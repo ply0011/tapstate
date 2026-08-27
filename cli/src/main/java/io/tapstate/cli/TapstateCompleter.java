@@ -1,6 +1,7 @@
 package io.tapstate.cli;
 
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
+import io.tapstate.core.catalog.OfficialConnectors;
 import io.tapstate.core.catalog.TapstateCatalog;
 import io.tapstate.core.model.SourceMode;
 import io.tapstate.core.schema.SchemaNavigator;
@@ -86,7 +87,7 @@ final class TapstateCompleter implements Completer {
         }
         String prev = words.get(wordIndex - 1);
         if (isOpt(prev, "-c", "--connector")) {
-            return catalog.ids();
+            return OfficialConnectors.presentIn(catalog);
         }
         if (isOpt(prev, "-m", "--mode")) {
             return modeCandidates(words);
@@ -105,7 +106,7 @@ final class TapstateCompleter implements Completer {
         String connector = optionValue(words, "-c", "--connector");
         if (connector != null && catalog.ids().contains(connector)) {
             ConnectorCatalogEntry entry = catalog.byId(connector);
-            if (CapabilityHints.modesAreTrustworthy(entry) && !entry.modes().isEmpty()) {
+            if (entry.modesAreTrustworthy() && !entry.modes().isEmpty()) {
                 return entry.modes().stream().map(SourceMode::yaml).toList();
             }
         }

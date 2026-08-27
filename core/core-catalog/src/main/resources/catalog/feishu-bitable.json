@@ -64,13 +64,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors-javascript/lark-bitable-connector/src/main/resources/spec.json",
     "specContentHash": "1aaa200ee0638d73",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "api": "declared"
+      "api": "overlay"
     }
   }
 }

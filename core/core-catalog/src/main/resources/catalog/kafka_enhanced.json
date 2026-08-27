@@ -670,13 +670,12 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/kafka-enhanced-connector/src/main/resources/spec_kafka_enhanced.json",
     "specContentHash": "b6cc097f3cfa4036",
     "pdkApiVersion": null,
     "requiredLevel": null,
     "modeSource": {
-      "stream": "declared"
+      "stream": "overlay"
     }
   }
 }

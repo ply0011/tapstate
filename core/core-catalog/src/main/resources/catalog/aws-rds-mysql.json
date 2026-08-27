@@ -267,7 +267,6 @@
     }
   ],
   "provenance": {
-    "connectorRepoSha": "d889798e",
     "specPath": "connectors/aws-rds-mysql-connector/src/main/resources/aws-rds-mysql-spec.json",
     "specContentHash": "7fa1e642c31bffa0",
     "pdkApiVersion": null,

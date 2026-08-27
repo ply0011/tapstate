@@ -12,6 +12,7 @@ import java.util.Set;
 
 import io.tapstate.core.catalog.CatalogEntryWriter;
 import io.tapstate.core.catalog.ConnectorCatalogEntry;
+import io.tapstate.core.catalog.ConnectorOverlay;
 
 /**
  * Composes the whole PDK-free assembly path into the deterministic catalog artifacts: walk a
@@ -24,11 +25,13 @@ final class CatalogGenerator {
     private CatalogGenerator() {
     }
 
-    static GeneratedCatalog generate(Path connectorsRoot, String connectorRepoSha,
+    static GeneratedCatalog generate(Path connectorsRoot, String specSha, String capabilitySha,
                                      Map<String, Set<String>> bitmap) {
         WalkResult walk = ConnectorWalker.walk(connectorsRoot);
-        Assembly assembly = CatalogAssembler.assemble(walk, connectorRepoSha, bitmap,
-                relativePath -> read(connectorsRoot.resolve(relativePath)));
+        // Read once for the whole run: it is the same handful of files every time, and a run that
+        // cannot read them must fail before it writes a snapshot rather than midway through one.
+        Assembly assembly = CatalogAssembler.assemble(walk, specSha, capabilitySha, bitmap,
+                ConnectorOverlay.load(), relativePath -> read(connectorsRoot.resolve(relativePath)));
 
         JsonWriter writer = new JsonWriter();
         List<String> ids = new ArrayList<>();
@@ -45,7 +48,14 @@ final class CatalogGenerator {
             ids.add(entry.id());
             entries.put(entry.id(), writer.write(CatalogEntryWriter.toTree(entry)));
         }
-        String index = writer.write(new ArrayList<Object>(ids));
+        // The index carries the two revisions once for the whole catalog. Per entry they were the
+        // same value copied once per connector, so a refresh that changed one connector rewrote every
+        // file - and the spec-face refresh opens a pull request daily.
+        Map<String, Object> head = new LinkedHashMap<>();
+        head.put("specSha", specSha);
+        head.put("capabilitySha", capabilitySha);
+        head.put("entries", new ArrayList<Object>(ids));
+        String index = writer.write(head);
         String report = ReportRenderer.render(assembly.report());
         return new GeneratedCatalog(index, entries, report);
     }

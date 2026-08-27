@@ -78,7 +78,7 @@ class CapabilityHarnessTest {
 
     /** Resolves source modes from live-derived ids the way the catalog does (no spec declaration). */
     private static ModeResolution resolveModes(Set<String> capabilityIds) {
-        return ModeResolver.resolve(DerivedCapability.fromCapabilityIds(capabilityIds), null);
+        return ModeResolver.resolve(DerivedCapability.fromCapabilityIds(capabilityIds), null, null);
     }
 
     @Test
