@@ -30,7 +30,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: 75
           TRANSLATE_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          TRANSLATE_BASE_URL: https://api.deepseek.com
+          TRANSLATE_BASE_URL: https://api.deepseek.invalid
           TRANSLATE_MODEL: deepseek-chat
         run: |
           # Through the environment, never interpolated into this script's text.
